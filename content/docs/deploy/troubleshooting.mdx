@@ -57,14 +57,6 @@ example, dropping a column or a table.
 npx rayfin up db apply --force
 ```
 
-## "unsupported UUID" errors
-
-**Cause:** another service is running on the default port with a different database
-dialect than the one your project expects.
-
-**Fix:** stop the conflicting service (or free the port) and retry the command that
-failed.
-
 ## Static deploy exceeds the size limit
 
 **Cause:** the compressed static content archive exceeds the 100 MB limit for `rayfin up`
@@ -123,7 +115,7 @@ destructive) and confirm the fix with `npx rayfin up status` again.
 
 ## See also
 
-- [Secrets](/docs/deploy/secrets) — troubleshooting for `rayfin up secrets apply`
+- [Secrets](/docs/deploy/secrets) — troubleshooting for `rayfin secret set`
   specifically.
 - [Known limitations](/docs/reference/known-limitations) — current platform constraints
   that aren't bugs.

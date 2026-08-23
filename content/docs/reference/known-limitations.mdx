@@ -143,11 +143,10 @@ calling `create` / `update`.
 The shorthand decorators are clearer at the call site than the general-purpose `@role()`
 form.
 
-**Workaround:** use `@authenticated(actions, options)` for authenticated-only access. Note
-that `@anonymous()` — and the `'anonymous'` role name on `@role()` — are exported only from
-`@microsoft/rayfin-core/experimental`, not the package root, and Fabric currently rejects
-any DAB configuration that grants the `anonymous` role at apply time regardless of which
-form you used. See
+**Workaround:** use `@authenticated(actions, options)` for authenticated-only access, and
+`@anonymous(actions, options)` for public access. Both are exported from the package root.
+Anonymous access on a deployed Fabric app additionally requires a tenant administrator to
+enable anonymous data access for the tenant. See
 [Permission decorators](/docs/reference/sdk/rayfin-core#permission-decorators).
 
 ## Database and schema apply

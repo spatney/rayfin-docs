@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
+import GithubSlugger from 'github-slugger';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONTENT = path.join(ROOT, 'content', 'docs');
@@ -46,6 +47,7 @@ async function main() {
   if (files.length === 0) throw new Error(`No MDX files found under ${CONTENT}`);
 
   const routes = new Set(files.map(toRoute));
+  const headings = await collectHeadings(files);
 
   for (const file of files) {
     const raw = await readFile(file, 'utf8');
@@ -70,13 +72,48 @@ async function main() {
     checkFrontmatter(rel, data);
     checkCodeFences(rel, content);
     checkComponents(rel, content);
-    checkLinks(rel, content, routes);
+    checkLinks(rel, content, routes, headings, toRoute(file));
     checkScope(rel, raw);
   }
 
   await checkGeneratedCopy();
 
   report(files.length);
+}
+
+/**
+ * Heading anchors per route, so `#fragment` links can be validated.
+ *
+ * Mirrors what the site actually renders: github-slugger for generated ids, and an
+ * explicit `[#custom-id]` suffix when a heading declares one.
+ */
+async function collectHeadings(files: string[]): Promise<Map<string, Set<string>>> {
+  const map = new Map<string, Set<string>>();
+
+  for (const file of files) {
+    const raw = await readFile(file, 'utf8');
+    let content: string;
+    try {
+      content = matter(raw).content;
+    } catch {
+      continue;
+    }
+
+    const slugger = new GithubSlugger();
+    const anchors = new Set<string>();
+
+    for (const match of content.matchAll(/^#{2,6}\s+(.+)$/gm)) {
+      const heading = match[1].trim();
+      const explicit = heading.match(/\[#([^\]]+)\]\s*$/);
+      anchors.add(
+        explicit ? explicit[1] : slugger.slug(heading.replace(/\s*\[#[^\]]+\]\s*$/, '')),
+      );
+    }
+
+    map.set(toRoute(file), anchors);
+  }
+
+  return map;
 }
 
 /**
@@ -178,13 +215,19 @@ function checkComponents(file: string, content: string) {
   }
 }
 
-function checkLinks(file: string, content: string, routes: Set<string>) {
+function checkLinks(
+  file: string,
+  content: string,
+  routes: Set<string>,
+  headings: Map<string, Set<string>>,
+  selfRoute: string,
+) {
   const stripped = stripCode(content);
 
   for (const match of stripped.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
     const href = match[1];
 
-    if (/^(https?:|mailto:|#)/.test(href)) continue;
+    if (/^(https?:|mailto:)/.test(href)) continue;
 
     if (href.startsWith('./') || href.startsWith('../')) {
       problems.push({
@@ -194,13 +237,16 @@ function checkLinks(file: string, content: string, routes: Set<string>) {
       continue;
     }
 
-    if (!href.startsWith('/')) continue;
+    const [pathname, anchor] = href.split('#');
 
-    const [pathname] = href.split('#');
+    // A bare "#anchor" points at a heading on this same page.
+    const targetRoute = pathname === '' ? selfRoute : pathname.replace(/\/$/, '');
+
+    if (pathname !== '' && !pathname.startsWith('/')) continue;
 
     // Root-level build artefacts (/llms.txt, /AGENTS.md, /sitemap.xml) are emitted by
     // the build, not by content, so they have no page to resolve against.
-    if (!pathname.startsWith('/docs')) continue;
+    if (!targetRoute.startsWith('/docs')) continue;
 
     if (pathname.endsWith('.md')) {
       problems.push({
@@ -210,9 +256,16 @@ function checkLinks(file: string, content: string, routes: Set<string>) {
       continue;
     }
 
-    const normalized = pathname.replace(/\/$/, '');
-    if (!routes.has(normalized)) {
+    if (!routes.has(targetRoute)) {
       problems.push({ file, message: `broken internal link \`${href}\` — no such page` });
+      continue;
+    }
+
+    if (anchor && !headings.get(targetRoute)?.has(anchor)) {
+      problems.push({
+        file,
+        message: `dead anchor \`${href}\` — ${targetRoute} has no heading with id "${anchor}"`,
+      });
     }
   }
 }

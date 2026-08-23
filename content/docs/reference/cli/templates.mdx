@@ -34,9 +34,27 @@ agent:
   "schemaVersion": 1,
   "bundled": [
     {
+      "name": "blankapp",
+      "displayName": "Blank App",
+      "description": "Bare-bones Fabric-authenticated React + Vite app — sign-in, routing, and a placeholder home page, with no data layer to remove",
+      "source": "built-in"
+    },
+    {
+      "name": "dataapp",
+      "displayName": "Data App",
+      "description": "Build data analytics app based on your data in Fabric",
+      "source": "built-in"
+    },
+    {
+      "name": "gettingstartedauth",
+      "displayName": "A Todo App with Auth and Getting Started Docs",
+      "description": "Todo app with Fabric authentication, Tailwind CSS, and production-first workflow",
+      "source": "built-in"
+    },
+    {
       "name": "todoapp",
       "displayName": "Basic Todo App",
-      "description": "End-to-end Fabric-authenticated todo CRUD with a Rayfin data model and per-user row-level security",
+      "description": "End-to-end Fabric-authenticated todo CRUD with a Rayfin data model and per-user row-level security — a working starter that exercises the full data path",
       "source": "built-in"
     }
   ],
@@ -134,8 +152,10 @@ file by hand.
 | Project-local | `<projectDir>/.rayfin/template-registries.yml` | Templates pinned to a specific project (commit it alongside the repo). |
 
 Both are optional. The CLI also loads a bundled registry shipped with
-`@microsoft/rayfin-cli` itself, which may be empty. A few CLI-shipped templates are
-protected and cannot be overridden by a user or project entry reusing their name.
+`@microsoft/rayfin-cli` itself (`assets/template-registries.yml`) — in 1.34 it ships one
+entry, "Data App", marked as protected. Protected entries can't be overridden by a user or
+project entry reusing their name, and fall back to the matching bundled template (the
+`dataapp` template shown above) if the external clone fails.
 
 ### Registry file format
 

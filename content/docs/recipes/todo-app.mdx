@@ -21,7 +21,7 @@ with a live deploy to a Fabric app.
 Scaffold a new Rayfin project called "todo-app" with `npm create @microsoft/rayfin@latest
 todo-app`, choosing the MSSQL dialect. In rayfin/data/Todo.ts, define a Todo entity with id
 (@uuid()), title (@text({ min: 1, max: 100 })), isCompleted (@boolean()), createdAt
-(@date()), and user_id (@text()). Add @role('authenticated', '*', { policy: (claims, item)
+(@date()), and user_id (@text({ max: 128 })). Add @role('authenticated', '*', { policy: (claims, item)
 => claims.sub.eq(item.user_id) }) so each signed-in user can only read and write their own
 todos. Register Todo in rayfin/data/schema.ts. Add a src/services/todos.ts module with
 getTodos, createTodo, updateTodo, and deleteTodo functions that call client.data.Todo
@@ -72,7 +72,7 @@ export class Todo {
   @text({ min: 1, max: 100 }) title!: string;
   @boolean() isCompleted!: boolean;
   @date() createdAt!: Date;
-  @text() user_id!: string;
+  @text({ max: 128 }) user_id!: string;
 }
 ```
 
@@ -82,7 +82,7 @@ export class Todo {
 - `user_id` is `@text()`, not `@uuid()`. It isn't a foreign key to another entity; it holds
   the caller's JWT `sub` claim, an opaque string identifier. Reserve `@uuid()` for fields
   that reference another entity's `id` through `@one()`/`@many()`. See
-  [Multi-tenant data with row-level security](/docs/recipes/multi-tenant) for more on this
+  [Multi-tenant patterns](/docs/data/permissions#multi-tenant-patterns) for more on this
   distinction and for organization-scoped variations of this pattern.
 - `@text({ min: 1, max: 100 })` caps the column width on MSSQL. Every `@text()` field needs
   an explicit `max` — omitting it produces an `NVARCHAR(MAX)` column that can break GraphQL
@@ -789,7 +789,7 @@ explanation.
 
 ## Next steps
 
-- [Multi-tenant data with row-level security](/docs/recipes/multi-tenant) — extend this
+- [Multi-tenant patterns](/docs/data/permissions#multi-tenant-patterns) — extend this
   pattern to data shared across a team or organization.
 - [Testing a Rayfin app](/docs/recipes/testing) — test this exact data and auth setup
   without a live backend.

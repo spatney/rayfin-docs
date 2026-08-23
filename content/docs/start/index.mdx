@@ -24,7 +24,7 @@ it goes from an empty terminal to a running app in four commands.
 - **[Project structure](/docs/start/project-structure)** — the `rayfin/` folder,
   `rayfin.yml`, and how entity classes become a database schema.
 - **[Deploy to Fabric](/docs/start/deploy-to-fabric)** — enable the tenant setting, create
-  a Fabric data app, and deploy with `rayfin login` and `rayfin up`.
+  a Fabric app, and deploy with `rayfin login` and `rayfin up`.
 
 ## How a Fabric app runs
 
@@ -53,7 +53,7 @@ flowchart TB
   WebService -->|Fabric SSO| EntraID[Entra ID]
 ```
 
-`rayfin up` packages your project and provisions it as a Fabric data app: Fabric hosts the
+`rayfin up` packages your project and provisions it as a Fabric app: Fabric hosts the
 MSSQL database, a WebService and Data API Builder layer in front of it, your built frontend
 as static content, and sign-in through Fabric SSO (Entra ID) — the only auth provider
 available once the app is deployed. [Functions](/docs/functions) and

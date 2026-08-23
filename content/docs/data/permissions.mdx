@@ -1,6 +1,6 @@
 ---
 title: Permissions and row-level security
-description: Secure Rayfin entities with @role, @anonymous, and @authenticated, including row-level policies, field visibility, and action-specific rules.
+description: Secure Rayfin entities with @role, @anonymous, and @authenticated, including row-level policies, field visibility, action-specific rules, and multi-tenant scoping.
 ---
 
 Permissions are declared on the entity class itself, as decorators, and compiled into
@@ -215,6 +215,107 @@ export class ProfileImage {
   owner_id!: string;
 }
 ```
+
+## Multi-tenant patterns
+
+Row-level policies compare claims to fields on the *same row* — there is no join in the
+policy itself, and only `claims.sub`, `claims.email`, and `claims.role` are available (see
+[Supported claims](#supported-claims) above). That covers per-user scoping directly, but
+scoping rows to a shared organization or team needs a stored `organization_id` plus a
+membership entity, since there is no organization or tenant claim to compare against.
+
+### Per-user scoping
+
+Per-user scoping is the `policy: (claims, item) => claims.sub.eq(item.user_id)` pattern
+used throughout this page — every row carries a `user_id` set from the caller's session,
+and the policy compares it to `claims.sub`. See [Build a todo app](/docs/recipes/todo-app)
+for this pattern in a complete, deployed app.
+
+### Per-organization scoping
+
+Rows shared across a team need a stored `organization_id`, plus a membership record that
+says who belongs to which organization:
+
+```typescript title="rayfin/data/Organization.ts"
+import { entity, role, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@role('authenticated', ['read', 'update', 'delete'], {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+@role('authenticated', 'create')
+export class Organization {
+  @uuid() id!: string;
+  @text({ max: 200 }) name!: string;
+  @text({ max: 128 }) owner_id!: string;
+}
+```
+
+```typescript title="rayfin/data/OrganizationMember.ts"
+import { entity, role, uuid, text, one } from '@microsoft/rayfin-core';
+import { Organization } from './Organization.js';
+
+@entity()
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class OrganizationMember {
+  @uuid() id!: string;
+  @uuid() organization_id!: string;
+  @one(() => Organization) organization?: Organization;
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+```typescript title="rayfin/data/Project.ts"
+import { entity, role, uuid, text, one } from '@microsoft/rayfin-core';
+import { Organization } from './Organization.js';
+
+@entity()
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.created_by),
+})
+export class Project {
+  @uuid() id!: string;
+  @text({ max: 200 }) name!: string;
+  @uuid() organization_id!: string;
+  @one(() => Organization) organization?: Organization;
+  @text({ max: 128 }) created_by!: string;
+}
+```
+
+`organization_id` is `@uuid()` here — unlike `user_id`, it *is* a foreign key: it
+references `Organization.id` through `@one(() => Organization)`, so its type must match
+the primary key it points at. Import `Organization` with a regular `import` (not `import
+type`) — the decorator needs the runtime class value, not just its type.
+
+The `@role` policy on `Project` above still only enforces ownership by the row's creator
+(`claims.sub.eq(item.created_by)`) — the policy DSL can't express "the caller is a member
+of `item.organization_id`" directly, since that requires a join against
+`OrganizationMember`. Two things layer on top of the row policy to get organization-wide
+sharing:
+
+1. **Scope every read by organization membership**, looked up first:
+
+   ```typescript
+   const memberships = await client.data.OrganizationMember.select(['organization_id'])
+     .where({ user_id: { eq: session.user.id } })
+     .execute();
+
+   const projects = await client.data.Project.select(['id', 'name', 'organization_id'])
+     .where({ organization_id: { eq: memberships[0].organization_id } })
+     .execute();
+   ```
+
+2. **Check membership in application code before writes** — verify the caller has an
+   `OrganizationMember` row for the target `organization_id` before creating or updating a
+   `Project` in that organization. The row-level policy alone won't stop a member of one
+   organization from writing into another's `organization_id` if your application code
+   doesn't check first.
+
+Layer an admin bypass onto either pattern the same way described in
+[Combining conditions](#combining-conditions) above — for example,
+`claims.role.eq('admin').or(claims.sub.eq(item.created_by))` on `Project`.
 
 ## Best practices
 

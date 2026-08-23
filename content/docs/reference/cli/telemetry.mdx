@@ -9,14 +9,17 @@ prints a notice explaining what's collected and how to opt out.
 ## What's collected
 
 - Command names.
-- Execution status (success/failure).
+- Which flags were passed, by name only (for example `--force`, `-v`) — never their values.
+- Execution status (success/failure), and on failure, a sanitized error name/type/message
+  with file paths and stack traces stripped out.
 - Execution duration.
 - Environment metadata: OS and Node.js version.
 
 ## What's not collected
 
-No personal data, parameter values, or file contents are collected — arguments you pass
-(project names, workspace names, connection strings, file paths) are never sent.
+No personal data, flag *values*, or file contents are collected — arguments you pass
+(project names, workspace names, connection strings, file paths) are never sent, only the
+fact that a given flag was used.
 
 ## Opt out
 

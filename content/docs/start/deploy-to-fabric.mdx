@@ -1,6 +1,6 @@
 ---
 title: Deploy to Fabric
-description: Enable Fabric data apps in your tenant, create one in the Fabric portal, and deploy your project with rayfin login and rayfin up.
+description: Enable Fabric apps in your tenant, create one in the Fabric portal, and deploy your project with rayfin login and rayfin up.
 ---
 
 Deploying to Fabric provisions your project as a managed **Fabric app** — Fabric hosts the
@@ -12,12 +12,12 @@ deployment end to end.
 - A Rayfin project with a `rayfin/rayfin.yml` configuration file.
 - A Microsoft account with access to a Fabric workspace where you have contributor or
   admin permissions, and Fabric capacity assigned to that workspace.
-- Fabric data apps enabled in your tenant's admin settings (next section).
+- Fabric apps enabled in your tenant's admin settings (next section).
 
-## Enable Fabric data apps in your tenant
+## Enable Fabric apps in your tenant
 
-A Fabric tenant administrator must turn this on before anyone can create a Fabric data
-app. If you are not a tenant admin, send this section to whoever is.
+A Fabric tenant administrator must turn this on before anyone can create a Fabric app.
+If you are not a tenant admin, send this section to whoever is.
 
 1. Sign in to the [Fabric admin portal](https://app.fabric.microsoft.com/admin-portal).
 2. Navigate to **Tenant settings**.
@@ -27,13 +27,13 @@ app. If you are not a tenant admin, send this section to whoever is.
 
 Changes can take a few minutes to propagate.
 
-## Create a Fabric data app
+## Create a Fabric app
 
 You can create the Fabric item first and connect your code to it, or deploy from the CLI
 and let it create the item for you.
 
 **From the Fabric portal:** sign in to [Microsoft Fabric](https://app.fabric.microsoft.com),
-select or create a workspace, click **New item**, search for **Fabric data app**, name it,
+select or create a workspace, click **New item**, search for **App (preview)**, name it,
 and click **Create**. Then click **Open in VS Code** on the new item to load the project
 locally.
 
@@ -54,11 +54,8 @@ in the OS keychain under `~/.rayfin/`. Check your status at any time:
 npx rayfin login status
 ```
 
-Force an account picker when you have multiple accounts signed in:
-
-```bash
-npx rayfin login --select
-```
+The MSAL account picker is always shown on sign-in, so if you have several accounts you can
+choose between them by running `npx rayfin login` again.
 
 For non-interactive environments (CI pipelines), authenticate as a service principal
 instead:

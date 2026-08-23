@@ -1,6 +1,6 @@
 ---
-title: Functions
-description: rayfin functions scaffolds a serverless TypeScript Functions project under rayfin/functions/ and keeps its generated types in sync with your entities.
+title: rayfin functions
+description: rayfin functions init scaffolds a serverless TypeScript Functions project under rayfin/functions/ that shares entity types with your Rayfin data model.
 ---
 
 > [!NOTE]
@@ -24,32 +24,22 @@ Scaffolds `rayfin/functions/` with:
   `rayfin/data/`)
 - `host.json` and `local.settings.json`
 - `src/function_app.ts` and `src/types.ts`
-- `.vscode/settings.json`
+- `.vscode/settings.json` and `.vscode/launch.json` (a Node debugger attach config)
+- `.gitignore` (excludes `host.json`, `local.settings.json`, and build output)
 
-It then enables `services.functions.enabled: true` in `rayfin.yml`, runs `npm install` and
-`npm run build` inside `rayfin/functions/`, generates `types.ts`, and starts a background
-watcher that regenerates `types.ts` whenever function source files change.
+On a fresh scaffold, it also enables `services.functions.enabled: true` in `rayfin.yml`. On
+every run — fresh scaffold or not — it installs dependencies, builds, and regenerates
+`rayfin/functions/src/types.ts` from your function source files. Regeneration is a one-shot
+pass, not a background watcher; re-run `functions init` (without `--force`) any time you
+want to refresh `types.ts` without touching your scaffolded code.
 
 | Flag | Description |
 | --- | --- |
-| `--force` | Overwrite an existing `rayfin/functions/` scaffold. Without it, an existing scaffold is left untouched and the command only reinstalls dependencies, rebuilds, and restarts the type watcher if needed. |
+| `--force` | Overwrite an existing `rayfin/functions/` scaffold. Without it, an existing scaffold is left untouched and the command only reinstalls dependencies, rebuilds, and regenerates `types.ts`. |
 
 > [!NOTE]
-> Scaffolding downloads a Fabric user-data-functions runtime tarball from GitHub, so
+> Scaffolding installs `@microsoft/fabric-user-data-functions` from the npm registry, so
 > `functions init` requires network access.
-
-## `functions typegen`
-
-```bash
-npx rayfin functions typegen
-```
-
-Regenerates `rayfin/functions/src/types.ts` (or wherever your Functions project lives) from
-the current function source files, without re-scaffolding anything.
-
-| Flag | Description |
-| --- | --- |
-| `-w, --watch` | Watch for changes and regenerate automatically. This is what the background watcher started by `functions init` runs. |
 
 ## Deploying
 

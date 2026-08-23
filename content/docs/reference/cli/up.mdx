@@ -1,6 +1,6 @@
 ---
 title: Up
-description: rayfin up deploys to Microsoft Fabric and applies pending schema migrations in one step — plus every up subcommand for status, schema, secrets, and static hosting.
+description: rayfin up deploys to Microsoft Fabric and applies pending schema migrations in one step — plus every up subcommand for status, schema, and static hosting.
 ---
 
 `rayfin up` is the canonical deploy command. It creates (or reuses) a Fabric item, applies
@@ -34,7 +34,7 @@ If you aren't signed in, `rayfin up` launches an interactive login automatically
 5. If `services.data.enabled` is `true`: generates and applies the Data API Builder
    configuration for your entities.
 6. If `services.functions.enabled` is `true`: builds, packages, and deploys Functions
-   (experimental — see [Functions](/docs/reference/cli/functions)).
+   (experimental — see [rayfin functions](/docs/reference/cli/functions)).
 7. Writes deployment metadata to `rayfin/.deployments.json` and merges the matching
    `RAYFIN_PUBLIC_*` values into `rayfin/.env`.
 8. If `services.staticHosting.enabled` is `true` (and not excluded): runs the configured
@@ -94,26 +94,17 @@ static deploy step.
 | `--force` | Allow destructive schema changes that may result in data loss. |
 | `--json` | Output the result as JSON. |
 
-## `up secrets apply`
+## Managing secrets
+
+Secrets are not an `up` subcommand — they're managed with the top-level `secret` command
+group, against the same deployed workload endpoint that `up` creates:
 
 ```bash
-npx rayfin up secrets apply
+npx rayfin secret set API_KEY
+npx rayfin secret list
 ```
 
-Reads variables prefixed `RAYFIN_SECRET_` from `rayfin/.env`, sends them to the deployed
-workload over HTTPS, and validates that each one persisted. `RAYFIN_SECRET_API_KEY` in
-`.env` becomes a secret named `API_KEY`.
-
-| Flag | Description |
-| --- | --- |
-| `--env-file <path>` | Custom `.env` file location to read secrets from. |
-| `-v, --verbose` | Enable detailed logging. |
-| `-y, --yes` | Skip confirmation prompts. |
-| `--json` | Output the result as JSON, including per-secret persistence status. |
-
-Run `rayfin up` at least once first so the Rayfin item and workload endpoint exist. In
-CI/CD, set `RAYFIN_SECRET_*` variables directly in the environment instead of committing an
-`.env` file.
+See [Secret](/docs/reference/cli/secret) for the full command reference.
 
 ## `up staticapp deploy`
 
@@ -143,7 +134,7 @@ npx rayfin up functions deploy
 > [!NOTE]
 > Experimental. Only registered when `services.functions.enabled: true` in `rayfin.yml` (or
 > `RAYFIN_FEATURE_FLAGS` includes `functions`). See
-> [Functions](/docs/reference/cli/functions).
+> [rayfin functions](/docs/reference/cli/functions).
 
 Builds, packages, and deploys Functions to the remote Rayfin item as an escape hatch when
 you don't need the full `rayfin up` flow.
@@ -152,7 +143,7 @@ you don't need the full `rayfin up` flow.
 | --- | --- |
 | `-v, --verbose` | Enable verbose output. |
 | `--skip-build` | Skip the build command and deploy existing content. |
-| `--functions-prebuilt` | Deploy a locally-compiled zip, skipping the remote build. |
+| `--json` | Output the result as JSON. |
 
 ## `up list`
 
@@ -170,7 +161,9 @@ npx rayfin up switch <workspace>
 ```
 
 Switches the active recorded deployment and rewrites `rayfin/.env` (and, unless
-`--no-emit-env` is passed, the framework `.env.local`) to match.
+`--no-emit-env` is passed, the framework `.env.local`) to match. `<workspace>` is
+technically an optional positional argument — omit it when passing `--workspace-id`
+instead, or when passing `--list` to only inspect recorded deployments without switching.
 
 | Flag | Description |
 | --- | --- |

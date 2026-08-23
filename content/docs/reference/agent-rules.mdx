@@ -26,15 +26,19 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
   `@boolean`, `@date`, `@email`, `@set`.
 - Fields are **required by default**. For a nullable field use `{ optional: true }` and
   `?` together.
-- `@text()`'s length option is `max`, not `maxLength` — `@text({ max: 200 })`.
+- `@text()`'s length option is `max`, not `maxLength` — `@text({ max: 200 })`. Always set
+  it on MSSQL; see
+  [Known limitations](/docs/reference/known-limitations#text-without-max-breaks-graphql-schema-generation-on-mssql).
 - Use `@one(() => Target)` with a lazy arrow function for relationships. Rayfin
-  auto-generates the foreign key column, named `{property}_id`.
+  auto-generates the foreign key column, named `{property}_id` — see
+  [Known limitations](/docs/reference/known-limitations#foreign-keys-must-use-the-property_id-naming-convention).
 - Use `import`, not `import type`, for entity classes referenced inside `@one()` / `@many()`
   arrow functions — the decorator needs the runtime class value.
 - A foreign key column referencing another entity (`{property}_id`) must be `@uuid()` to
   match the primary key type. An auth-derived field such as `user_id` from `claims.sub` is
   `@text()`, not a foreign key.
-- Many-to-many is not supported. Use an explicit join entity with two `@one()` fields.
+- Many-to-many is not supported. Use an explicit join entity with two `@one()` fields. See
+  [Known limitations](/docs/reference/known-limitations#many-to-many-relationships-are-not-supported).
 
 ## Security
 
@@ -62,11 +66,14 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Use `.first(n).executePaginated()` with `.after(endCursor)` for pagination. Collection
   queries return a single page otherwise; the default page size is 100.
 - `count()` does not exist on the fluent client. Select minimal fields and use
-  `results.length`.
+  `results.length`. See
+  [Known limitations](/docs/reference/known-limitations#count-is-not-available).
 
 ## Auth
 
-- The session change callback is `onSessionChange`. **`onAuthStateChange` does not exist.**
+- The session change callback is `onSessionChange`. **`onAuthStateChange` does not
+  exist.** See
+  [Known limitations](/docs/reference/known-limitations#the-callback-is-onsessionchange-not-onauthstatechange).
 - Session objects are opaque. Gate UI on `isAuthenticated` or the presence of a `user`
   property — do not introspect the session.
 - After enabling or disabling auth in `rayfin.yml`, restart the backend so the updated
@@ -77,8 +84,8 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Always declare `services.auth` and `services.data` explicitly in `rayfin.yml`, even as
   `enabled: false`. The CLI reads those keys without guarding and does not apply defaults.
 - If `services.data.enabled` is `true`, `dialect` is required — `mssql` is the only
-  supported value. Omitting it fails at deploy time with `Dialect is required when Data
-  module is enabled`.
+  supported value. See
+  [Known limitations](/docs/reference/known-limitations#dialect-is-required-when-the-data-module-is-enabled).
 
 ## Deployment
 

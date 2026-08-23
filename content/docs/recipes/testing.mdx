@@ -106,8 +106,9 @@ export interface AuthUser {
  *
  * Two implementations ship with this template:
  *
- * - {@link MockAuthService} — used when the API URL points at localhost, before a
- *   Fabric backend has been deployed.
+ * - {@link MockAuthService} — used when the API URL points at localhost. Signs into
+ *   a local backend with a fixture email and password — both out of scope for a
+ *   Fabric-only app; see "What MockAuthService actually does" below.
  * - {@link RayfinAuthService} — used once deployed. Wraps the Fabric
  *   brokered auth flow from `@microsoft/rayfin-auth-provider-fabric`.
  *
@@ -203,6 +204,86 @@ export function bootstrapAuth(): IAuthService {
   });
 }
 ```
+
+## What `MockAuthService` actually does
+
+`bootstrapAuth()` picks `MockAuthService` whenever the configured API URL's hostname is
+`localhost` or `127.0.0.1` — including the default it falls back to
+(`http://localhost:5168`) when `VITE_RAYFIN_API_URL` is unset. In a fresh scaffold, that is
+the path the app takes until you point it at a deployed Fabric backend.
+
+`MockAuthService` is not an inert placeholder. Its `signIn()` authenticates with a fixture
+credential pair — a hardcoded email and a hardcoded password — against whatever backend
+the client was constructed with, and if that account doesn't exist yet on that backend, it
+registers the account first, then retries:
+
+```typescript title="src/services/MockAuthService.ts (scaffolded default)"
+// Local-dev fixture credentials. The bundled local backend ships without
+// Fabric/Entra, so this auth service signs in with a shared dev account.
+// These values only ever reach a developer's local machine — never use
+// them in production.
+const MOCK_EMAIL = 'dev@contoso.com';
+const MOCK_PASSWORD = 'LocalDev!Pass123';
+```
+
+That is a credential-based sign-in against a local backend — both out of scope for a
+Fabric-only app (see [Fabric SSO is the only auth method](/docs/auth#fabric-sso-is-the-only-auth-method) —
+Fabric SSO is the only supported authentication method, and a Rayfin app has no local
+backend to sign in against). Leaving this file untouched means the app depends on that
+unsupported path any time `VITE_RAYFIN_API_URL` is unset or resolves to
+`localhost`/`127.0.0.1` — for example, in CI, or on a machine where the env file hasn't
+been set up yet — and a reader who never opens `MockAuthService.ts` has no reason to know
+that.
+
+For a Fabric-only app, do one of:
+
+- **Delete it.** Remove `MockAuthService.ts` and the `localDev` branch in `bootstrap.ts` so
+  `bootstrapAuth()` always constructs `RayfinAuthService` (Fabric SSO).
+- **Replace its body with an in-memory double.** Keep the class and the seam, but make it
+  genuinely local — no `RayfinClient`, no request to any backend, just a fixed in-memory
+  user:
+
+```typescript title="src/services/MockAuthService.ts (in-memory replacement — calls no backend)"
+import type { AuthUser, IAuthService } from './IAuthService';
+
+const FAKE_USER: AuthUser = {
+  id: 'local-dev-user',
+  email: 'dev@example.com',
+  name: 'Local Dev',
+};
+
+/**
+ * Zero-backend stand-in for local iteration. Never calls a backend — there is
+ * no email/password exchange and nothing here points at a server.
+ */
+export class MockAuthService implements IAuthService {
+  readonly fabricAuthEnabled = false;
+  private signedIn = false;
+
+  async signIn(): Promise<AuthUser> {
+    this.signedIn = true;
+    return FAKE_USER;
+  }
+
+  async signOut(): Promise<void> {
+    this.signedIn = false;
+  }
+
+  async getCurrentUser(): Promise<AuthUser | null> {
+    return this.signedIn ? FAKE_USER : null;
+  }
+
+  async initEmbeddedAuth(): Promise<AuthUser | null> {
+    return null;
+  }
+}
+```
+
+This keeps the exact seam the rest of this page tests against — `IAuthService` plus the
+constructor injection in `bootstrapAuth()` — without shipping a credentialed sign-in or an
+assumption that a local backend exists. It is the same shape as the ad hoc stub objects
+constructed inline in the tests below; the difference is this one lives in
+`src/services/` and is wired in by `bootstrapAuth()` instead of being constructed per test.
 
 Tests skip `bootstrapAuth()` entirely. Because the app takes its auth service as a prop
 (`<AuthProvider authService={...}>`), a test can construct a third, minimal implementation

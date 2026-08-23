@@ -92,6 +92,12 @@ frontend from `localhost`. Keep `http://localhost:5173` in `allowedRedirectUris`
 
 - **Rayfin** is the product. Use it as the primary name.
 - **Fabric app** (or "managed Fabric app") is the deployed, Microsoft Fabric–hosted mode.
+  Use this in prose.
+- In the Fabric portal, the item you create from **New item** is called **App (preview)**.
+  Use that exact label whenever you are describing something the reader clicks, so the docs
+  match what is on screen.
+- **Fabric data app** is a specific *template* name, not the item type. Do not use it as a
+  general term for the deployed app, and do not use it in New item instructions.
 - Never write "Project Rayfin" — it is not an official term.
 
 ## Accuracy

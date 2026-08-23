@@ -4,9 +4,18 @@ description: rayfin init ai-files install and status manage AGENTS.md, .mcp.json
 ---
 
 `rayfin init ai-files` installs and refreshes the three agent context files a Rayfin
-project ships: `AGENTS.md`, the `mcpServers.rayfin` key in `.mcp.json`, and
-`.agents/skills/rayfin/SKILL.md`. See [Agent files in your project](/docs/reference/cli/ai-files)
-for what each file is for; this page is the command reference.
+project ships:
+
+- **`AGENTS.md`** — project-level instructions for coding agents (scope, conventions,
+  commands to build/test/lint). A one-time install: the CLI seeds a default on first
+  scaffold and never overwrites it afterward, so your edits stick.
+- **The `mcpServers.rayfin` key in `.mcp.json`** — wires up the Rayfin MCP server so
+  connected agents can query version-locked Rayfin documentation as structured tool calls
+  instead of shelling out to `rayfin docs`. See [Docs](/docs/reference/cli/docs#mcp-server).
+- **`.agents/skills/rayfin/SKILL.md`** — the Rayfin skill: guidance an agent loads to know
+  which docs tools to call, common Rayfin patterns, and project conventions.
+
+This page is the command reference for keeping those three files installed and up to date.
 
 Scaffolding with `npm create @microsoft/rayfin@latest` or `rayfin init` installs these
 automatically — you typically only run this by hand to refresh an existing project after

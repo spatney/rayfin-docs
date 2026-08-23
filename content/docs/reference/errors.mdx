@@ -13,14 +13,13 @@ the matching heading for the full fix.
 | --- | --- | --- |
 | "Internal server error" from the data API, after a deploy that reported success | `@text()` field with no `max` produced `NVARCHAR(MAX)` on MSSQL | Add `@text({ max: N })` to every string field, then reapply the schema |
 | `Dialect is required when Data module is enabled` (400 at deploy time) | `services.data.enabled: true` with no `dialect` in `rayfin.yml` | Set `dialect: mssql` |
-| `unsupported UUID` error | Another service is already running on the default port with a different database dialect | Stop the conflicting service, then retry |
 | `Failed to acquire authentication token` | Not signed in, or no OS credential storage available | `rayfin login`; on restricted systems set `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` |
 | `rayfin up db apply` refuses to run, warns of data loss | The pending change drops a column/table or alters a type | Review the change; re-run with `--force` only once you accept the loss |
 | A newly added entity isn't readable right after a deploy that reported success | The schema migration step hadn't finished applying, or the client/cache is stale | Run `rayfin up status`; confirm schema apply completed before querying the new entity |
 | Deployment fails with `401` or `403` | Your Fabric session expired | `rayfin login`, then retry `rayfin up` |
 | `No remote endpoint configured` from `staticapp deploy` | No full deployment has happened yet | Run `rayfin up` once, then use `staticapp deploy` for subsequent updates |
 | Static deploy exceeds the size limit | Build output includes source maps or dev-only assets | Exclude dev artifacts from the production build, or move binaries to storage |
-| `No secrets found in .env file` | Missing `rayfin/.env`, or variables aren't prefixed `RAYFIN_SECRET_` | Create `rayfin/.env` with `RAYFIN_SECRET_*` entries |
+| `rayfin secret set` exits without prompting | stdin is not a TTY, or `CI=true` — the command is interactive only | Run it from an interactive terminal; there is no CI path today |
 | Popup blocked during Fabric sign-in | `ensureSignedInWithFabric` was called outside a user-gesture handler | Call it directly from a button's `onClick` |
 
 ## Deployment and schema apply
@@ -53,15 +52,6 @@ services:
     enabled: true
     dialect: mssql
 ```
-
-### `unsupported UUID` errors
-
-**Symptom:** `rayfin up db apply` fails with an `unsupported UUID` error.
-
-**Cause:** another service is already listening on the default port, backed by a database
-dialect different from the one your current project expects.
-
-**Fix:** stop the conflicting service (or free the port), then retry.
 
 ### Database apply refuses to run (potential data loss)
 
@@ -110,37 +100,31 @@ stale schema.
 **Cause:** you aren't signed in, or the current environment (a container, a restricted
 CI runner) has no OS-backed credential storage for the CLI's token cache.
 
-**Fix:** run `npx rayfin login` (or `rayfin login --select` to choose a different
-account). On systems without OS credential storage, set
+**Fix:** run `npx rayfin login` — the account picker is always shown, so you can choose a
+different account. On systems without OS credential storage, set
 `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` (development environments only — this stores the
 token cache in plaintext).
 
-### "No secrets found in .env file"
+### `rayfin secret set` refuses to prompt
 
-**Symptom:** `rayfin up secrets apply` reports no secrets found.
+**Symptom:** `rayfin secret set <NAME>` exits without asking for a value.
 
-**Cause:** `rayfin/.env` doesn't exist, or none of its variables use the `RAYFIN_SECRET_`
-prefix.
+**Cause:** stdin is not a TTY, or `CI=true` is set. The command reads the value from a
+masked prompt and has no non-interactive mode.
 
-**Fix:** create `rayfin/.env` with secrets prefixed `RAYFIN_SECRET_` (for example,
-`RAYFIN_SECRET_API_KEY=...`), then rerun `npx rayfin up secrets apply`.
+**Fix:** run it from an interactive terminal. There is no supported way to set secrets
+from CI today. See [Secrets](/docs/deploy/secrets).
 
-### Secrets validation is inconclusive
+### Permission denied setting or listing secrets
 
-**Symptom:** `rayfin up secrets apply` sends secrets but validation doesn't confirm them.
+**Symptom:** `rayfin secret set` or `rayfin secret list` fails with a permission error.
 
-**Cause:** a network issue reaching Fabric, or the workload endpoint isn't healthy yet.
+**Cause:** the signed-in account doesn't have access to the target Fabric workspace, or
+the project has not been deployed yet.
 
-**Fix:** check `npx rayfin up status`, then re-run `npx rayfin up secrets apply`.
-
-### Permission denied applying secrets
-
-**Symptom:** `rayfin up secrets apply` fails with a permission error.
-
-**Cause:** the signed-in account doesn't have access to the target Fabric workspace.
-
-**Fix:** confirm you're signed in with an account that has workspace access; use
-`npx rayfin login --select` to pick a different account or tenant.
+**Fix:** run `npx rayfin up` first so the workload exists. Then confirm you're signed in
+with an account that has workspace access — run `npx rayfin login` again, the account
+picker is always shown.
 
 ## Static hosting
 

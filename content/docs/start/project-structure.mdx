@@ -80,7 +80,7 @@ Files in `rayfin/data/` define your entities — TypeScript classes decorated wi
 import { entity, authenticated, uuid, text, boolean } from '@microsoft/rayfin-core';
 
 @entity()
-@authenticated({ policy: (claims, item) => claims.sub.eq(item.user_id) })
+@authenticated('*', { policy: (claims, item) => claims.sub.eq(item.user_id) })
 export class Todo {
   @uuid() id!: string;
   @text({ max: 200 }) title!: string;

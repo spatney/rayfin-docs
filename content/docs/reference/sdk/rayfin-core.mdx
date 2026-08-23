@@ -319,7 +319,7 @@ function authenticated<TEntity extends object = object>(
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `actions` | `'create' \| 'read' \| 'update' \| 'delete' \| '*'`, or an array of them | `'*'` | The DAB action(s) this role may perform. |
+| `actions` | `'create' \| 'read' \| 'update' \| 'delete' \| 'execute' \| '*'`, or an array of them | `'*'` | The DAB action(s) this role may perform. `'execute'` applies to stored procedures. |
 | `options.policy` | `(claims, item) => PolicyExpression` | none | Row-level filter — see [Policy DSL](#policy-dsl-and-field-visibility) below. |
 | `options.include` | `(keyof TEntity)[]` | none | Restrict the role to only these fields. |
 | `options.exclude` | `(keyof TEntity)[]` | none | Hide these fields from the role. |
@@ -340,46 +340,29 @@ export class Todo {
 
 ### `@role(roleName, actions, options?)`
 
-The general-purpose form that `@authenticated()` is shorthand for. On the stable package
-export, `roleName` only accepts `'authenticated'` — it exists mainly so multiple role
-declarations read consistently when you also use the experimental `anonymous` role
-described below.
+The general-purpose form that `@authenticated()` and `@anonymous()` are shorthands for.
 
 ```typescript
 function role<TEntity extends object = object>(
-  roleName: 'authenticated',
+  roleName: 'authenticated' | 'anonymous',
   actions: SimpleAction | SimpleAction[],
   options?: RoleDeclarationOptions<TEntity>,
 ): RoleDecoratorFn<TEntity>;
 ```
 
-### `@anonymous()` — experimental
+### `@anonymous(actions?, options?)`
 
-Public, unauthenticated access is exported from the `/experimental` subpath, not the
-package root:
-
-```typescript
-import { anonymous, role } from '@microsoft/rayfin-core/experimental';
-```
+Public, unauthenticated access. Exported from the package root:
 
 ```typescript
-// From @microsoft/rayfin-core/experimental
 function anonymous<TEntity extends object = object>(
   actions?: SimpleAction | SimpleAction[], // default: '*'
   options?: RoleDeclarationOptions<TEntity>,
 ): RoleDecoratorFn<TEntity>;
-
-// Also from @microsoft/rayfin-core/experimental — widens roleName to accept 'anonymous'
-const role: <TEntity extends object = object>(
-  roleName: 'authenticated' | 'anonymous',
-  actions: SimpleAction | SimpleAction[],
-  options?: RoleDeclarationOptions<TEntity>,
-) => RoleDecoratorFn<TEntity>;
 ```
 
 ```typescript
-import { entity, uuid, text, authenticated } from '@microsoft/rayfin-core';
-import { anonymous } from '@microsoft/rayfin-core/experimental';
+import { entity, uuid, text, anonymous, authenticated } from '@microsoft/rayfin-core';
 
 @entity()
 @anonymous('read')
@@ -389,6 +372,11 @@ export class PublicPost {
   @text({ max: 200 }) title!: string;
 }
 ```
+
+> [!NOTE]
+> Anonymous access on a deployed Fabric app also requires a tenant administrator to enable
+> anonymous data access for the tenant. See
+> [Permissions](/docs/data/permissions) for the full picture.
 
 > [!WARNING]
 > Anonymous data access is not currently supported when deployed to Fabric: the CLI rejects

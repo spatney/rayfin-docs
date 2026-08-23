@@ -80,14 +80,18 @@ const session = client.auth.getSession();
 
 ## Token handling
 
-Access tokens are never exposed to application code — Rayfin manages them internally and
-attaches them to `client.data.*` and `client.functions.*` calls automatically. You don't
-read, store, or forward a token yourself.
+In normal use, Rayfin manages access tokens internally and attaches them to
+`client.data.*` and `client.functions.*` calls automatically — your code never reads,
+stores, or forwards a token itself.
 
 - `hasRefreshToken()` reports whether the session has a refresh token available.
 - `refreshSession()` refreshes the session using the stored refresh token and resolves with
   the new token response; it rejects with an `AuthError` if there's no refresh token or the
-  refresh fails.
+  refresh fails. This exists to satisfy the refresh contract, not as a supported way to
+  extract a token for reuse elsewhere — it still requires an existing browser session with
+  a stored refresh token, which is exactly what a Node.js script never has. See
+  [Seeding data](/docs/data/seeding#what-a-seed-script-can-authenticate-as) for what a
+  script can do without one.
 - Rayfin schedules a refresh automatically as the access token approaches expiry when a
   refresh token is available, so you generally don't need to call `refreshSession()`
   yourself.
