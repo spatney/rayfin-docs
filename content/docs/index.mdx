@@ -32,23 +32,71 @@ npx rayfin up
 > Rayfin supports TypeScript as the only language for data models, client code, and
 > application logic.
 
-## How it runs
+## Get started
 
-Rayfin apps are deployed and managed on Microsoft Fabric. Fabric hosts the MSSQL database,
-the API layer in front of it, and your built frontend as static content. Sign-in is Fabric
-SSO (Entra ID).
+If you read one page, read the [Quickstart](/docs/start/quickstart) — it goes from an empty
+terminal to a running app in four commands.
 
-You develop against it directly: `rayfin up` deploys the backend, and your frontend runs
-locally on your usual dev server while it talks to that deployment.
+- **[Installation](/docs/start/installation)** — install Node.js 20+ and the GitHub CLI on
+  Windows, macOS, or Linux.
+- **[Quickstart](/docs/start/quickstart)** — scaffold a project, deploy its backend to
+  Fabric, and run the frontend locally against it.
+- **[Project structure](/docs/start/project-structure)** — the `rayfin/` folder,
+  `rayfin.yml`, and how entity classes become a database schema.
+- **[Deploy to Fabric](/docs/start/deploy-to-fabric)** — enable the tenant setting, create
+  a Fabric app, and deploy with `rayfin login` and `rayfin up`.
 
-## Start here
+## How a Fabric app runs
 
-- **[Quickstart](/docs/start/quickstart)** — from nothing to a running app.
-- **[Installation](/docs/start/installation)** — prerequisites for Windows, macOS, and Linux.
-- **[Modeling entities](/docs/data/modeling)** — how TypeScript classes become tables and APIs.
-- **[Querying](/docs/data/querying)** — read and write data with the type-safe client.
-- **[Auth](/docs/auth)** — sign users in.
-- **[Deploy](/docs/deploy)** — ship to Microsoft Fabric.
+Rayfin runs one way: as a managed **Fabric app** on Microsoft Fabric.
+
+```mermaid
+flowchart TB
+  Dev[Developer] -->|rayfin up| CLI[Rayfin CLI]
+  CLI -->|deploy| Fabric
+
+  subgraph Fabric[Microsoft Fabric]
+    direction LR
+    StaticApp[Static Content]
+    WebService[WebService]
+    DataApi[Data API Builder]
+    Functions[Functions]
+    Storage[(Blob Storage)]
+    MSSQL[(MSSQL)]
+  end
+
+  User[End User] --> StaticApp
+  StaticApp --> WebService
+  WebService --> DataApi
+  WebService --> Functions
+  WebService --> Storage
+  DataApi --> MSSQL
+  Functions --> MSSQL
+  WebService -->|Fabric SSO| EntraID[Entra ID]
+```
+
+`rayfin up` packages your project and provisions it as a Fabric app: Fabric hosts the
+MSSQL database, a WebService and Data API Builder layer in front of it, your built frontend
+as static content, and sign-in through Fabric SSO (Entra ID) — the only auth provider
+available once the app is deployed. [Functions](/docs/functions) and
+[blob storage](/docs/storage) are optional services you enable in `rayfin.yml`; both are
+experimental and are not available in every Fabric region or tenant.
+
+During development, a local Vite server takes the place of the *Static Content* node above:
+`npx rayfin up --exclude-services staticHosting` deploys everything else to Fabric, and
+`npm run dev` serves the frontend from `localhost` against that deployed backend. There is
+no backend to run yourself.
+
+## Build your app
+
+- **[Data](/docs/data)** — model entities, query them, and control who can read each row.
+- **[Auth](/docs/auth)** — sign users in with Fabric SSO and read claims on the server.
+- **[Functions](/docs/functions)** — server-side TypeScript for logic that does not belong
+  in the client. Experimental.
+- **[Storage](/docs/storage)** — upload, serve, and secure files in blob storage.
+  Experimental.
+- **[Hosting](/docs/hosting)** — build and serve your frontend from the deployed app.
+- **[Deploy](/docs/deploy)** — secrets, environments, capacity, and troubleshooting.
 
 ## Using an agent
 

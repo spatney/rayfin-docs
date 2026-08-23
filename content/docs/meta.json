@@ -3,7 +3,10 @@
   "pages": [
     "index",
     "---Get started---",
-    "start",
+    "start/installation",
+    "start/quickstart",
+    "start/project-structure",
+    "start/deploy-to-fabric",
     "---Build---",
     "data",
     "auth",
