@@ -124,8 +124,8 @@ export default function HomePage() {
         </div>
 
         <p className="mt-4 text-center text-sm text-fd-muted-foreground">
-          Paste it into Copilot, ChatGPT, or Claude — it scaffolds the project, deploys the
-          backend, and explains what it built.
+          Hand it to a coding agent with a terminal &mdash; it scaffolds the project,
+          deploys the backend, and explains what it built.
         </p>
       </section>
 

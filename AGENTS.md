@@ -15,7 +15,7 @@ Markdown primitives that the renderer upgrades, not through MDX components.
 
 | Need | Author as | Renders as | In `.md` |
 | --- | --- | --- | --- |
-| Copy-pasteable prompt | ` ```prompt title="…" ` fence | Prompt card with Copy / Copilot / ChatGPT / Claude | intact fence |
+| Copy-pasteable prompt | ` ```prompt title="…" ` fence | Prompt card with Copy / Copilot app | intact fence |
 | Note, warning, tip | GFM alert `> [!NOTE]` | Callout | intact alert |
 | Diagram | ` ```mermaid ` fence | Diagram | intact fence |
 | Code sample | fenced block with a language + `title=` | Shiki block with copy button | intact fence |

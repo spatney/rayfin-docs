@@ -2,6 +2,8 @@
 
 import { useRef, useState, type ReactNode } from 'react';
 
+import { AGENT_LINKS } from '@/lib/agent-links';
+
 /**
  * Renders a ```prompt fence as a copyable prompt card.
  *
@@ -55,33 +57,16 @@ export function PromptCard({
           >
             {copied ? 'Copied' : 'Copy'}
           </button>
-          <button
-            type="button"
-            onClick={() =>
-              openIn((p) => `https://github.com/copilot?prompt=${encodeURIComponent(p)}`)
-            }
-            className="rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
-          >
-            Copilot
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              openIn((p) => `https://chatgpt.com/?q=${encodeURIComponent(p)}`)
-            }
-            className="rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
-          >
-            ChatGPT
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              openIn((p) => `https://claude.ai/new?q=${encodeURIComponent(p)}`)
-            }
-            className="rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
-          >
-            Claude
-          </button>
+          {AGENT_LINKS.map((agent) => (
+            <button
+              key={agent.id}
+              type="button"
+              onClick={() => openIn(agent.href)}
+              className="rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
+            >
+              {agent.label}
+            </button>
+          ))}
         </span>
       </figcaption>
 
