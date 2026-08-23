@@ -2,7 +2,11 @@
 
 import { useRef, useState, type ReactNode } from 'react';
 
-import { AGENT_LINKS } from '@/lib/agent-links';
+import {
+  COPILOT_APP_HINT,
+  COPILOT_APP_LABEL,
+  COPILOT_APP_URL,
+} from '@/lib/agent-links';
 
 /**
  * Renders a ```prompt fence as a copyable prompt card.
@@ -33,10 +37,24 @@ export function PromptCard({
     setTimeout(() => setCopied(false), 2000);
   }
 
-  function openIn(build: (prompt: string) => string) {
+  /**
+   * The app link carries no prompt, so hand it over on the clipboard instead.
+   *
+   * `window.open` stays synchronous — awaiting the clipboard write first would end the
+   * user-gesture context and get the popup blocked.
+   */
+  function openCopilotApp() {
     const text = readPrompt();
-    if (!text) return;
-    window.open(build(text), '_blank', 'noopener,noreferrer');
+    if (text) {
+      void navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        })
+        .catch(() => {});
+    }
+    window.open(COPILOT_APP_URL, '_blank', 'noopener,noreferrer');
   }
 
   return (
@@ -57,16 +75,14 @@ export function PromptCard({
           >
             {copied ? 'Copied' : 'Copy'}
           </button>
-          {AGENT_LINKS.map((agent) => (
-            <button
-              key={agent.id}
-              type="button"
-              onClick={() => openIn(agent.href)}
-              className="rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
-            >
-              {agent.label}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={openCopilotApp}
+            title={COPILOT_APP_HINT}
+            className="rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
+          >
+            {COPILOT_APP_LABEL}
+          </button>
         </span>
       </figcaption>
 

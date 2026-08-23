@@ -1,12 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { AGENT_LINKS } from '@/lib/agent-links';
+import {
+  COPILOT_APP_HINT,
+  COPILOT_APP_LABEL,
+  COPILOT_APP_URL,
+} from '@/lib/agent-links';
 
 const BUTTON =
   'inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground';
 
-/** Copy / open-in-assistant controls for a prompt whose text is known up front. */
+/** Copy / open-in-agent controls for a prompt whose text is known up front. */
 export function PromptActions({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -14,6 +18,23 @@ export function PromptActions({ text }: { text: string }) {
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  /**
+   * The app link carries no prompt, so hand it over on the clipboard instead.
+   *
+   * `window.open` stays synchronous — awaiting the clipboard write first would end the
+   * user-gesture context and get the popup blocked.
+   */
+  function openCopilotApp() {
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
+    window.open(COPILOT_APP_URL, '_blank', 'noopener,noreferrer');
   }
 
   return (
@@ -26,17 +47,14 @@ export function PromptActions({ text }: { text: string }) {
         {copied ? 'Copied' : 'Copy'}
       </button>
       <span aria-hidden className="mx-0.5 h-4 w-px bg-fd-border" />
-      {AGENT_LINKS.map((agent) => (
-        <a
-          key={agent.id}
-          href={agent.href(text)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={BUTTON}
-        >
-          {agent.label}
-        </a>
-      ))}
+      <button
+        type="button"
+        onClick={openCopilotApp}
+        title={COPILOT_APP_HINT}
+        className={BUTTON}
+      >
+        {COPILOT_APP_LABEL}
+      </button>
     </span>
   );
 }
