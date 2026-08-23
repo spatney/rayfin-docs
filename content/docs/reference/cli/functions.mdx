@@ -1,0 +1,68 @@
+---
+title: Functions
+description: rayfin functions scaffolds a serverless TypeScript Functions project under rayfin/functions/ and keeps its generated types in sync with your entities.
+---
+
+> [!NOTE]
+> The `rayfin functions` command group, `rayfin dev functions apply`, and
+> `rayfin up functions deploy` are only registered when `services.functions.enabled: true`
+> in `rayfin.yml` (or `RAYFIN_FEATURE_FLAGS` includes `functions`).
+
+`rayfin functions` scaffolds and maintains a serverless Functions project that shares
+entity types with your data model.
+
+## `functions init`
+
+```bash
+npx rayfin functions init [directory]
+```
+
+Scaffolds `rayfin/functions/` with:
+
+- `package.json` and `tsconfig.json` (wired as a TypeScript project reference to the
+  parent `rayfin/` project, so Functions code can `import type` entity types directly from
+  `rayfin/data/`)
+- `host.json` and `local.settings.json`
+- `src/function_app.ts` and `src/types.ts`
+- `.vscode/settings.json`
+
+It then enables `services.functions.enabled: true` in `rayfin.yml`, runs `npm install` and
+`npm run build` inside `rayfin/functions/`, generates `types.ts`, and starts a background
+watcher that regenerates `types.ts` whenever function source files change.
+
+| Flag | Description |
+| --- | --- |
+| `--force` | Overwrite an existing `rayfin/functions/` scaffold. Without it, an existing scaffold is left untouched and the command only reinstalls dependencies, rebuilds, and restarts the type watcher if needed. |
+
+> [!NOTE]
+> Scaffolding downloads a Fabric user-data-functions runtime tarball from GitHub, so
+> `functions init` requires network access.
+
+## `functions typegen`
+
+```bash
+npx rayfin functions typegen
+```
+
+Regenerates `rayfin/functions/src/types.ts` (or wherever your Functions project lives) from
+the current function source files, without re-scaffolding anything.
+
+| Flag | Description |
+| --- | --- |
+| `-w, --watch` | Watch for changes and regenerate automatically. This is what the background watcher started by `functions init` runs. |
+
+## Running and deploying
+
+- **Run locally**: [`rayfin dev functions apply`](/docs/reference/cli/dev#dev-functions-apply)
+  verifies Azure Functions Core Tools prerequisites and starts the local Functions runtime
+  against your active deployment.
+- **Deploy**: [`rayfin up functions deploy`](/docs/reference/cli/up#up-functions-deploy)
+  (experimental) builds, packages, and deploys Functions to the remote Rayfin item. A plain
+  `rayfin up` also deploys Functions automatically when the service is enabled.
+
+```prompt title="Scaffold a Functions project"
+Enable Functions in my Rayfin project (set services.functions.enabled: true if not already),
+then run `npx rayfin functions init` to scaffold rayfin/functions/. Show me the generated
+src/function_app.ts and explain how to add a new HTTP-triggered function that reads from one
+of my existing entities.
+```

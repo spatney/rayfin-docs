@@ -1,0 +1,15 @@
+{
+  "title": "SDK",
+  "description": "API reference for every @microsoft/rayfin-* package.",
+  "pages": [
+    "index",
+    "rayfin-core",
+    "rayfin-client",
+    "rayfin-data",
+    "rayfin-auth",
+    "rayfin-auth-provider-fabric",
+    "rayfin-functions",
+    "rayfin-storage",
+    "rayfin-lib"
+  ]
+}

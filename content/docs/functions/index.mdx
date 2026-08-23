@@ -1,0 +1,93 @@
+---
+title: Functions
+description: Run server-side TypeScript in Rayfin — when to use functions instead of client-side data access, and how to enable and scaffold them.
+---
+
+Rayfin functions are server-side TypeScript user-defined functions (UDFs) that run in the
+Fabric runtime and are invocable from your frontend through `RayfinClient` with full type
+safety, the same way `client.data.<Entity>` is typed.
+
+> [!NOTE]
+> `@microsoft/rayfin-functions` is an experimental package and may change substantially.
+
+## When to use functions
+
+Reach for a function whenever logic needs to run on the backend rather than the frontend:
+
+- **Sensitive operations** — secrets, API keys, or privileged access to external resources
+  that must never reach client-side code.
+- **Business logic that must not be tampered with** — anything a client could otherwise
+  bypass or forge by calling your data API directly.
+- **Server-side validation** — checks that have to be trustworthy, not just present in the
+  UI.
+- **Aggregation or transformation** — computing or reshaping data before it reaches the
+  client, instead of shipping raw rows and doing the work in the browser.
+
+If a frontend feature needs trusted server-side behavior, implement it as a function rather
+than adding an ad hoc backend service. For everything else — reading and writing your own
+entities — use [`client.data.<Entity>`](/docs/data/querying) directly; it's already
+authenticated and type-safe, and a function would only add a hop.
+
+## How functions fit the architecture
+
+A function is registered with `udf.func(name, handler, [])` in your functions project. Inside
+the handler, `RayfinContext.getDataClient()` gives you the same typed data client used on the
+frontend (`.select().where().execute()`), so a function can read and write your entities with
+the same query chain you already know. Functions can also declare **connections** to external
+services — see [Connections](/docs/functions/connections) — so they can call out to
+Fabric-managed resources like SQL, Key Vault, or OneLake using delegated auth instead of
+long-lived secrets.
+
+From the frontend, a function is just another typed call: `client.functions.<name>.invoke()`.
+See [Calling functions from your app](/docs/functions/calling-functions) for the client side.
+
+## Enable functions
+
+Set the `functions` flag in `rayfin/rayfin.yml`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  functions:
+    enabled: true
+```
+
+## Scaffold a functions project
+
+```bash
+npx rayfin functions init
+```
+
+This scaffolds `rayfin/functions/`, installs its dependencies, and generates the initial
+`types.ts` schema. Pass `--force` to re-scaffold, overwriting existing files:
+
+```bash
+npx rayfin functions init --force
+```
+
+See [Writing a function](/docs/functions/writing-functions) for the project layout and how
+to register your first function.
+
+## In this section
+
+- **[Writing a function](/docs/functions/writing-functions)** — project layout,
+  `function_app.ts`, `RayfinContext`, and local development.
+- **[Connections](/docs/functions/connections)** — delegated auth to external services like
+  SQL, Key Vault, and OneLake.
+- **[Calling functions from your app](/docs/functions/calling-functions)** — the typed
+  `FunctionClient` and error handling.
+- **[Deploying functions](/docs/functions/deploying)** — how functions ship alongside the
+  rest of your app.
+
+```prompt title="Add a Rayfin function for server-side logic"
+I need a piece of logic in my Rayfin app to run on the server instead of the client (explain
+what it does and why it shouldn't run in the browser).
+
+In rayfin/rayfin.yml, enable services.functions. Then run `npx rayfin functions init` if
+rayfin/functions/ doesn't exist yet, and add a new function in
+rayfin/functions/src/function_app.ts using udf.func(name, handler, []). Use
+RayfinContext<AppSchema> if the function needs typed access to my entities via
+ctx.getDataClient().
+
+After adding it, tell me how to run it locally with `npx rayfin dev functions apply` and how
+to call it from the frontend.
+```

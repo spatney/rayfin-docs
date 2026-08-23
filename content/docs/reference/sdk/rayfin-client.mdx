@@ -1,0 +1,180 @@
+---
+title: "@microsoft/rayfin-client"
+description: RayfinClient construction, configuration options, and the client.data, client.auth, and client.functions facades, with exact signatures from the SDK.
+appliesTo: "@microsoft/rayfin-client >= 1.31"
+---
+
+`@microsoft/rayfin-client` is the main SDK entrypoint. It composes
+[`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth),
+[`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data), and
+[`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) behind a single
+configured client, built on the HTTP plumbing in
+[`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib).
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-client
+```
+
+## `RayfinClient`
+
+Use `RayfinClient` in browser and frontend code — it includes the full `auth` facade.
+
+```typescript
+class RayfinClient<
+  TSchema extends EntitySchema = Record<string, any>,
+  TFunctionsSchema extends FunctionsSchema = FunctionsSchema,
+> {
+  readonly data: TypedDataClients<TSchema>;
+  readonly auth: Auth;
+  readonly functions: TypedFunctionClients<TFunctionsSchema>;
+  constructor(config: RayfinClientConfig);
+}
+```
+
+The first type parameter maps entity names to their classes, so `client.data.<Entity>` is
+fully typed. Pass your `AppSchema` (built from `rayfin/data/schema.ts`) and, if you use
+`@microsoft/rayfin-functions`, your `FunctionsSchema`.
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import type { AppSchema } from '../../rayfin/data/schema';
+
+const client = new RayfinClient<AppSchema>({
+  baseUrl: 'http://localhost:5168',
+  publishableKey: 'pk-commonSampleAppKey',
+});
+
+const todos = await client.data.Todo.select(['id', 'title']).execute();
+await client.auth.signIn({ email: 'user@example.com', password: 'password123' });
+```
+
+### `RayfinClientConfig`
+
+```typescript
+interface RayfinClientConfig extends ApiClientConfig {
+  authStorage?: AuthStorage | boolean;
+}
+
+interface ApiClientConfig {
+  baseUrl: string;
+  publishableKey: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+  getAccessToken?: () => string | null;
+  useProxy?: boolean;
+  onRefreshNeeded?: () => Promise<void>;
+}
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `baseUrl` | `string` | — | Required. The Rayfin backend's base URL. |
+| `publishableKey` | `string` | — | Required. The project's public `pk-*` key. Safe for client-side code. |
+| `authStorage` | `AuthStorage \| boolean` | `true` (browser) | `true` uses `localStorage`; `false` disables persistence (useful in Node.js scripts); or pass a custom object implementing `getItem`/`setItem`/`removeItem`/`clear`. |
+| `headers` | `Record<string, string>` | none | Extra headers sent with every request. |
+| `timeout` | `number` | none | Request timeout in milliseconds. |
+| `getAccessToken` | `() => string \| null` | wired up by `Auth` | Overrides how the client obtains an access token for the `Authorization` header. |
+| `useProxy` | `boolean` | `true` | Under a Vite dev server, rewrites `baseUrl` to a relative path so requests go through Vite's dev proxy instead of hitting the absolute URL directly (avoids local CORS issues). Set `false` to always use the literal `baseUrl`. |
+| `onRefreshNeeded` | `() => Promise<void>` | wired up by `Auth` | Called before a request is retried after a `401`. |
+
+`getAccessToken` and `onRefreshNeeded` are normally wired up automatically when `RayfinClient`
+constructs its internal `Auth` instance — most applications never set them directly.
+
+## `RayfinServerClient`
+
+Use `RayfinServerClient` in Node.js and worker code. It skips the browser-coupled `Auth`
+module entirely; you supply the access token yourself.
+
+```typescript
+class RayfinServerClient<TSchema extends EntitySchema = Record<string, any>> {
+  readonly data: TypedDataClients<TSchema>;
+  constructor(config: RayfinServerClientConfig);
+}
+
+interface RayfinServerClientConfig extends Omit<ApiClientConfig, 'getAccessToken'> {
+  accessToken?: string | (() => string | null);
+}
+```
+
+```typescript
+import { RayfinServerClient } from '@microsoft/rayfin-client';
+import type { AppSchema } from '../rayfin/data/schema';
+
+const client = new RayfinServerClient<AppSchema>({
+  baseUrl: process.env.RAYFIN_BASE_URL!,
+  publishableKey: process.env.RAYFIN_PUBLISHABLE_KEY!,
+  accessToken: () => incomingRequest.headers.authorization,
+});
+
+const todos = await client.data.Todo.select(['id', 'title']).execute();
+```
+
+`accessToken` accepts either a static string or a function, so a server can rotate the
+token it forwards per request (for example, from an incoming request's `Authorization`
+header).
+
+## The `data` facade
+
+Both client classes expose `.data`, typed as `TypedDataClients<TSchema>` — one
+`GraphQLEntityClient` per entry in `TSchema`, giving you `client.data.<Entity>.select()`,
+`.where()`, `.create()`, `.update()`, `.delete()`, and more. See
+[`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data) for the full query and mutation
+API.
+
+## The `auth` facade
+
+`RayfinClient.auth` is a full `Auth` instance from `@microsoft/rayfin-auth` — `signUp`,
+`signIn`, `signOut`, `sendMagicLink`, `onSessionChange`, and the rest of the session
+lifecycle. See [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) for the complete
+surface. `RayfinServerClient` has no `auth` property, since server code authenticates via
+the `accessToken` config option instead of a browser session.
+
+## The `functions` facade
+
+`RayfinClient.functions` is typed as `TypedFunctionClients<TFunctionsSchema>` — one
+`FunctionClient` per entry in your `FunctionsSchema`, each with a typed `invoke()`. See
+[`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions).
+
+## Errors
+
+Both client classes expose a static `errors` map, and instances throw these types instead
+of raw `Error`:
+
+```typescript
+class RayfinClientBase {
+  static readonly errors: {
+    SdkError: typeof SdkError;
+    AuthError: typeof AuthError;
+    NetworkError: typeof NetworkError;
+  };
+}
+```
+
+`SdkError` and `NetworkError` in this map are re-exported directly from
+`@microsoft/rayfin-lib`. `AuthError` is **not** — `@microsoft/rayfin-client` declares its
+own `AuthError extends SdkError`, distinct from (though structurally identical to)
+`@microsoft/rayfin-lib`'s own `AuthError` class. Import whichever one matches where the
+error actually originated; `instanceof` checks against the wrong package's `AuthError` will
+not match. Catch by branching on failure type:
+
+```typescript
+import { RayfinClient } from '@microsoft/rayfin-client';
+
+try {
+  await client.auth.signIn({ email, password });
+} catch (error) {
+  if (error instanceof RayfinClient.errors.AuthError) {
+    console.error('Auth failed:', error.message);
+  } else if (error instanceof RayfinClient.errors.NetworkError) {
+    console.error('Network issue:', error.message);
+  }
+}
+```
+
+> [!NOTE]
+> Newer releases of `@microsoft/rayfin-client` add `setDeprecationsSilenced()` and
+> `isDeprecationSilenced()` for quieting deprecation warnings in application code. See
+> [Deprecation warnings](/docs/reference/deprecations) for usage and the version this
+> applies to.

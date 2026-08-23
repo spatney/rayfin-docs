@@ -1,0 +1,226 @@
+---
+title: "@microsoft/rayfin-auth-provider-fabric"
+description: Fabric brokered authentication for Rayfin apps — ensureSignedInWithFabric, the embedded and popup flows, and why it only works inside the Fabric portal.
+appliesTo: "@microsoft/rayfin-auth-provider-fabric >= 1.31"
+---
+
+`@microsoft/rayfin-auth-provider-fabric` lets a Rayfin app authenticate through Microsoft
+Fabric's brokered sign-in instead of Rayfin's own email/password or magic-link flows. It
+requires `@microsoft/rayfin-auth` (for the `Auth` instance it operates on) and
+`@microsoft/rayfin-lib`.
+
+> [!NOTE]
+> This package's catalog listing mentions MSAL, but the installed implementation does not
+> depend on the MSAL.js library. It implements its own PKCE (S256) + `postMessage` broker
+> protocol against the Fabric portal — described below.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-auth-provider-fabric @microsoft/rayfin-auth @microsoft/rayfin-lib
+```
+
+## Where this works
+
+Fabric brokered auth only works when your app is reachable from — or embedded inside — the
+Fabric portal:
+
+- **Popup flow** — your app opens the Fabric portal in a new tab; the user signs in with
+  their Entra identity there, and the tab closes automatically once the handoff completes.
+- **Embedded flow** — your app runs inside a Fabric iframe (`?fabricEmbedded=true`) and
+  authenticates silently via `postMessage`, with no popup or user click.
+
+Both are unrelated to standalone local development — outside the Fabric portal, use
+`@microsoft/rayfin-auth`'s own email/password or magic-link flows instead.
+
+## `FabricAuthOptions`
+
+Every function in this package takes the same options shape:
+
+```typescript
+interface FabricAuthOptions {
+  workspaceId: string;
+  projectId: string;
+  fabricPortalUrl: string;
+  returnOrigin: string;
+  /** @deprecated backward-compat only, for pre-postMessage Fabric portals */
+  callbackUrl?: string;
+  fabricEmbedded?: boolean;
+}
+```
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `workspaceId` | `string` | The Fabric workspace ID. |
+| `projectId` | `string` | The Rayfin item ID (the AppBackend artifact ID in Fabric). |
+| `fabricPortalUrl` | `string` | The Fabric portal base URL, e.g. `https://app.fabric.microsoft.com`. Existing path and query parameters are preserved. |
+| `returnOrigin` | `string` | Your app's bare origin (e.g. `window.location.origin`) — the `postMessage` target origin for the handoff. |
+| `callbackUrl` | `string` | Full redirect URL for legacy, pre-`postMessage` Fabric portals. Defaults to `${returnOrigin}/auth/callback`. Deprecated — will be removed once the `postMessage` rollout completes. |
+| `fabricEmbedded` | `boolean` | Force embedded mode. Otherwise auto-detected from `?fabricEmbedded=true` in the URL or a prior `sessionStorage` flag. |
+
+## `ensureSignedInWithFabric` — the primary entry point
+
+```typescript
+function ensureSignedInWithFabric(auth: Auth, options: FabricAuthOptions): Promise<OpaqueSession>;
+```
+
+Implements a waterfall — the first step that succeeds short-circuits the rest:
+
+1. Already authenticated → return the existing session.
+2. A refresh token is available → attempt `auth.refreshSession()`.
+3. Running inside a Fabric iframe → acquire a session via `postMessage` handoff (no popup).
+4. Otherwise → open the Fabric portal in a new tab (`window.open()`) and wait for the
+   handoff, exchanging the resulting code for a session.
+
+```typescript
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
+
+const client = new RayfinClient({
+  baseUrl: 'http://localhost:5168',
+  publishableKey: 'pk-commonSampleAppKey',
+});
+
+document.querySelector('#sign-in')?.addEventListener('click', async () => {
+  const session = await ensureSignedInWithFabric(client.auth, {
+    workspaceId: '<fabric-workspace-id>',
+    projectId: '<rayfin-item-id>',
+    fabricPortalUrl: 'https://app.fabric.microsoft.com',
+    returnOrigin: window.location.origin,
+  });
+  console.log('Signed in:', session.user);
+});
+```
+
+> [!WARNING]
+> Step 4 calls `window.open()`. Call `ensureSignedInWithFabric` from inside a synchronous
+> user-gesture handler (a button's `onClick`), not on page load or after an `await` — the
+> browser's popup blocker will otherwise block it.
+
+## `initEmbeddedAuth` — page-load initialization
+
+```typescript
+function initEmbeddedAuth(auth: Auth, options: FabricAuthOptions): Promise<OpaqueSession | null>;
+```
+
+Call once at startup (for example, in a React `useEffect`). Returns `null` immediately if
+the app isn't running in embedded mode — it never opens a popup, so it is safe to call
+unconditionally on every page load. Apps that support both flows should call this on
+startup **and** wire `ensureSignedInWithFabric` to a sign-in button for the non-embedded
+case.
+
+```typescript
+import { initEmbeddedAuth } from '@microsoft/rayfin-auth-provider-fabric';
+
+const session = await initEmbeddedAuth(client.auth, fabricOptions);
+if (session) {
+  console.log('Embedded session established:', session.user);
+}
+```
+
+> [!WARNING]
+> Import `@microsoft/rayfin-auth-provider-fabric` with a static `import`, not a dynamic
+> `import()`, in your app's entry module. The package captures the `?fabricEmbedded=true`
+> URL flag into `sessionStorage` as a side effect at module load — a dynamic import can run
+> too late, after client-side navigation has already stripped the query string.
+
+## `initiateFabricLogin` — low-level popup only
+
+```typescript
+function initiateFabricLogin(auth: Auth, options: FabricAuthOptions): Promise<void>;
+```
+
+Opens the Fabric portal and waits for the `postMessage` handoff, without the
+already-authenticated or refresh-token pre-checks that `ensureSignedInWithFabric` performs.
+Called internally by `ensureSignedInWithFabric`'s step 4 — most apps should use
+`ensureSignedInWithFabric` instead of calling this directly.
+
+## Legacy callback bridge
+
+```typescript
+function bridgeFabricCallback(): boolean;
+```
+
+For Fabric portals that still redirect the popup to a callback page instead of using
+`postMessage`. Call it as early as possible on that callback page — it forwards any Fabric
+handoff parameters found in the URL back to the opener window (via `postMessage`, or
+`BroadcastChannel` when `window.opener` is unavailable) and closes the popup. Returns
+`true` if it handled a handoff, `false` otherwise. Deprecated — remove once your Fabric
+portal's redirect flow is fully retired in favor of `postMessage`.
+
+## Other exports
+
+The package root also exports two lower-level pieces that `initEmbeddedAuth` builds on,
+for advanced composition:
+
+```typescript
+function embeddedFabricLogin(auth: Auth, options: FabricAuthOptions): Promise<void>;
+
+function requestHandoff(params: {
+  callbackUrl: string;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  state: string;
+  timeoutMs?: number; // default 30000
+}): Promise<{ handoffCode: string; state: string }>;
+```
+
+`embeddedFabricLogin` performs a hard `auth.signOut()` before requesting the handoff, so a
+new embedded session never silently reuses a stale session from a previously signed-in
+Fabric user. Most applications should call `initEmbeddedAuth` rather than these directly.
+
+## Errors
+
+The package throws `AuthError` from `@microsoft/rayfin-lib` for validation and broker
+failures — missing required options, a blocked popup, an explicit broker error, or a
+handoff timeout:
+
+```typescript
+import { AuthError } from '@microsoft/rayfin-lib';
+
+try {
+  await ensureSignedInWithFabric(client.auth, fabricOptions);
+} catch (error) {
+  if (error instanceof AuthError) {
+    console.error(error.code, error.message);
+  }
+}
+```
+
+## Security notes
+
+- Every flow uses PKCE with the `S256` challenge method; the code verifier is held in a
+  closure and never persisted to `localStorage`.
+- Incoming `postMessage` events are validated against `fabricPortalUrl`'s origin.
+- The handoff waits up to five minutes before timing out.
+- In embedded mode, the iframe's own `localStorage` holds the session, isolated from the
+  parent frame by the browser's same-origin policy.
+
+## Environment variables
+
+`npx rayfin up` writes `RAYFIN_PUBLIC_ITEM_ID`, `RAYFIN_PUBLIC_WORKSPACE_ID`, and
+`RAYFIN_PUBLIC_PORTAL_URL` to `rayfin/.env`; `rayfin env --framework vite` maps them to
+`VITE_FABRIC_ITEM_ID`, `VITE_FABRIC_WORKSPACE_ID`, and `VITE_FABRIC_PORTAL_URL` in
+`.env.local`, which map to `projectId`, `workspaceId`, and `fabricPortalUrl` respectively.
+See [`rayfin.yml` auth configuration](/docs/reference/config/rayfin-yml) and
+[Fabric SSO](/docs/auth/fabric-sso).
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Popup blocked | Called outside a synchronous user-gesture handler | Call `ensureSignedInWithFabric` directly from a button's `onClick`. |
+| Session not persisting | `RayfinClient` misconfigured | Confirm `baseUrl` and `publishableKey` are correct. |
+| Times out after 5 minutes | Handoff code never received | Confirm `returnOrigin` matches your app's actual origin. |
+| Origin mismatch | Wrong portal URL for the environment | Verify `fabricPortalUrl` matches the Fabric portal you're actually using (production, PPE, dev). |
+| `initEmbeddedAuth` returns `null` | Not detected as embedded | Ensure the URL has `?fabricEmbedded=true`, or set `fabricEmbedded: true` explicitly. |
+| Embedded handoff timeout | Parent frame didn't respond | Verify `returnOrigin` matches the iframe's actual origin. |
+| State mismatch error | Replayed or stale response | Retry the flow from scratch; treat as a potential replay attempt if it recurs. |
+
+See [Errors and troubleshooting](/docs/reference/errors) for the full site-wide index.
+
+## Browser requirements
+
+This package targets browsers — it uses `window.open()`, `postMessage`,
+`BroadcastChannel`, and `window.location`. It is not intended for Node.js or server-side
+use.

@@ -1,0 +1,122 @@
+---
+title: Ai-files
+description: rayfin init ai-files install and status manage AGENTS.md, .mcp.json, and the Rayfin skill — flags, conflict resolution, exit codes, and the drift nudge in rayfin up.
+---
+
+`rayfin init ai-files` installs and refreshes the three agent context files a Rayfin
+project ships: `AGENTS.md`, the `mcpServers.rayfin` key in `.mcp.json`, and
+`.agents/skills/rayfin/SKILL.md`. See [Agent files in your project](/docs/ai/agent-files)
+for what each file is for; this page is the command reference.
+
+Scaffolding with `npm create @microsoft/rayfin@latest` or `rayfin init` installs these
+automatically — you typically only run this by hand to refresh an existing project after
+upgrading the CLI, or to add agent files to a project that predates them.
+
+## `ai-files install`
+
+```bash
+npx rayfin init ai-files install
+```
+
+Idempotent: re-running reconciles the project to the bundled content for your current CLI
+version. Nothing is written when the project is already up to date.
+
+| Flag | Description |
+| --- | --- |
+| `-f, --force [ids...]` | Overwrite items that were hand-edited (`user-modified`) or restore ones that were deleted (`missing`). With no arguments, applies to every managed item; pass one or more namespaced IDs (e.g. `--force mcp:rayfin`) to scope it. Never overwrites `AGENTS.md`. |
+| `-y, --yes` | Skip the interactive prompt and accept defaults (alias of `--non-interactive`). |
+| `--non-interactive` | Skip the interactive prompt and accept defaults (all items enabled). |
+| `--enable <id>` | Install or keep a specific item by its namespaced ID (e.g. `skill:rayfin`). Repeatable. |
+| `--disable <id>` | Stop managing a specific item — records the choice without deleting the on-disk file. Repeatable. Also accepts orphaned IDs the lockfile remembers but the current CLI no longer ships. |
+| `--remove-files` | Modifier for `--disable` that also deletes the on-disk file. Cannot be passed alone. |
+| `--json` | Emit a `{status, schemaVersion, dryRun, report}` envelope instead of human-readable progress lines. Implies non-interactive. |
+| `-n, --dry-run` | Classify what `install` would do and emit the report, without writing to disk. Pairs with `--json`. |
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success, no warnings. |
+| `1` | Hard error — invalid arguments, unknown ID, malformed lockfile, or an unrecovered write failure. |
+| `3` | Success with warnings (for example, `user-modified` items were preserved rather than overwritten). Distinct from `1` so scripted consumers can tell "you should look at this" apart from "the command failed." |
+
+## `ai-files status`
+
+```bash
+npx rayfin init ai-files status
+```
+
+Prints one line per managed item with its current state. Add `--json` for
+`{status, schemaVersion, items: ItemStatus[]}`.
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Emit a JSON object instead of formatted lines. |
+
+### Item states
+
+| State | Meaning |
+| --- | --- |
+| `up-to-date` | On disk; matches the lockfile and the bundled content. Nothing to do. |
+| `update-available` | On disk and matches the lockfile, but the CLI now ships different content. `install` refreshes it. |
+| `user-modified` | On disk but its hash doesn't match what the CLI last wrote — treated as an intentional edit. `install --force <id>` overwrites it; `install --disable <id>` keeps your version. |
+| `missing` | Previously installed, but the file is gone. `install --force <id>` reinstalls it. |
+| `not-installed` | Known to the CLI but not yet installed. Plain `install` installs it. |
+| `disabled` | Opted out via `--disable <id>`, or (for the skill) by removing the `rayfin-managed: true` frontmatter sigil. `install --enable <id>` re-enables. |
+| `orphaned` | The lockfile remembers an item the current CLI no longer ships. `install` cleans it up if untouched, or warns if you edited it. |
+| `unreadable` | On disk but malformed (e.g. invalid JSON in `.mcp.json`). Repair by hand, or `install --force <id>` to rebuild it. |
+
+## Conflict resolution
+
+The CLI tracks what it last wrote in `rayfin/.lockfile.json` — commit it so your team
+shares the same baseline. Re-running `install` compares the on-disk content against that
+lockfile and against the bundled content for your current CLI version:
+
+| State | Default | With `--force` |
+| --- | --- | --- |
+| `not-installed` | install | install |
+| `up-to-date` | no-op | no-op |
+| `update-available` | rewrite | rewrite |
+| `user-modified` | warn, preserve your content | overwrite with bundled |
+| `missing` | warn | reinstall |
+| `disabled` (via `--disable`) | skip | skip — `--force` alone won't re-enable; pass `--enable <id>` |
+| `disabled` (skill sigil removed) | skip | skip — pass `--enable <id> --force` to re-stamp the sigil |
+| `unreadable` | warn | overwrite (rebuild from scratch) |
+| `orphaned`, untouched | delete (lockfile + disk) | delete |
+| `orphaned`, edited | warn, preserve | delete |
+
+`AGENTS.md` is the one exception to all of this: it's a **one-time install**. If it already
+exists — written by the CLI, your template, or you by hand — `install` never overwrites it,
+even with `--force`.
+
+## Drift nudge
+
+`rayfin up` prints a one-line nudge at startup if any managed item is out of date,
+modified, missing, or newly shipped:
+
+```text
+ℹ️  Your project's Rayfin agent files have changes available. Run `rayfin init ai-files install` to refresh.
+```
+
+The same check runs at `rayfin dev` startup. It's content-based, not version-based —
+upgrading the CLI to a version that ships identical content produces no nudge.
+
+## Scripting and CI
+
+```bash
+# Check what would change without writing
+npx rayfin init ai-files install -n --json
+
+# Idempotent install in CI — warnings exit 3, hard errors exit 1
+npx rayfin init ai-files install --yes --json
+
+# Inspect current state without writes
+npx rayfin init ai-files status --json
+```
+
+```prompt title="Refresh agent files after a CLI upgrade"
+Check whether this project's Rayfin agent files have drifted with
+`npx rayfin init ai-files status --json`, then run
+`npx rayfin init ai-files install --yes --json` to refresh anything out of date. Tell me if
+any item came back user-modified and needs a manual decision.
+```

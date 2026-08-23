@@ -1,0 +1,20 @@
+{
+  "title": "Docs",
+  "pages": [
+    "index",
+    "---Get started---",
+    "start",
+    "---Build---",
+    "data",
+    "auth",
+    "functions",
+    "storage",
+    "hosting",
+    "---Ship---",
+    "deploy",
+    "recipes",
+    "---More---",
+    "reference",
+    "ai"
+  ]
+}

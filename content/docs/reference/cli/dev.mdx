@@ -1,0 +1,170 @@
+---
+title: Dev
+description: rayfin dev runs Rayfin Local, a Docker Compose-based development stack, plus the local Functions host — subcommands, flags, configuration, and troubleshooting.
+---
+
+> [!NOTE]
+> `rayfin dev`'s Docker stack is a preview feature, gated behind a feature flag. Enable it
+> with `RAYFIN_FEATURE_FLAGS=docker-local-dev`. See
+> [Environment variables](/docs/reference/config/environment-variables).
+
+`rayfin dev` runs Rayfin Local: a Docker Compose stack with containers for the WebService,
+database, and any other enabled services. It also hosts the `rayfin dev functions apply`
+local Functions runtime, which is available whenever Functions is enabled even without the
+Docker feature flag.
+
+Docker and Docker Compose (or Docker Desktop) must be installed and running before using
+the Docker-backed parts of this command.
+
+## Start the environment
+
+```bash
+export RAYFIN_FEATURE_FLAGS=docker-local-dev
+npx rayfin dev
+```
+
+This validates Docker is available, generates `rayfin/.temp/docker-compose.yml` from your
+project configuration, allocates ports for each enabled service, starts containers, and
+waits for health checks to pass before returning. Wait for a healthy result before
+continuing.
+
+> [!WARNING]
+> Without `RAYFIN_FEATURE_FLAGS=docker-local-dev` set, bare `rayfin dev` exits with an error
+> telling you to run `rayfin dev functions apply` instead — the Docker subcommands
+> (`db`, `status`, `watch`) are unavailable until the flag is on. A project with only the
+> `functions` feature enabled can still reach `rayfin dev functions apply`.
+
+## Flags
+
+| Flag | Description |
+| --- | --- |
+| `-d, --detach` | Run containers in detached mode. Enabled by default. |
+| `--pull` | Pull latest images before starting. |
+| `--stop` | Stop running containers without removing them. |
+| `--down` | Stop and remove containers, keeping volumes (data persists). |
+| `--purge` | Stop and remove containers **and** delete volumes — a full reset. |
+| `--health-timeout <seconds>` | Health check timeout in seconds. Default: `10`. |
+| `--export-env` | Print environment variables to stdout in `.env` format instead of writing them to `rayfin/.temp/.env`. |
+| `--skip-db-apply` | Skip the automatic database configuration apply on startup. |
+| `--debug` | Enable the Aspire Dashboard telemetry container for observability. |
+| `--env-file <path>` | Path to a `.env` file for `rayfin.yml` interpolation. |
+| `--no-emit-env` | Skip auto-regenerating the framework `.env.local`. Your dev server uses whatever values are already there. |
+| `-v, --verbose` | Enable verbose logging. |
+
+## Stopping and resetting
+
+```bash
+npx rayfin dev --stop     # stop containers, keep them and their volumes
+npx rayfin dev --down     # stop and remove containers, keep volumes
+npx rayfin dev --purge    # stop, remove containers, and delete volumes
+```
+
+Use `--purge` to recover from `unsupported UUID` errors or other stale-state issues; use
+`--down` for routine restarts.
+
+## `dev db apply`
+
+```bash
+npx rayfin dev db apply
+```
+
+Generates and applies Data API Builder configuration to the local development server. Run
+after changing entities under `rayfin/data/`.
+
+| Flag | Description |
+| --- | --- |
+| `--force` | Allow configuration changes that may result in data loss. |
+| `--gen-config-only` | Generate the configuration without applying it — use to inspect before applying. |
+
+## `dev storage apply`
+
+```bash
+npx rayfin dev storage apply
+```
+
+Generates and applies storage configuration to the local development server. Requires
+`RAYFIN_FEATURE_FLAGS=storage`.
+
+| Flag | Description |
+| --- | --- |
+| `--force` | Allow configuration changes that may result in data loss. |
+| `--gen-config-only` | Generate the configuration without applying it. |
+
+## `dev status`
+
+```bash
+npx rayfin dev status
+```
+
+Shows container health, port assignments, connection strings, and (when Auth is enabled)
+the publishable key. Add `--json` for machine-readable output. Exits `0` when healthy, `1`
+when no containers are running, `2` when containers are running but unhealthy.
+
+## `dev functions apply`
+
+```bash
+npx rayfin dev functions apply
+```
+
+Verifies Azure Functions Core Tools prerequisites (prompting for consent to install
+anything missing), then starts the local Rayfin Functions runtime against the active
+deployment. Available whenever `services.functions.enabled: true` — it does not require
+`docker-local-dev`.
+
+| Flag | Description |
+| --- | --- |
+| `--port <port>` | Port for the local function host. Default: `7071`. |
+| `--inspect-port <port>` | Port for the Node.js inspector when debugging is on. Default: `9229`. |
+| `--no-debug` | Disable the Node.js inspector on `func start`. |
+| `--no-emit-env` | Skip auto-regenerating the framework `.env.local` from `rayfin/.env`. |
+
+See [Functions](/docs/reference/cli/functions) for scaffolding a Functions project first.
+
+## `dev watch`
+
+```bash
+npx rayfin dev watch
+```
+
+Watches `rayfin/data` (or `rayfin/storage`) and automatically re-applies configuration on
+change.
+
+| Flag | Description |
+| --- | --- |
+| `--type <type>` | What to watch: `db` (`rayfin/data`, default) or `storage` (`rayfin/storage`). |
+
+## Configuration
+
+`rayfin/rayfin.yml` controls which services run locally. Changes require restarting the
+environment:
+
+```bash
+npx rayfin dev --down
+npx rayfin dev
+```
+
+## Enabling preview features
+
+```bash
+export RAYFIN_FEATURE_FLAGS=docker-local-dev
+# Combine multiple flags with a comma:
+export RAYFIN_FEATURE_FLAGS=docker-local-dev,storage
+```
+
+## Troubleshooting
+
+- **Docker not running** — start Docker Desktop or the Docker daemon.
+- **`dev db apply` fails** — wait for services to report healthy first (`rayfin dev
+  status`), then retry.
+- **Stale services** — `rayfin dev --down`, then restart with `rayfin dev`.
+- **`unsupported UUID` errors** — stop stale services with `rayfin dev --down`.
+- **Port conflicts** — `rayfin dev --purge` for a full reset. Ports also auto-increment
+  past a busy default so multiple projects can run side by side; see
+  [Environment variables](/docs/reference/config/environment-variables) for the port
+  variable table.
+
+```prompt title="Reset a stuck local dev environment"
+My Rayfin Local Docker stack is reporting unhealthy services. Run `npx rayfin dev --purge`
+to fully reset it (this deletes local database volumes), then `npx rayfin dev` to start
+fresh, and `npx rayfin dev status` to confirm everything is healthy.
+```

@@ -1,0 +1,6 @@
+{
+  "title": "Reference",
+  "description": "Complete CLI, configuration, and SDK reference.",
+  "root": true,
+  "pages": ["index", "cli", "config", "sdk", "known-limitations", "deprecations", "errors"]
+}

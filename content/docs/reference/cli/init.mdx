@@ -1,0 +1,105 @@
+---
+title: Init
+description: Scaffold a new Rayfin project with npm create, add Rayfin to an existing one with rayfin init, or reconfigure an existing project's services.
+---
+
+## Create a new project
+
+```bash
+npm create @microsoft/rayfin@latest my-app
+```
+
+`npm create @microsoft/rayfin@latest` resolves to the `@microsoft/create-rayfin` package,
+following npm's `npm create <name>` convention. It shares its implementation with
+`rayfin init` below, but treats the project name as a new directory to create rather than
+an existing directory to initialize in place.
+
+The project name is a **positional argument**, not a flag. Use a valid directory name, or
+`.` to scaffold into the current directory.
+
+The CLI prompts interactively for a template and, once a template with a Data service is
+selected, a database dialect — unless you skip the prompt with `-t/--template`. See
+[Templates](/docs/reference/cli/templates) for choosing a built-in template, scaffolding
+from a git URL, or authoring your own.
+
+## Add Rayfin to an existing project
+
+Use `rayfin init` instead of `npm create` for a project that already has source code, or an
+empty directory you don't want treated as a template target:
+
+```bash
+npm install --save-dev @microsoft/rayfin-cli
+npx rayfin init [directory]
+```
+
+`[directory]` defaults to the current directory and doubles as the default project name. A
+bare name with whitespace is slugified for the folder (`My App` → `my-app/`); pass
+`"./My App"` to keep the spaces.
+
+## Interactive prompts
+
+Without flags to skip them, `rayfin init` (and `npm create`) prompt for:
+
+- **Template** — which starting point to scaffold from (skip with `-t/--template`).
+- **Services** — Auth and Data are always offered. Storage and Functions prompts only
+  appear when their preview feature flag is on (`RAYFIN_FEATURE_FLAGS=storage` or
+  `RAYFIN_FEATURE_FLAGS=functions`) — see
+  [Environment variables](/docs/reference/config/environment-variables).
+- **Database dialect** — shown when Data is enabled. `mssql` is the only choice unless
+  `RAYFIN_FEATURE_FLAGS=postgresql` is set, which also offers `postgresql`.
+- **Auth methods** — Fabric SSO, email/password, and magic-link are the supported methods;
+  which are offered depends on the services you enabled.
+- **Static hosting** — enabled by default; the prompt lets you point it at a different
+  build output folder or command.
+
+## Reconfiguring an existing project
+
+Running `rayfin init` again in a project that already has `rayfin/rayfin.yml` re-runs the
+prompts and regenerates the configuration. Use this to enable or disable services, switch
+the database dialect, or toggle static hosting without hand-editing `rayfin.yml`.
+
+> [!TIP]
+> Reconfiguring **preserves your data model files under `rayfin/data/`**. Only
+> `rayfin/rayfin.yml` and scaffold-level files are regenerated.
+
+## Flags
+
+| Flag | Description |
+| --- | --- |
+| `--project-name <name>` | Override the project name and update `rayfin.yml`. |
+| `-t, --template <uri>` | Template name, git URL, or local path to scaffold from. Skips the template picker. |
+| `--template-name <name>` | Pick one template from a multi-template source non-interactively. Requires `-t/--template` pointing at that source. |
+| `-l, --list-templates` | Print available templates as JSON and exit. |
+| `--services <list>` | Comma-separated services to enable non-interactively, e.g. `auth,data,storage`. |
+| `--auth-methods <list>` | Comma-separated auth methods to enable, e.g. `fabric`. |
+| `--static-hosting` | Scaffold a static frontend. Enabled by default. |
+| `--overwrite` | Overwrite existing configuration files instead of prompting. |
+| `-w, --workspace <name>` | Fabric workspace display name to pre-associate with the project. Mutually exclusive with `--workspace-id`. |
+| `--workspace-id <id>` | Fabric workspace ID to pre-associate with the project. Mutually exclusive with `--workspace`. |
+| `--item-id <id>` | Fabric App Item ID to pre-associate with the project. |
+
+Global `-y/--yes`, `--verbose`, and `--json` also apply — see [CLI](/docs/reference/cli).
+
+## What happens after scaffolding
+
+The CLI creates the `rayfin/` directory (`rayfin.yml`, `data/`, a gitignore entry for
+`rayfin/.env`) and then installs the project's agent context files — `AGENTS.md`,
+`.mcp.json`, and `.agents/skills/rayfin/SKILL.md` — automatically. See
+[Ai-files](/docs/reference/cli/ai-files) for what those files are and how to refresh them
+later.
+
+## Next steps
+
+```bash
+npx rayfin login
+npx rayfin up
+```
+
+See [Login](/docs/reference/cli/login) and [Up](/docs/reference/cli/up).
+
+```prompt title="Reconfigure a project to add Storage"
+My Rayfin project at the current directory already has a rayfin/rayfin.yml with Auth and
+Data enabled. Set RAYFIN_FEATURE_FLAGS=storage and run `npx rayfin init` again to add the
+Storage service, keeping my existing entities under rayfin/data/ untouched. Then show me the
+resulting rayfin.yml.
+```

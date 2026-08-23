@@ -1,0 +1,205 @@
+---
+title: Modeling entities
+description: Define Rayfin entities as decorated TypeScript classes in rayfin/data/ and register them in schema.ts to get a database table and a typed API.
+---
+
+A Rayfin entity is a TypeScript class decorated with `@entity()`. Rayfin reads the class
+at build time and generates a database table, a REST endpoint, a GraphQL endpoint, and a
+typed client method for it — you never write SQL or a schema file by hand.
+
+This page covers the mechanics of defining an entity: where the file lives, how the
+primary key works, how to register the entity so the client can see it, and the
+TypeScript compiler settings the decorators require. For the full list of field
+decorators, see [Field types](/docs/data/field-types). For foreign keys and navigation
+properties, see [Relationships](/docs/data/relationships).
+
+## Where entity files live
+
+Entities live in `rayfin/data/`, one class per file. The Rayfin CLI scans this folder
+when you run `rayfin up` or `rayfin up db apply`.
+
+```text
+your-project/
+├── rayfin/
+│   ├── data/
+│   │   ├── Todo.ts
+│   │   └── schema.ts
+│   ├── rayfin.yml
+│   └── tsconfig.json
+├── src/
+└── tsconfig.json
+```
+
+## Define an entity
+
+Add `@entity()` to a class and a field decorator to every property you want stored in the
+database. Import decorators from `@microsoft/rayfin-core`.
+
+```typescript title="rayfin/data/Todo.ts"
+import {
+  entity,
+  authenticated,
+  uuid,
+  text,
+  boolean,
+  date,
+} from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @boolean({ default: false }) isCompleted!: boolean;
+  @date() createdAt!: Date;
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+This single class produces:
+
+- A `todos` table (Rayfin pluralizes the class name for the source table).
+- A GraphQL entity reachable as `client.data.Todo` from the typed client.
+- A row-level security policy restricting every action to the row's owner (see
+  [Permissions and row-level security](/docs/data/permissions)).
+
+Every entity needs an explicit permission decorator — `@authenticated(...)` here. An
+entity with none of `@role()`, `@anonymous()`, or `@authenticated()` silently receives
+full CRUD access for any signed-in user. See
+[the warning on the permissions page](/docs/data/permissions#entities-without-a-permission-decorator)
+before you ship anything.
+
+## Entity primary key
+
+Every entity has a UUID `string` primary key named `id`.
+
+- If you omit `id` from the class body, Rayfin adds it to the schema automatically.
+- Declaring it explicitly (`@uuid() id!: string;`) is optional but recommended — it keeps
+  the TypeScript type complete and makes the field visible to tooling.
+- `id` is **optional when creating a record**: omit it and the server generates a UUID: `.
+  Supply your own UUID at creation time if you need a client-generated identifier.
+- Composite primary keys, or primary keys on a field other than `id`, are not supported.
+
+```typescript title="rayfin/data/Category.ts"
+import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*')
+export class Category {
+  @uuid() id!: string; // UUID primary key — auto-generated when omitted on create
+  @text({ max: 100 }) name!: string;
+}
+```
+
+## Register the entity in `schema.ts`
+
+`rayfin/data/schema.ts` maps entity names to their classes. `RayfinClient` uses this map
+to type `client.data.<Entity>` and to resolve relationship targets. Add every new entity
+to both the value array and the exported type.
+
+```typescript title="rayfin/data/schema.ts"
+import { Todo } from './Todo.js';
+
+export type AppSchema = {
+  Todo: Todo;
+};
+
+export const schema = [Todo];
+```
+
+When you add a second entity, extend both the type and the array:
+
+```typescript title="rayfin/data/schema.ts"
+import { Todo } from './Todo.js';
+import { Category } from './Category.js';
+
+export type AppSchema = {
+  Todo: Todo;
+  Category: Category;
+};
+
+export const schema = [Todo, Category];
+```
+
+Import the `AppSchema` type wherever you construct a `RayfinClient` — see
+[Querying](/docs/data/querying) for client setup.
+
+> [!NOTE]
+> Use `.js` extensions on relative imports between files under `rayfin/data/` (for example
+> `from './Todo.js'`), even though the source files are `.ts`. This matches the emitted
+> ESM output and is required for the imports to resolve at runtime.
+
+## The TC39 decorator requirement
+
+Rayfin entities use TC39 Stage 3 decorators — the same decorator syntax now standard in
+TypeScript — not the legacy experimental decorators used by older frameworks. This has
+two concrete consequences for your `tsconfig.json`:
+
+- **Never set `experimentalDecorators: true`.** Rayfin's decorators are incompatible with
+  the legacy decorator model.
+- **Never set `emitDecoratorMetadata: true`.** TypeScript only allows this alongside
+  `experimentalDecorators`, so enabling it breaks the same way.
+- **Add `ESNext.Decorators` to the `lib` array.** This is what actually enables TC39
+  decorator type-checking.
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "ESNext.Decorators"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"],
+  "references": [{ "path": "./rayfin" }]
+}
+```
+
+The `references` entry points at `rayfin/tsconfig.json`, a project-reference config the
+CLI uses to compile your entity definitions. It extends your root config and sets
+`composite: true`; you should not need to edit it directly.
+
+Projects scaffolded with `npm create @microsoft/rayfin@latest` already have these settings.
+If you are adding Rayfin to an existing project, verify your `tsconfig.json` matches the
+example above.
+
+> [!WARNING]
+> If your frontend build tool compiles independently of `tsc` (for example Vite with
+> esbuild), it must also target ES2022 or later, or decorator syntax fails to parse. Set
+> `target: 'es2022'` under `build`, `esbuild`, and `optimizeDeps.esbuildOptions` in
+> `vite.config.ts`, and use the default `@vitejs/plugin-react` (esbuild-based) plugin —
+> `@vitejs/plugin-react-swc` cannot parse TC39 decorators at any target setting and fails
+> with `Expression expected`.
+
+## Applying your changes
+
+Defining a class does not change the database by itself. Schema changes are picked up the
+next time you run `rayfin up` (or the narrower `rayfin up db apply`). See
+[Schema changes](/docs/data/migrations) for the full apply and verification workflow.
+
+## Best practices
+
+- Start every entity with an explicit permission decorator — never rely on the default.
+- Include a `user_id` field on any entity scoped to the signed-in user, and pair it with a
+  `policy` that compares it to `claims.sub` (see
+  [Permissions and row-level security](/docs/data/permissions)).
+- Always set `max` on `@text()` fields — see
+  [Field types](/docs/data/field-types#text-length-and-mssql) for why.
+- Keep one entity class per file, named after the class, so the CLI's file scan and your
+  imports stay predictable.
+
+```prompt title="Add a new entity"
+In my Rayfin project, add a new entity called Project in rayfin/data/Project.ts with
+fields: name (text, max 150), description (optional text, max 2000), isArchived (boolean,
+default false), createdAt (date), and user_id (text, max 128) for ownership. Add an
+@authenticated('*') permission decorator with a policy comparing claims.sub to
+item.user_id. Register the entity in rayfin/data/schema.ts by adding it to both the
+AppSchema type and the schema array. Then apply the schema change with `rayfin up`.
+```

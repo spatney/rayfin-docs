@@ -1,0 +1,191 @@
+---
+title: Validation
+description: Generate a Standard Schema validator directly from a Rayfin entity to validate form input without a separate validation library.
+---
+
+Rayfin can build a [Standard Schema](https://standardschema.dev) validator directly from
+a decorated entity class. Field constraints — required, max length, numeric range, enum
+membership — come from the same `@text()`, `@int()`, `@set()`, and other decorators you
+already wrote for the database schema, so there is nothing to duplicate and nothing to
+add: no separate Zod or Yup schema to keep in sync.
+
+> [!NOTE]
+> Rayfin entities use TC39 Stage 3 decorators, so any tool compiling your client code
+> must target **ES2022** or later. If you see `Expression expected` on `@entity()` (or
+> another decorator) when calling `toStandardSchema` or `getFieldConstraints`, your
+> bundler's target is too old. For Vite, set `target: 'es2022'` in `vite.config.ts` and
+> keep the default `@vitejs/plugin-react` (esbuild) plugin — `@vitejs/plugin-react-swc`
+> cannot parse these decorators regardless of `target`.
+
+## Build a validator from an entity
+
+Call `toStandardSchema` with the entity class. The primary key (`id`) is always omitted
+automatically — pass any other server-managed fields (timestamps, an owner ID your code
+sets from the session) in the `omit` option.
+
+```typescript title="src/forms/todoSchema.ts"
+import { toStandardSchema } from '@microsoft/rayfin-core';
+import { Todo } from '../../rayfin/data/Todo.js';
+
+// id is auto-omitted. List additional fields the form does not collect.
+export const todoInputSchema = toStandardSchema(Todo, {
+  omit: ['createdAt', 'isCompleted', 'user_id'] as const,
+});
+```
+
+The returned object implements the Standard Schema v1 contract (`~standard`), so it works
+with any compatible library — TanStack Form, Conform, tRPC v11, and others. It also
+exposes a `.validate()` method for direct use without going through that protocol.
+
+## Validate form input
+
+Call `.validate()` with the raw form values. The result is `{ value }` on success or
+`{ issues }` on failure — never both.
+
+```typescript
+const result = todoInputSchema.validate({
+  title: title.trim(),
+});
+
+if (result.issues) {
+  const errors: Record<string, string> = {};
+  for (const issue of result.issues) {
+    const key = String(issue.path?.[0] ?? '_');
+    if (!errors[key]) errors[key] = issue.message;
+  }
+  // errors.title, for example, holds the first message for that field
+} else {
+  // result.value is typed as Omit<Todo, 'id' | 'createdAt' | 'isCompleted' | 'user_id'>
+  await createTodo(result.value.title);
+}
+```
+
+Validation is synchronous — every check (type, length, regex, enum membership) runs in
+memory with no network or async overhead. Unknown fields not declared on the entity are
+rejected.
+
+## What gets validated
+
+| Decorator | Checks |
+| --- | --- |
+| `@text()` | Is a string. Enforces `min`, `max`, and `regex` when set. |
+| `@uuid()` | Is a string matching the UUID format. |
+| `@email()` | Is a string matching a practical email pattern. |
+| `@int()` | Is a finite integer. Enforces `min` and `max`. |
+| `@decimal()` | Is a finite number. Enforces `min` and `max`. |
+| `@boolean()` | Is a boolean. |
+| `@date()` | Is a `Date`, an ISO string, or a numeric timestamp. |
+| `@set()` | Value is one of the declared literal values. |
+
+Required fields (the default) produce a "required" issue when missing or `null`. Optional
+fields (`{ optional: true }`) are silently skipped when absent.
+
+## Read field constraints for UI hints
+
+`getFieldConstraints` reads a single field's decorator constraints without building a
+full schema — useful for a character counter or a "required" label.
+
+```typescript
+import { getFieldConstraints } from '@microsoft/rayfin-core';
+import { Todo } from '../../rayfin/data/Todo.js';
+
+const titleConstraints = getFieldConstraints(Todo, 'title');
+// { type: 'string', min: undefined, max: 200, optional: false }
+
+const maxLength =
+  titleConstraints?.type === 'string' ? titleConstraints.max : undefined;
+```
+
+The field name is checked against the entity's actual properties, so a typo is a
+compile-time error, not a runtime surprise.
+
+## Auto-omit behavior
+
+`toStandardSchema` automatically excludes:
+
+- The `id` primary key — server-generated, never a form input.
+- Relationship navigation properties (`@one`, `@many`) — these are set on the mutation
+  call directly (see [Creating, updating, deleting](/docs/data/mutations)), not collected
+  from a form field.
+
+List any other server-managed fields — timestamps, an owner ID taken from the session —
+in `omit`. The array is type-checked against the entity, so a misspelled field name fails
+to compile.
+
+## Complete React example
+
+```tsx title="src/forms/TodoForm.tsx"
+import { useMemo, useState, type FormEvent } from 'react';
+import { toStandardSchema, getFieldConstraints } from '@microsoft/rayfin-core';
+import { Todo } from '../../rayfin/data/Todo.js';
+
+interface TodoFormProps {
+  onSubmit: (value: { title: string }) => Promise<void>;
+}
+
+export function TodoForm({ onSubmit }: TodoFormProps) {
+  const [title, setTitle] = useState('');
+  const [error, setError] = useState('');
+
+  const todoInputSchema = useMemo(
+    () =>
+      toStandardSchema(Todo, {
+        omit: ['createdAt', 'isCompleted', 'user_id'] as const,
+      }),
+    [],
+  );
+
+  const titleConstraints = getFieldConstraints(Todo, 'title');
+  const maxLength =
+    titleConstraints?.type === 'string' ? titleConstraints.max : undefined;
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const result = todoInputSchema.validate({ title: title.trim() });
+    if (result.issues) {
+      setError(result.issues[0].message);
+      return;
+    }
+    setError('');
+    await onSubmit(result.value);
+    setTitle('');
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} />
+      {maxLength && (
+        <span>
+          {title.length}/{maxLength}
+        </span>
+      )}
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+      <button type="submit">Add</button>
+    </form>
+  );
+}
+```
+
+## Standard Schema interop
+
+The object returned by `toStandardSchema` implements `StandardSchemaV1` from
+`@standard-schema/spec`. Any library that reads the `~standard` property consumes it
+directly — you do not need `.validate()` in that case:
+
+```typescript
+// TanStack Form, Conform, tRPC v11, etc. read ~standard automatically.
+// Access it explicitly only if you need to call it outside such a library:
+const result = todoInputSchema['~standard'].validate(formValues);
+```
+
+`RayfinStandardSchema` and `StandardSchemaV1` are re-exported from `@microsoft/rayfin-core`,
+so you do not need a direct dependency on `@standard-schema/spec` just to reference the
+types.
+
+```prompt title="Add validated form input for an entity"
+In my Rayfin project, build a form validator for the Category entity in
+rayfin/data/Category.ts using toStandardSchema from @microsoft/rayfin-core. Only the
+"name" field should be collected from the form (omit any other server-managed fields).
+Write a small React component that validates on submit, shows the first validation error,
+and calls an onSubmit prop with the validated value.
+```

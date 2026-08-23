@@ -1,0 +1,128 @@
+---
+title: Quickstart
+description: Scaffold a Rayfin project, deploy its backend to Fabric, and run the frontend locally against it — from nothing to a running app in four commands.
+---
+
+This is the fastest path from nothing to a running Rayfin app. It assumes you have already
+installed the [prerequisites](/docs/start/installation) — Node.js 20+, Docker, and the
+GitHub CLI.
+
+Rayfin's default local development loop deploys your backend to Microsoft Fabric and runs
+your frontend locally against it — there is no bundled local database. (A fully
+Docker-backed local stack exists as a preview feature; see
+[Local development](/docs/start/local-development).)
+
+## 1. Scaffold a project
+
+```bash
+npm create @microsoft/rayfin@latest my-app
+cd my-app
+```
+
+The project name (`my-app`) is a positional argument, not a flag — use `.` to scaffold into
+the current directory instead. The CLI prompts you to pick a template and a database
+dialect interactively. To skip the prompt, pass `-t, --template <name>` — see
+[Project templates](/docs/reference/cli/templates) for the available names and how to
+scaffold from a git URL. Expect `✔ Project created`.
+
+## 2. Sign in to Fabric
+
+```bash
+npx rayfin login
+```
+
+This opens a browser window for interactive Entra ID sign-in. You need a Microsoft account
+with access to a Fabric workspace. If you skip this step, `rayfin up` launches it for you
+automatically. See [Deploy to Fabric](/docs/start/deploy-to-fabric) for tenant setup and
+non-interactive (service principal) sign-in.
+
+## 3. Deploy the backend
+
+```bash
+npx rayfin up --exclude-services staticHosting
+```
+
+`rayfin up` deploys your project as a Fabric data app: it creates (or reuses) the Fabric
+item, syncs your `rayfin.yml` settings, and applies the database schema generated from your
+entities. `--exclude-services staticHosting` skips building and uploading your frontend
+bundle, since the local Vite server is about to serve it instead — this is the invocation
+the scaffolded local workflow is built around. Wait for it to report success before
+continuing.
+
+## 4. Run the frontend
+
+In a second terminal:
+
+```bash
+npm run dev
+```
+
+The scaffolded `predev` script runs `rayfin env --framework vite` automatically, generating
+a `.env.local` that points at the backend you just deployed. When the dev server starts, it
+prints the local URL to open.
+
+## What the starter does
+
+Templates vary, but the bundled TypeScript starter renders a small CRUD page — for
+example, a Timestamp Tracker with a **Send Timestamp** button that creates a row and a
+**Refresh list** button that queries the newest 100 rows back. Its UI and data-fetching
+logic live in a single frontend file, so you can see the whole request path at a glance.
+
+## Make a change and reapply the schema
+
+Add a field to the entity your template scaffolded. For a `Timestamp` entity in
+`rayfin/data/Timestamp.ts`:
+
+```typescript title="rayfin/data/Timestamp.ts"
+import { entity, anonymous, uuid, text, date } from '@microsoft/rayfin-core';
+
+@entity()
+@anonymous()
+export class Timestamp {
+  @uuid() id!: string;
+  @date() timestamp!: Date;
+  @text({ max: 500 }) message!: string;
+}
+```
+
+Redeploy with the same command you used in step 3:
+
+```bash
+npx rayfin up --exclude-services staticHosting
+```
+
+`rayfin up` is the canonical command for applying a schema change — it re-syncs your
+configuration and applies any pending schema migration in one step. `rayfin up db apply` is
+a narrower subcommand that applies schema only, without the rest of what `rayfin up` does;
+reach for it only when you explicitly want to skip everything else. See
+[Local development](/docs/start/local-development) for the full local dev loop and
+[Schema migrations](/docs/data/migrations) for how migrations are generated and applied.
+
+## Point the frontend at a different backend
+
+`RAYFIN_PUBLIC_API_URL` in `rayfin/.env` is set automatically by `rayfin up`. To point your
+frontend at a different deployment, edit that value (or run
+[`rayfin up switch`](/docs/reference/cli/up) to activate a different recorded deployment)
+and re-run `npm run dev`.
+
+```prompt title="Scaffold and deploy a Rayfin app"
+Create a new Rayfin project called my-app using `npm create @microsoft/rayfin@latest`. When
+prompted for a template, choose one that includes both auth and data, and use the mssql
+dialect unless I tell you otherwise. Then:
+
+1. Sign in with `npx rayfin login` if I am not already authenticated.
+2. Deploy the backend with `npx rayfin up --exclude-services staticHosting` and wait until
+   it reports success.
+3. Start the frontend with `npm run dev` in a separate terminal.
+4. Tell me the local URL to open and summarize what the starter's UI does.
+```
+
+## Next
+
+- [Project structure](/docs/start/project-structure) — what got generated and why.
+- [Local development](/docs/start/local-development) — the full local dev loop, including
+  the Docker-based `rayfin dev` preview.
+- [Deploy to Fabric](/docs/start/deploy-to-fabric) — the full deploy, including static
+  hosting.
+- [Known limitations](/docs/reference/known-limitations) — worth a read before you start
+  modeling entities.

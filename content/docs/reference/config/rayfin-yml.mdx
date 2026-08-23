@@ -1,0 +1,134 @@
+---
+title: rayfin.yml reference
+description: The complete rayfin.yml schema, key by key — id, services.auth, services.data, services.storage, services.staticHosting, services.functions, and connectors.
+---
+
+`rayfin/rayfin.yml` is a project's committed configuration file: which services are
+enabled, the database dialect, static hosting settings, and Functions settings. The CLI
+reads it on every command and writes back to it during scaffolding, `rayfin init`
+reconfiguration, and (for `allowedRedirectUris` and connector entries) after a deploy.
+
+> [!WARNING]
+> Always declare `services.auth` and `services.data` explicitly, even as `enabled: false`.
+> The CLI reads those keys without guarding and does no defaulting — omitting either block
+> entirely causes a failure rather than falling back to a default. Also: if
+> `services.data.enabled` is `true`, omitting `dialect` causes a 400 at deploy time
+> (`Dialect is required when Data module is enabled`).
+
+## Top-level keys
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `id` | string | **Required.** Unique project identifier. Used as the Fabric item name when deploying. |
+| `name` | string | **Required.** Human-readable project name. |
+| `version` | string | **Required.** Project version string. |
+| `services` | object | **Required.** See below. |
+| `connectors` | map | Optional. External Fabric data sources keyed by name — see [Connector](/docs/reference/cli/connector). |
+| `frontend` | object | Deprecated. The frontend framework is now auto-detected from `vite.config.*` / `next.config.*` / `package.json` at runtime. Retained only for backward compatibility with older `rayfin.yml` files. |
+| `publishable_key` | string | Legacy. Some projects scaffolded by older CLI versions carry a top-level `publishable_key`. Current CLI versions manage the publishable key through `rayfin/.env` (`RAYFIN_PUBLIC_PUBLISHABLE_KEY`) instead — see [Environment variables](/docs/reference/config/environment-variables). |
+
+## `services.auth`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `enabled` | boolean | **Required.** Turns the Auth service on or off. |
+| `password.enabled` | boolean | Email/password sign-in. Local development only — deployed Fabric apps don't support it. |
+| `fabric.enabled` | boolean | Fabric SSO (Entra ID). The only auth method available in a deployed Fabric app. |
+| `allowedRedirectUris` | string[] | Origins allowed to receive auth redirects. `rayfin up` appends the live hosting URL here automatically after a static deploy. |
+| `expiryInMinutes` | number | Session token lifetime. |
+| `customClaims` | map | Additional claims to include in issued tokens. |
+| `scopes` | string[] | Additional OAuth scopes. |
+| `refreshToken.lifetimeInDays` | number | Refresh token lifetime. |
+| `email.enabled` | boolean | Enables transactional email (verification, password reset). |
+| `email.provider` | string | Email provider identifier. |
+| `email.senderName` | string | Display name on outgoing email. |
+| `email.verificationTokenExpirationHours` | number | Verification link lifetime. |
+| `email.passwordResetTokenExpirationMinutes` | number | Password reset link lifetime. |
+| `email.smtp.*` | object | SMTP connection settings (`host`, `port`, `senderEmail`, `username`, `password`, `useSsl`, `useStartTls`, `webPort`) — used locally with the Rayfin Local MailDev container. |
+| `passwordless.magicLink.enabled` | boolean | Magic-link sign-in. Requires `email.enabled: true`. |
+| `passwordless.magicLink.expiryMinutes` | number | Magic link lifetime. |
+| `passwordless.smsOtp.enabled` | boolean | SMS one-time-passcode sign-in. |
+
+## `services.data`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `enabled` | boolean | **Required.** Turns the Data service (Data API Builder) on or off. |
+| `dialect` | `mssql` \| `postgresql` | **Required if `enabled` is `true`.** `postgresql` requires the `postgresql` feature flag — see [Environment variables](/docs/reference/config/environment-variables). Deployed Fabric apps only support `mssql`. |
+
+## `services.storage`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `enabled` | boolean | Turns the Storage service (Azurite locally, Azure Storage when deployed) on or off. Requires the `storage` feature flag to configure interactively — see [Environment variables](/docs/reference/config/environment-variables). |
+
+## `services.staticHosting`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `enabled` | boolean | Turns static hosting on or off. |
+| `folder` | string | **Required if `enabled` is `true`.** Build output directory to package and deploy, relative to the project root. |
+| `buildCommand` | string | Command to run before packaging (e.g. `npm run build:fabric`). |
+| `indexDocument` | string | Default document served for directory requests (e.g. `index.html`). |
+| `root` | string | Root directory of the frontend project, relative to the project root. Optional. |
+
+## `services.functions`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `enabled` | boolean | Turns the Functions service on or off. `rayfin functions init` sets this to `true` automatically when scaffolding. |
+| `buildCommand` | string | Command to run before deploying Functions. Optional. |
+
+## Complete annotated example
+
+This is a real, deployed project's `rayfin.yml` (from a project scaffolded with the
+`todoapp` template):
+
+```yaml title="rayfin/rayfin.yml"
+id: test1
+name: test1
+version: 1.0.0
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true # Fabric SSO — required for the deployed app
+    password:
+      enabled: true # email/password — local development only
+    allowedRedirectUris:
+      - http://localhost:5173 # local Vite dev server
+      - https://clear-gale-6d8b0ba024-westus.webapp.rayfingwdev.com # appended by `rayfin up` after the first static deploy
+  data:
+    enabled: true
+    dialect: mssql # required whenever data.enabled is true
+  storage:
+    enabled: false # declared explicitly even though unused — see the warning above
+  staticHosting:
+    enabled: true
+    folder: dist # Vite's build output directory
+    buildCommand: npm run build:fabric
+    indexDocument: index.html
+  functions:
+    enabled: false
+publishable_key: pk-atYGKKCZi3uykRKndYqX # legacy — current CLI versions keep this in rayfin/.env instead
+```
+
+## Environment variable interpolation
+
+Any value in `rayfin.yml` can reference an environment variable with `${VAR}` or
+`${VAR:-default}`:
+
+```yaml
+services:
+  data:
+    dialect: ${DB_DIALECT:-mssql}
+```
+
+See [Environment variable interpolation](/docs/reference/config/env-interpolation) for the
+full syntax, type coercion rules, and resolution priority.
+
+```prompt title="Add PostgreSQL support to a project"
+Set RAYFIN_FEATURE_FLAGS=postgresql, then update my rayfin/rayfin.yml so services.data.dialect
+is postgresql instead of mssql. Explain what else I need to check before running
+`npx rayfin up` again with this change.
+```

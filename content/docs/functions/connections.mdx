@@ -1,0 +1,184 @@
+---
+title: Connections
+description: Connect a Rayfin function to external services with delegated auth — AudienceType values, the ctx.getToken() pattern, and SQL/Key Vault/OneLake examples.
+---
+
+Functions reach external resources through **delegated authentication**: the runtime
+exchanges the calling user's identity token for a resource-scoped on-behalf-of (OBO) token,
+so your function accesses resources **as the calling user**, not as a shared service
+identity. You declare a connection on the function, and the runtime hands you a scoped token
+at invocation time — you never manage a long-lived credential yourself.
+
+## The connection pattern
+
+Declare a connection in the third argument to `udf.func()`, and read the token inside the
+handler with `ctx.getToken(audienceType)`:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import { AudienceType } from '@microsoft/fabric-user-data-functions';
+
+udf.func(
+  'myFunction',
+  async (ctx: RayfinContext /*, ...user params */): Promise<T> => {
+    const token = ctx.getToken(AudienceType.X);
+    // Use the token with the appropriate SDK client.
+  },
+  [udf.connection({ audienceType: AudienceType.X })],
+);
+```
+
+For Azure SDK clients that expect a `TokenCredential` rather than a raw string, wrap it:
+
+```typescript title="rayfin/functions/src/ContextTokenCredential.ts"
+import type { TokenCredential, AccessToken } from '@azure/identity';
+
+export class ContextTokenCredential implements TokenCredential {
+  constructor(private readonly token: string) {}
+
+  async getToken(): Promise<AccessToken> {
+    return { token: this.token, expiresOnTimestamp: Date.now() + 3600_000 };
+  }
+}
+```
+
+## Available `AudienceType` values
+
+| `AudienceType` | Resource | Ask the user for |
+| --- | --- | --- |
+| `Storage` | OneLake (DFS), Azure Blob/Table/Queue | The file URL from Lakehouse properties, or a storage account URL |
+| `Sql` | Fabric Lakehouse/Warehouse/SQL DB/Mirrored DB, Azure SQL | The SQL analytics endpoint or connection string from the Fabric portal |
+| `KeyVault` | Azure Key Vault | The vault URL, e.g. `https://my-vault.vault.azure.net/` |
+| `CosmosDB` | Azure Cosmos DB | The account endpoint plus database/container names |
+| `EventGrid` | Azure Event Grid | The topic endpoint |
+| `PowerBI` | Power BI APIs | Scopes are still to be determined — check with your platform team |
+
+## SQL connections
+
+All Fabric SQL resources (Lakehouse SQL analytics, Warehouse, SQL Database, Mirrored
+Database) share the same requirements:
+
+- **Package:** `mssql@^12.6.0` (which pulls in `tedious >= 19.2.2`). Older `tedious`
+  (`<= 19.1.2`) has a LOGIN7 FeatureExt bug that causes "socket hang up" errors on Fabric
+  endpoints.
+- **Encryption:** `encrypt: true` — not `'strict'`. This matches ODBC's `Encrypt=yes`.
+- **Auth:** `azure-active-directory-access-token`, using `ctx.getToken(AudienceType.Sql)`.
+
+| Resource | What to ask for | `database` value |
+| --- | --- | --- |
+| Lakehouse (SQL analytics) | SQL analytics endpoint + item GUID (Portal → Settings) | Item GUID (Initial Catalog) — **required** |
+| Warehouse | SQL endpoint + item GUID (Portal → Settings) | Item GUID |
+| SQL Database | Full connection string (Portal → Connection strings) | Database name from the connection string |
+| Mirrored Database | SQL analytics endpoint + item GUID (Portal → Settings) | Item GUID |
+
+> [!WARNING]
+> For Lakehouse, Warehouse, and Mirrored Database, you **must** pass the item GUID as
+> `database`. Without it, multi-item workspaces can't route the connection correctly.
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import sql from 'mssql';
+import { AudienceType } from '@microsoft/fabric-user-data-functions';
+
+// Always ask the user for these values — never invent them.
+const SQL_SERVER = '<endpoint>.datawarehouse.fabric.microsoft.com';
+const DATABASE = '<item-guid-or-db-name>';
+
+udf.func(
+  'queryData',
+  async (ctx: RayfinContext, query: string): Promise<Record<string, unknown>[]> => {
+    const token = ctx.getToken(AudienceType.Sql);
+    const pool = await sql.connect({
+      server: SQL_SERVER,
+      database: DATABASE,
+      options: { encrypt: true, trustServerCertificate: false },
+      authentication: { type: 'azure-active-directory-access-token', options: { token } },
+    });
+    const result = await pool.request().query(query);
+    await pool.close();
+    return result.recordset;
+  },
+  [udf.connection({ audienceType: AudienceType.Sql })],
+);
+```
+
+## OneLake files (DFS)
+
+Ask the user for the file URL: Fabric portal → Lakehouse → file → Properties → URL. It has
+the shape `https://onelake.dfs.fabric.microsoft.com/<workspaceId>/<itemId>/Files/<path>`.
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import { AudienceType } from '@microsoft/fabric-user-data-functions';
+
+udf.func(
+  'readFile',
+  async (ctx: RayfinContext, fileUrl: string): Promise<string> => {
+    const token = ctx.getToken(AudienceType.Storage);
+    const res = await fetch(fileUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`OneLake read failed: ${res.status}`);
+    return res.text();
+  },
+  [udf.connection({ audienceType: AudienceType.Storage })],
+);
+```
+
+## Azure Key Vault
+
+Ask the user for the vault URL (e.g. `https://my-vault.vault.azure.net/`). Install
+`@azure/keyvault-secrets` and `@azure/identity` in `rayfin/functions/`:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import { SecretClient } from '@azure/keyvault-secrets';
+import { AudienceType } from '@microsoft/fabric-user-data-functions';
+import { ContextTokenCredential } from './ContextTokenCredential.js';
+
+udf.func(
+  'getSecret',
+  async (ctx: RayfinContext, kvUrl: string, secretName: string): Promise<string> => {
+    const credential = new ContextTokenCredential(ctx.getToken(AudienceType.KeyVault));
+    const client = new SecretClient(kvUrl, credential);
+    const secret = await client.getSecret(secretName);
+    return secret.value ?? '';
+  },
+  [udf.connection({ audienceType: AudienceType.KeyVault })],
+);
+```
+
+## Other resources
+
+Cosmos DB and Blob Storage follow the same `ContextTokenCredential` pattern — ask the user
+for the resource endpoint, wrap `ctx.getToken(AudienceType.X)`, and pass the credential to
+the relevant Azure SDK client:
+
+- **Cosmos DB** (`AudienceType.CosmosDB`) — `new CosmosClient({ endpoint, aadCredentials: credential })`, from `@azure/cosmos`.
+- **Blob Storage** (`AudienceType.Storage`) — `new BlobServiceClient(url, credential)`, from `@azure/storage-blob`.
+
+## Rules
+
+- Always ask the user for real endpoint URLs — never invent them, and never fall back to
+  `process.env` as your primary source for a resource endpoint.
+- Declare connections in the third argument to `udf.func()`.
+- Use `ctx.getToken(AudienceType.X)` — never acquire tokens manually.
+- Install SDK packages (`mssql`, `@azure/identity`, etc.) in `rayfin/functions/package.json`,
+  not the project root.
+- For SQL, use `mssql@^12.6.0` with `encrypt: true`.
+
+## Local development
+
+When `rayfin dev functions apply` starts the local host, it uses `InteractiveBrowserCredential`
+to acquire tokens for all audiences, so connections work the same way locally as they do once
+deployed.
+
+```prompt title="Add a connection to a Rayfin function"
+In my Rayfin project's rayfin/functions/src/function_app.ts, add a function that connects to
+an external resource (tell me which one — SQL, Key Vault, OneLake, Cosmos DB, or Blob
+Storage) using a delegated-auth connection.
+
+Ask me for the real endpoint URL, connection string, or vault URL rather than inventing one.
+Declare the connection with udf.connection({ audienceType: AudienceType.<X> }) in the third
+argument to udf.func, and get the token inside the handler with
+ctx.getToken(AudienceType.<X>) — do not acquire tokens any other way. If the target is a SQL
+resource, use the mssql package (^12.6.0) with encrypt: true and
+azure-active-directory-access-token auth, and make sure I've given you the item GUID to use
+as the database value.
+
+Install any needed SDK packages in rayfin/functions/package.json, not the project root.
+```

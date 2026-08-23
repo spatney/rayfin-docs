@@ -1,0 +1,85 @@
+---
+title: Connector
+description: rayfin connector add, list, and remove — register external Fabric data sources (SQL analytics endpoints, Warehouse, Fabric SQL, semantic models) in rayfin.yml.
+---
+
+> [!NOTE]
+> `connector` is only registered on the CLI when the `connectors` feature is on — either
+> because `rayfin.yml` already has a `connectors:` block, or because
+> `RAYFIN_FEATURE_FLAGS` includes `connectors`. There is no published guide chapter for this
+> command group yet; this page documents only what's verified directly from the CLI source,
+> so treat conceptual guidance (how a discovered schema maps into queries, for example) as
+> not yet covered here.
+
+`rayfin connector` registers an external Fabric data source — a SQL analytics endpoint, a
+Warehouse, a Fabric SQL database, or a semantic model — as a named entry in `rayfin.yml`,
+and scaffolds a matching directory under `rayfin/connectors/`.
+
+## Connector types
+
+| Type | Description |
+| --- | --- |
+| `fabric-sqlanalytics` | Fabric SQL Analytics endpoint |
+| `fabric-warehouse` | Fabric Warehouse |
+| `fabric-sql` | Fabric SQL Database |
+| `fabric-semanticmodel` | Fabric semantic model |
+
+All four require `--workspace-id` and `--item-id`. The `rayfin.yml` schema also has a
+connector-level `version` field described as required for function-bridge connectors like
+`fabric-semanticmodel`, but `connector add` has no flag to set it — it isn't currently
+exposed through this command.
+
+## `connector add`
+
+```bash
+npx rayfin connector add --connector fabric-sql --workspace-id <id> --item-id <id>
+```
+
+| Flag | Description |
+| --- | --- |
+| `--connector <type>` | Required. One of the connector types above. |
+| `--name <name>` | Name for the connector entry. Derived from the Fabric item's display name if omitted (requires item verification — see below). |
+| `--workspace-id <id>` | Fabric workspace ID. |
+| `--item-id <id>` | Fabric item/artifact ID. |
+| `--verbose` | Enable verbose output. |
+| `-y, --yes` | Auto-accept confirmation prompts, including overwriting an existing connector with the same name. |
+
+When both `--workspace-id` and `--item-id` are given, the command signs you in (prompting
+`rayfin login` if needed), verifies the item exists, and — for a Lakehouse resolving to a
+SQL endpoint — updates the recorded item ID to the resolved endpoint. It then:
+
+1. Writes a `connectors.<name>` entry to `rayfin.yml`.
+2. Scaffolds `rayfin/connectors/<name>/schema.ts` (skipped if the directory already
+   exists).
+3. Attempts schema discovery against the connected database (best-effort — a failure here
+   still leaves the connector registered in `rayfin.yml`, so it can be retried later).
+
+## `connector list`
+
+```bash
+npx rayfin connector list
+```
+
+Lists every connector configured in `rayfin.yml` with its type, workspace ID, and item ID.
+Add `--json` for machine-readable output.
+
+## `connector remove`
+
+```bash
+npx rayfin connector remove <name>
+```
+
+Removes the named entry from `rayfin.yml`. Prompts to also delete
+`rayfin/connectors/<name>/` unless `-y/--yes` is passed (in non-interactive mode with
+`--yes`, the directory is deleted).
+
+| Flag | Description |
+| --- | --- |
+| `-y, --yes` | Auto-accept all confirmation prompts, including directory deletion. |
+
+```prompt title="Register a Fabric Warehouse connector"
+Add a rayfin connector named "sales" for my Fabric Warehouse using
+`npx rayfin connector add --connector fabric-warehouse --workspace-id <workspace-id>
+--item-id <item-id>`, then show me the resulting rayfin.yml entry and the scaffolded
+rayfin/connectors/sales/schema.ts.
+```

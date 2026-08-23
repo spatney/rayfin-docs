@@ -1,0 +1,40 @@
+---
+title: Telemetry
+description: What the Rayfin CLI collects, what it explicitly does not, and how to opt out with RAYFIN_TELEMETRY_OPTOUT.
+---
+
+The Rayfin CLI collects anonymous usage data to help improve the product. On first run, it
+prints a notice explaining what's collected and how to opt out.
+
+## What's collected
+
+- Command names.
+- Execution status (success/failure).
+- Execution duration.
+- Environment metadata: OS and Node.js version.
+
+## What's not collected
+
+No personal data, parameter values, or file contents are collected — arguments you pass
+(project names, workspace names, connection strings, file paths) are never sent.
+
+## Opt out
+
+```bash
+export RAYFIN_TELEMETRY_OPTOUT=1
+```
+
+Set this in your shell profile to opt out permanently, or inline for a single invocation.
+
+## Telemetry endpoint override
+
+`RAYFIN_APPINSIGHTS_CONNECTION_STRING` overrides the telemetry endpoint used by the CLI and
+the VS Code extension. This is a contributor/internal setting, not something most projects
+need to set. See
+[Environment variables](/docs/reference/config/environment-variables) for the full
+shell-only variable reference.
+
+```prompt title="Disable Rayfin CLI telemetry in CI"
+Add RAYFIN_TELEMETRY_OPTOUT=1 to my CI workflow's environment variables so the Rayfin CLI
+doesn't send usage telemetry from automated runs.
+```

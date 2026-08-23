@@ -1,0 +1,174 @@
+---
+title: Relationships
+description: Model one-to-many associations between Rayfin entities with @one and @many, and work around the lack of native many-to-many support.
+---
+
+Rayfin supports one-to-many (and its inverse, many-to-one) relationships between
+entities using the `@one()` and `@many()` navigation decorators. Rayfin generates the
+foreign key column for you — you describe the relationship, not the join.
+
+Many-to-many relationships are not supported natively. This page covers both the
+supported one-to-many pattern and the explicit join-entity workaround for many-to-many.
+
+## `@one()` and `@many()`
+
+- `@one(() => Target)` on the "many" side declares a many-to-one reference to a single
+  related record. Rayfin auto-generates a `{property}_id` foreign key column for it.
+- `@many(() => Target)` on the "one" side declares the inverse: a collection of related
+  records. It does not generate a column — it is a read-only navigation back to the rows
+  whose `@one()` field points at this record.
+
+```typescript title="rayfin/data/Notebook.ts"
+import { entity, authenticated, uuid, text, boolean, date, many } from '@microsoft/rayfin-core';
+import { Note } from './Note.js';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class Notebook {
+  @uuid() id!: string;
+  @text({ max: 100 }) name!: string;
+  @boolean({ default: false }) isDefault!: boolean;
+  @date() createdAt!: Date;
+  @many(() => Note) notes?: Note[];
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+```typescript title="rayfin/data/Note.ts"
+import { entity, authenticated, uuid, text, date, one } from '@microsoft/rayfin-core';
+import { Notebook } from './Notebook.js';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class Note {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @text({ max: 10000 }) content!: string;
+  @date() createdAt!: Date;
+  @uuid() notebook_id!: string;
+  @one(() => Notebook, { optional: true }) notebook?: Notebook;
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+Register both in `rayfin/data/schema.ts` — see
+[Modeling entities](/docs/data/modeling#register-the-entity-in-schemats).
+
+## Lazy arrow functions
+
+`@one()` and `@many()` both take a **function that returns the target class**
+(`() => Notebook`), not the class itself. This lazy form lets two entity files reference
+each other — `Notebook` references `Note` and `Note` references `Notebook` — without a
+circular `import` failing at module-load time. The function is only called after both
+modules have finished loading.
+
+```typescript
+@many(() => Note) notes?: Note[];     // correct — lazy reference
+@many(Note) notes?: Note[];           // wrong — evaluated immediately, breaks on circular imports
+```
+
+## Use `import`, not `import type`
+
+Import the target entity class with a plain `import`, never `import type`:
+
+```typescript
+import { Notebook } from './Notebook.js'; // correct — decorators need the runtime class
+import type { Notebook } from './Notebook.js'; // wrong — erased at compile time, decorator has nothing to call
+```
+
+`@one()` and `@many()` store the arrow function and call it at runtime to resolve the
+target entity's metadata. `import type` is erased entirely by the TypeScript compiler, so
+the arrow function would close over a name that no longer exists at runtime.
+
+## Foreign key columns
+
+Rayfin auto-generates the foreign key column when you declare `@one()` — you do not need
+to define it yourself. Define the FK field explicitly only when your application code
+needs to read or set it directly (for example, filtering by it — see
+[Querying](/docs/data/querying#filter-by-foreign-key-not-by-dot-path)).
+
+- **Naming**: when you do define it, the field must follow the `{property}_id` convention
+  — `notebook_id` for a `notebook` navigation property. Custom key names are not
+  supported; `foreignKey` and `targetKey` options do not exist on `@one()` / `@many()`.
+- **Type**: a foreign key field referencing another entity's primary key must be declared
+  `@uuid()`, matching the type of that entity's `id`. Declaring it `@text()` is a type
+  mismatch with the column it references.
+- **Auth-derived owner columns are the exception.** A `user_id` field populated from
+  `claims.sub` (the signed-in user's subject claim) is **not** a foreign key to another
+  Rayfin entity — it is a plain `@text()` field, as shown in the `Notebook` and `Note`
+  examples above.
+
+```typescript
+@uuid() notebook_id!: string;              // correct — FK to Notebook.id (a uuid)
+@text() notebook_id!: string;              // wrong — type mismatch with the referenced uuid PK
+
+@text({ max: 128 }) user_id!: string;      // correct — claims.sub is not a Rayfin entity FK
+```
+
+## Option limits on relationship decorators
+
+`@one()` and `@many()` accept only `{ optional?: boolean, unique?: boolean }` as their
+second argument — no `default`, `max`, or the other field options described in
+[Field types](/docs/data/field-types). Mark a `@one()` relationship `{ optional: true }`
+when the related record may not exist, matching a `?` on the property, the same nullable
+pattern used for scalar fields.
+
+```typescript
+@one(() => Notebook, { optional: true }) notebook?: Notebook; // a note may be unfiled
+@one(() => Notebook) notebook!: Notebook;                     // every note must have one
+```
+
+## Many-to-many: use an explicit join entity
+
+Rayfin does not support many-to-many relationships directly. Model them the same way you
+would in raw SQL: an explicit join entity with two `@one()` fields, one pointing at each
+side of the relationship.
+
+```typescript title="rayfin/data/Tag.ts"
+import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*')
+export class Tag {
+  @uuid() id!: string;
+  @text({ max: 50, unique: true }) name!: string;
+}
+```
+
+```typescript title="rayfin/data/TodoTag.ts"
+import { entity, authenticated, uuid, one } from '@microsoft/rayfin-core';
+import { Todo } from './Todo.js';
+import { Tag } from './Tag.js';
+
+@entity()
+@authenticated('*')
+export class TodoTag {
+  @uuid() id!: string;
+  @uuid() todo_id!: string;
+  @one(() => Todo) todo!: Todo;
+  @uuid() tag_id!: string;
+  @one(() => Tag) tag!: Tag;
+}
+```
+
+Query through the join entity rather than expecting a direct `tags` collection on `Todo`:
+select `TodoTag` rows filtered by `todo_id`, with `tag.name` in the field selection (see
+[dot-path selection](/docs/data/querying#select-nested-fields-with-dot-paths)).
+
+```typescript
+const todoTags = await client.data.TodoTag.select(['id', 'tag.id', 'tag.name'])
+  .where({ todo_id: { eq: todoId } })
+  .execute();
+```
+
+```prompt title="Model a many-to-many relationship"
+In my Rayfin project, add tagging support to the Todo entity. Create a new Tag entity in
+rayfin/data/Tag.ts with a unique "name" field (text, max 50). Create a join entity
+TodoTag in rayfin/data/TodoTag.ts with a uuid id, a todo_id foreign key with a @one()
+reference to Todo, and a tag_id foreign key with a @one() reference to Tag. Register both
+new entities in rayfin/data/schema.ts, then apply the schema with `rayfin up`.
+```

@@ -1,0 +1,194 @@
+---
+title: Up
+description: rayfin up deploys to Microsoft Fabric and applies pending schema migrations in one step — plus every up subcommand for status, schema, secrets, and static hosting.
+---
+
+`rayfin up` is the canonical deploy command. It creates (or reuses) a Fabric item, applies
+your `rayfin.yml` service settings, applies pending database schema migrations when Data is
+enabled, deploys Functions when enabled, and builds/deploys static content when static
+hosting is enabled — in one run.
+
+```bash
+npx rayfin up
+```
+
+> [!TIP]
+> Recommend `rayfin up` for "deploy this," "apply this schema change," or "push my entity
+> update," including incremental changes after the first deploy. Use
+> [`up db apply`](#up-db-apply) only when you explicitly want to skip the static content
+> step.
+
+If you aren't signed in, `rayfin up` launches an interactive login automatically (see
+[Login](/docs/reference/cli/login)).
+
+## What it does, in order
+
+1. Resolves a target Fabric workspace — from `--workspace`, `--workspace-id`,
+   `--workspace-uri`, the `RAYFIN_WORKSPACE_ID` environment variable, a previously recorded
+   deployment, or an interactive prompt, in that order.
+2. Creates a Rayfin item (AppBackend) in the workspace, or reuses the one recorded from a
+   prior deploy.
+3. Retrieves the item's publishable key.
+4. Applies runtime settings — the `services` block from `rayfin.yml` — to the workload
+   endpoint.
+5. If `services.data.enabled` is `true`: generates and applies the Data API Builder
+   configuration for your entities.
+6. If `services.functions.enabled` is `true`: builds, packages, and deploys Functions
+   (experimental — see [Functions](/docs/reference/cli/functions)).
+7. Writes deployment metadata to `rayfin/.deployments.json` and merges the matching
+   `RAYFIN_PUBLIC_*` values into `rayfin/.env`.
+8. If `services.staticHosting.enabled` is `true` (and not excluded): runs the configured
+   `buildCommand`, packages the output folder, and deploys it.
+
+## Flags
+
+| Flag | Description |
+| --- | --- |
+| `-t, --tenant <id>` | Entra ID tenant GUID. Use when your account spans multiple tenants. |
+| `-w, --workspace <name>` | Fabric workspace display name, resolved to an ID via the Fabric API. Defaults to "My Workspace" when omitted. Mutually exclusive with `--workspace-id` and `--workspace-uri`. |
+| `--workspace-id <id>` | Fabric workspace GUID to deploy into. Mutually exclusive with `--workspace` and `--workspace-uri`. |
+| `--workspace-uri <uri>` | Fabric portal workspace URL (e.g. `https://app.fabric.microsoft.com/groups/<id>/list`) — derives the workspace ID and target environment from the URL. |
+| `--force` | Allow destructive schema changes (drop table, drop column, alter type) that may cause data loss. |
+| `-n, --dry-run` | Preview planned operations without making any API calls. |
+| `--env-file <path>` | Path to the `.env` file containing the Fabric app's properties. Defaults to `rayfin/.env`. |
+| `--exclude-services <names>` | Comma-separated services to skip during deployment. Currently only `staticHosting` is supported — runtime settings are still applied; only the build/package/deploy phase is skipped. Useful for a workflow that redeploys the backend while a local dev server (Vite, Next.js) keeps serving the frontend. |
+| `--encryption-fallback-enabled` | Allow plaintext token storage when the OS keychain is unavailable. Required only when login fails with a keychain error. |
+| `-v, --verbose` | Enable verbose output. |
+| `--json` | Output the deployment result as JSON. |
+| `-y, --yes` | Auto-accept all confirmation prompts. |
+
+> [!WARNING]
+> `--force` permits destructive changes. Without it, a destructive schema change aborts the
+> whole deploy with an error telling you to re-run with `--force` — never pass it without
+> reviewing what would be dropped.
+
+## `up status`
+
+```bash
+npx rayfin up status
+```
+
+Probes the deployed workload endpoint and prints deployment health. Exits `0` when healthy,
+`1` when there's no recorded deployment, `2` when the endpoint is unreachable or
+unauthenticated.
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Output status as JSON. |
+| `-v, --verbose` | Enable verbose output. |
+
+## `up db apply`
+
+```bash
+npx rayfin up db apply [--force]
+```
+
+Generates and applies Data API Builder configuration to the remote workload endpoint,
+without touching the static build. This is the advanced, schema-only escape hatch — prefer
+plain `rayfin up` for a normal deploy, and reach for this only when you want to skip the
+static deploy step.
+
+| Flag | Description |
+| --- | --- |
+| `-v, --verbose` | Enable verbose output. |
+| `--force` | Allow destructive schema changes that may result in data loss. |
+| `--json` | Output the result as JSON. |
+
+## `up secrets apply`
+
+```bash
+npx rayfin up secrets apply
+```
+
+Reads variables prefixed `RAYFIN_SECRET_` from `rayfin/.env`, sends them to the deployed
+workload over HTTPS, and validates that each one persisted. `RAYFIN_SECRET_API_KEY` in
+`.env` becomes a secret named `API_KEY`.
+
+| Flag | Description |
+| --- | --- |
+| `--env-file <path>` | Custom `.env` file location to read secrets from. |
+| `-v, --verbose` | Enable detailed logging. |
+| `-y, --yes` | Skip confirmation prompts. |
+| `--json` | Output the result as JSON, including per-secret persistence status. |
+
+Run `rayfin up` at least once first so the Rayfin item and workload endpoint exist. In
+CI/CD, set `RAYFIN_SECRET_*` variables directly in the environment instead of committing an
+`.env` file.
+
+## `up staticapp deploy`
+
+```bash
+npx rayfin up staticapp deploy
+```
+
+Runs the configured `buildCommand`, packages the static output folder into a ZIP, and
+uploads it — without running the rest of the `rayfin up` flow. Useful for redeploying only
+the frontend.
+
+| Flag | Description |
+| --- | --- |
+| `-v, --verbose` | Enable verbose output. |
+| `--skip-build` | Deploy the existing build output without rebuilding. |
+| `--json` | Output the result as JSON. |
+
+Requires a prior `rayfin up` (the remote endpoint must already exist) and
+`services.staticHosting.enabled: true` in `rayfin.yml`.
+
+## `up functions deploy`
+
+```bash
+npx rayfin up functions deploy
+```
+
+> [!NOTE]
+> Experimental. Only registered when `services.functions.enabled: true` in `rayfin.yml` (or
+> `RAYFIN_FEATURE_FLAGS` includes `functions`). See
+> [Functions](/docs/reference/cli/functions).
+
+Builds, packages, and deploys Functions to the remote Rayfin item as an escape hatch when
+you don't need the full `rayfin up` flow.
+
+| Flag | Description |
+| --- | --- |
+| `-v, --verbose` | Enable verbose output. |
+| `--skip-build` | Skip the build command and deploy existing content. |
+| `--functions-prebuilt` | Deploy a locally-compiled zip, skipping the remote build. |
+
+## `up list`
+
+```bash
+npx rayfin up list
+```
+
+Lists every Fabric deployment recorded in `rayfin/.deployments.json` for this project,
+marking the active one. Add `--json` for machine-readable output.
+
+## `up switch`
+
+```bash
+npx rayfin up switch <workspace>
+```
+
+Switches the active recorded deployment and rewrites `rayfin/.env` (and, unless
+`--no-emit-env` is passed, the framework `.env.local`) to match.
+
+| Flag | Description |
+| --- | --- |
+| `--workspace-id <id>` | Activate by Fabric workspace ID instead of the positional name/slug. |
+| `-l, --list` | List recorded deployments instead of switching. |
+| `--no-emit-env` | Skip regenerating the framework `.env.local` after switching. |
+
+If the deployment you switch to was recorded under a different signed-in tenant, the
+command warns you to `rayfin login --tenant <id>` before deploying again.
+
+## Agent files drift nudge
+
+On startup, `rayfin up` prints a one-line nudge if any Rayfin-managed agent file
+(`AGENTS.md`, `.mcp.json`, the Rayfin skill) is out of date, modified, missing, or newly
+shipped. Refresh with `rayfin init ai-files install` — see
+[Ai-files](/docs/reference/cli/ai-files).
+
+```prompt title="Deploy a schema change"
+I added a new field to an entity under rayfin/data/. Deploy the change to Fabric with
+`npx rayfin up`, then run `npx rayfin up status` to confirm the deployment is healthy.
+```

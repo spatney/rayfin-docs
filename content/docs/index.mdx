@@ -1,0 +1,76 @@
+---
+title: Rayfin
+description: Rayfin is a TypeScript backend platform — model your data once and get a database, APIs, type-safe clients, auth, and hosting, locally or as a managed Fabric app.
+---
+
+Rayfin is a backend platform for TypeScript developers. You define your data model as
+decorated TypeScript classes, and Rayfin generates the database schema, REST and GraphQL
+APIs, type-safe clients, authentication, and static hosting for your frontend.
+
+```typescript title="rayfin/data/Todo.ts"
+import { entity, uuid, text, boolean, authenticated } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*', { policy: (claims, item) => claims.sub.eq(item.user_id) })
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @boolean({ default: false }) isCompleted!: boolean;
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+That class becomes a table, a GraphQL API, a typed client, and a row-level security
+policy. One command deploys all of it.
+
+```bash
+npx rayfin up
+```
+
+> [!NOTE]
+> Rayfin supports TypeScript as the only language for data models, client code, and
+> application logic.
+
+## Two ways to run
+
+| | **Rayfin Local** | **Fabric app** |
+| --- | --- | --- |
+| What it is | Self-hosted backend stack | Managed service on Microsoft Fabric |
+| Authentication | Entra ID, email and password | Fabric SSO (Entra ID) only |
+| Database | MSSQL, PostgreSQL | MSSQL only |
+| Infrastructure | You host it (Docker, VMs, any cloud) | Fabric manages hosting, scaling, networking |
+
+Both modes share the same SDK, CLI, and data-modeling workflow. Start locally, then deploy
+to Fabric when you want a managed service — or stay self-hosted.
+
+See [How Rayfin runs](/docs/start/how-rayfin-runs) for the full comparison.
+
+## Start here
+
+- **[Quickstart](/docs/start/quickstart)** — from nothing to a running app.
+- **[Installation](/docs/start/installation)** — prerequisites for Windows, macOS, and Linux.
+- **[Modeling entities](/docs/data/modeling)** — how TypeScript classes become tables and APIs.
+- **[Querying](/docs/data/querying)** — read and write data with the type-safe client.
+- **[Auth](/docs/auth)** — sign users in.
+- **[Deploy](/docs/deploy)** — ship to Microsoft Fabric.
+
+## Using an agent
+
+These docs are built for coding agents as much as for people. Every page has a raw
+Markdown mirror — append `.md` to any URL — and the whole corpus is available at
+[`/llms-full.txt`](/llms-full.txt).
+
+```prompt title="Point your agent at Rayfin"
+Read https://rayfin.dev/llms.txt and then https://rayfin.dev/docs/ai/rules.md so you know how
+to work with the Rayfin SDK and CLI. Every page on that site is available as raw Markdown by
+appending .md to its URL. Then help me build a Rayfin app.
+```
+
+See [AI & Agents](/docs/ai) for the full agent surface.
+
+## Reference
+
+- [CLI](/docs/reference/cli) — every command and flag.
+- [`rayfin.yml`](/docs/reference/config/rayfin-yml) — the configuration schema.
+- [SDK](/docs/reference/sdk) — API reference for every `@microsoft/rayfin-*` package.
+- [Known limitations](/docs/reference/known-limitations) — current constraints and workarounds.

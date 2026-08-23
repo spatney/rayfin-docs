@@ -1,0 +1,13 @@
+{
+  "title": "Deploy",
+  "description": "Ship your app to Microsoft Fabric.",
+  "pages": [
+    "index",
+    "fabric-apps",
+    "rayfin-up",
+    "secrets",
+    "environments",
+    "pricing",
+    "troubleshooting"
+  ]
+}

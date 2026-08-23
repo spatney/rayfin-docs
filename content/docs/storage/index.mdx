@@ -1,0 +1,85 @@
+---
+title: Storage
+description: What's documented so far about Rayfin's blob storage — the @blob() decorator, storage permissions, and the storage service flag in rayfin.yml.
+---
+
+`@microsoft/rayfin-storage` is Rayfin's type-safe blob storage client. This page covers only
+what's currently verifiable from the Rayfin decorator reference and the permissions guide —
+it does not attempt to document the storage client's full API surface.
+
+> [!NOTE]
+> This page documents the `@blob()` decorator, storage permissions, and the `storage`
+> service flag — that's the extent of what's currently verifiable. For the storage client's
+> actual method signatures (uploading, reading, listing, and so on), run
+> `rayfin docs search 'storage'` from your project root, or use the
+> [MCP server](/docs/ai/mcp-server), so you get the API for the version of
+> `@microsoft/rayfin-storage` actually installed rather than a guess.
+
+## Enable storage
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  storage:
+    enabled: true
+```
+
+## Marking a class as blob storage: `@blob()`
+
+`@blob()` is a class-level decorator that marks a class as a storage folder configuration —
+the storage equivalent of `@entity()` for data models. It's structurally different from a
+data entity, though: it takes an optional folder-name string instead of field options, and
+the properties inside the class are plain TypeScript fields rather than `@text()` / `@uuid()`
+decorated columns.
+
+```typescript title="rayfin/storage/ProfileImage.ts"
+import { blob } from '@microsoft/rayfin-core';
+
+@blob('uploads')
+export class ProfileImage {
+  owner_id!: string;
+}
+```
+
+The string argument (`'uploads'` above) is the storage folder name; it defaults to the
+kebab-case class name if omitted. `@blob()` is exported from `@microsoft/rayfin-core`,
+alongside the data-model decorators — it isn't part of `@microsoft/rayfin-storage` itself.
+See [Field types](/docs/data/field-types#blob-storage-folders) for the full decorator
+reference.
+
+## Storage permissions
+
+The same `@role()` / `@anonymous()` / `@authenticated()` decorators used for data permissions
+work on `@blob()` classes. Applied to a blob entity, Rayfin generates a storage policy
+instead of a database policy, using the same `policy` / `include` / `exclude` options:
+
+```typescript title="rayfin/storage/ProfileImage.ts"
+import { blob, authenticated } from '@microsoft/rayfin-core';
+
+@blob('uploads')
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class ProfileImage {
+  owner_id!: string;
+}
+```
+
+This restricts every action (`'*'`) on `ProfileImage` blobs to the authenticated user whose
+`sub` claim matches the blob's `owner_id`. See [Permissions](/docs/data/permissions) for the
+full reference — the decorator, its `policy` / `include` / `exclude` options, and how
+policies compile down — all of which applies the same way to storage entities as it does to
+data entities.
+
+## What isn't covered here
+
+File upload, download, and listing operations are part of the `@microsoft/rayfin-storage`
+client, not the decorators above. That client's method signatures aren't verifiable from the
+sources this site is built from — see the note at the top of this page for how to look them
+up against the version actually installed in your project.
+
+```prompt title="Look up the current storage API before using it"
+I want to use @microsoft/rayfin-storage in my Rayfin project. Before writing any code, run
+`rayfin docs search 'storage'` (or the MCP server's search_docs tool with module: 'ts-sdk')
+from the project root to find the actual client API for the version installed here. Show me
+what it returns, then use that — not a guess — to implement the upload/read logic I need.
+```

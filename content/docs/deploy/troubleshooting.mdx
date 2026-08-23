@@ -1,0 +1,138 @@
+---
+title: Deployment troubleshooting
+description: Symptom-to-fix reference for the most common failures when deploying a Rayfin project to Microsoft Fabric.
+---
+
+Each section below is a symptom you might hit while deploying a Rayfin project, why it
+happens, and how to fix it. If you don't see your error here, re-run the failing command
+with `-v, --verbose` for more detail.
+
+## Deployment fails with 401 or 403
+
+**Cause:** your sign-in session has expired.
+
+**Fix:** re-authenticate and retry:
+
+```bash
+npx rayfin login
+npx rayfin up
+```
+
+## Sign-in fails with a keychain or credential-storage error
+
+**Cause:** some environments — certain Linux distributions, dev containers, and GitHub
+Codespaces — don't provide OS-backed credential storage, which `rayfin login` normally
+uses to store tokens securely.
+
+**Fix:** pass `--encryption-fallback-enabled` (or set
+`RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true`) to allow a plaintext token cache instead. Use
+this only in development environments, not on shared or production machines:
+
+```bash
+npx rayfin login --encryption-fallback-enabled
+```
+
+## Deploy fails with "Dialect is required when Data module is enabled"
+
+**Cause:** `services.data.enabled: true` is set in `rayfin.yml` without a `dialect`. This
+produces a 400 error at deploy time.
+
+**Fix:** add `dialect: mssql` under `services.data` (Fabric apps support MSSQL only; use
+`postgresql` for Rayfin Local):
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  data:
+    enabled: true
+    dialect: mssql
+```
+
+## Database apply reports destructive changes
+
+**Cause:** `rayfin up db apply` blocks schema changes that could cause data loss — for
+example, dropping a column or a table.
+
+**Fix:** review the listed operations. If you accept the data loss, re-run with `--force`:
+
+```bash
+npx rayfin up db apply --force
+```
+
+## "unsupported UUID" errors
+
+**Cause:** another service is running on the default port with a different database
+dialect than the one your project expects.
+
+**Fix:** stop the conflicting service (or free the port) and retry the command that
+failed.
+
+## Local backend won't start (Docker not running)
+
+**Cause:** Rayfin's local development services run in containers. If Docker Desktop or the
+Docker daemon isn't running, container startup fails before any service — including the
+database you'd apply schema changes against — comes up.
+
+**Fix:** start Docker Desktop (or the Docker daemon on Linux) and retry.
+
+## Static deploy exceeds the size limit
+
+**Cause:** the compressed static content archive exceeds the 100 MB limit for `rayfin up`
+and `rayfin up staticapp deploy`.
+
+**Fix:** exclude source maps and large development assets from your production build, or
+move binary files to Rayfin storage instead of bundling them as static content.
+
+## No remote endpoint configured
+
+**Cause:** `rayfin up staticapp deploy` requires an existing deployment to upload to.
+
+**Fix:** run `npx rayfin up` first to create the Fabric app, then use `staticapp deploy`
+for subsequent static-only updates.
+
+## GraphQL "Internal server error" after a successful deploy
+
+**Cause:** an entity has a `@text()` field without a `max` option. On MSSQL this generates
+an `NVARCHAR(MAX)` column, which can prevent the metadata provider from building a GraphQL
+schema — the deploy itself reports success, but the API fails at runtime.
+
+**Fix:** add an explicit `max` to every string field, then push the schema change:
+
+```typescript title="rayfin/data/Todo.ts"
+@text({ max: 200 }) title!: string;
+```
+
+```bash
+npx rayfin up db apply --force
+```
+
+## A new entity is unreadable after a deploy that reported success
+
+**Cause:** the static app and settings deployed correctly, but the schema for the new
+entity was not applied — usually because the entity was added after the last successful
+`db apply`, or a prior apply was skipped.
+
+**Fix:** confirm the deployment is otherwise healthy, then explicitly (re)apply the
+schema:
+
+```bash
+npx rayfin up status
+npx rayfin up db apply
+```
+
+```prompt title="Diagnose a failed Rayfin deployment"
+My Rayfin project's deployment to Microsoft Fabric isn't working as expected — either
+`rayfin up` failed, or it succeeded but the app is behaving incorrectly at runtime. Run
+`npx rayfin up status` to check deployment health, then re-run `npx rayfin up -v` for
+verbose output and show me the error. If it's a schema problem — a new or changed entity
+not showing up, or a GraphQL "Internal server error" — check rayfin/data/*.ts for @text()
+fields missing a max option, and for a missing dialect under services.data in rayfin.yml.
+Then run `npx rayfin up db apply` (adding --force only if the change is expected to be
+destructive) and confirm the fix with `npx rayfin up status` again.
+```
+
+## See also
+
+- [Secrets](/docs/deploy/secrets) — troubleshooting for `rayfin up secrets apply`
+  specifically.
+- [Known limitations](/docs/reference/known-limitations) — current platform constraints
+  that aren't bugs.

@@ -1,0 +1,17 @@
+# Rayfin Template Registry
+# Default CLI-shipped registry. Entries with `default: true` are protected
+# and cannot be overridden by project-local registries. Entries with
+# `firstClass: true` are also protected, route before bundled templates with
+# the same name, and fall back to the bundled template when supported errors
+# prevent the external template from loading.
+# Default registry refs MUST be 40-character commit SHAs or released tags.
+# Branch refs such as main, master, or HEAD are prohibited for CLI releases.
+registries:
+  - name: dataapp
+    displayName: Data App
+    description: Build data analytics app based on your data in Fabric
+    url: https://github.com/microsoft/fabric-apps-analytic-templates
+    ref: v1
+    templateName: Data App
+    default: true
+    firstClass: true

@@ -1,0 +1,172 @@
+---
+title: "@microsoft/rayfin-functions"
+description: FunctionClient, the FunctionsSchema type, and client.functions.<name>.invoke() for calling serverless functions from the Rayfin SDK.
+appliesTo: "@microsoft/rayfin-functions — experimental"
+---
+
+`@microsoft/rayfin-functions` provides the typed client behind `client.functions.<name>.invoke()`
+on [`RayfinClient`](/docs/reference/sdk/rayfin-client). It depends only on
+[`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib).
+
+> [!WARNING]
+> This package is marked **experimental** by its own README and may change substantially.
+> The exact return shape of `invoke()` has changed across versions (see
+> [Version notes](#version-notes) below) — confirm the behavior for your installed version
+> with `rayfin docs get --symbol FunctionClient` or the [MCP server](/docs/ai/mcp-server)
+> before relying on it in production code.
+
+## Installation
+
+```bash
+npm create @microsoft/rayfin@latest
+```
+
+`@microsoft/rayfin-functions` is normally installed as a dependency of
+`@microsoft/rayfin-client`; you rarely add it directly.
+
+## Declaring a `FunctionsSchema`
+
+Define a type that maps each function name to its input and output, and pass it as
+`RayfinClient`'s third type parameter so `client.functions.<name>.invoke()` is fully typed:
+
+```typescript title="rayfin/functions/src/types.ts"
+import type { FunctionsSchema } from '@microsoft/rayfin-functions';
+
+export type MyFunctionsSchema = {
+  helloWorld: { input: { firstName: string; lastName: string }; output: string };
+  add: { input: { a: number; b: number }; output: number };
+  noParams: { input: void; output: string }; // use `void` (or `{}`) for no-input functions
+} satisfies FunctionsSchema;
+```
+
+```typescript
+type FunctionsSchema = Record<string, { input: any; output: any }>;
+```
+
+```typescript
+import { RayfinClient } from '@microsoft/rayfin-client';
+import type { MyFunctionsSchema } from '../rayfin/functions/src/types';
+import type { AppSchema } from '../rayfin/data/schema';
+
+const client = new RayfinClient<AppSchema, MyFunctionsSchema>({
+  baseUrl: 'http://localhost:5168',
+  publishableKey: 'pk-commonSampleAppKey',
+});
+```
+
+## Invoking a function
+
+```typescript
+const greeting = await client.functions.helloWorld.invoke({
+  firstName: 'Ada',
+  lastName: 'Lovelace',
+});
+```
+
+`client.functions` is built by `createFunctionsApi`, which lazily instantiates and caches
+one `FunctionClient` per schema entry:
+
+```typescript
+function createFunctionsApi<TSchema extends FunctionsSchema = FunctionsSchema>(
+  apiClient: ApiClient,
+): TypedFunctionClients<TSchema>;
+
+type TypedFunctionClients<TSchema extends FunctionsSchema> = {
+  [K in keyof TSchema & string]: FunctionClient<TSchema[K]['input'], TSchema[K]['output']>;
+};
+```
+
+## `FunctionClient`
+
+```typescript
+class FunctionClient<TInput = any, TOutput = any> {
+  constructor(apiClient: ApiClient, functionName: string);
+  invoke(
+    ...args: TInput extends void | Record<string, never>
+      ? [options?: InvokeOptions]
+      : [params: TInput, options?: InvokeOptions]
+  ): Promise<TOutput>;
+}
+
+interface InvokeOptions {
+  headers?: Record<string, string>;
+}
+```
+
+- When the schema's `input` is `void`, call `invoke(options?)` with no params.
+- Otherwise call `invoke(params, options?)`. `options.headers` adds extra headers to that
+  one request.
+- `invoke()` resolves to the function's output directly, typed as `TOutput`. If the raw
+  response contains a JSON-encoded string, it is auto-parsed so the caller never has to.
+- Failures throw rather than returning an error value: a non-empty `errors` array or
+  non-success status is surfaced as `FunctionsError`; network failures as `NetworkError`;
+  anything else as `SdkError`.
+
+```typescript
+import { FunctionsError } from '@microsoft/rayfin-functions';
+import { NetworkError } from '@microsoft/rayfin-lib';
+
+try {
+  const result = await client.functions.add.invoke({ a: 1, b: 2 });
+  console.log(result); // 3, typed as number
+} catch (error) {
+  if (error instanceof FunctionsError) {
+    console.error('Function failed:', error.message, error.code);
+  } else if (error instanceof NetworkError) {
+    console.error('Network issue:', error.message);
+  }
+}
+```
+
+## `FunctionsError`
+
+```typescript
+class FunctionsError extends SdkError {
+  constructor(message: string, code?: string);
+}
+```
+
+## Full exported surface (`index.d.ts`)
+
+```typescript
+export {
+  FunctionsError,
+  createFunctionsApi,
+  FunctionClient,
+} from './Functions.js';
+export type {
+  FunctionInvocationResponse,
+  InvokeOptions,
+  TypedFunctionClients,
+} from './Functions.js';
+export type { FunctionsSchema } from './FunctionsSchema.js';
+```
+
+`FunctionInvocationResponse<TOutput>` is the raw wire envelope the function endpoint
+returns before `invoke()` unwraps it:
+
+```typescript
+interface FunctionInvocationResponse<TOutput = any> {
+  functionName: string;
+  invocationId: string;
+  status: string;
+  output: TOutput;
+  errors: Array<string | Record<string, any>>;
+}
+```
+
+## Version notes
+
+The exact shape `invoke()` resolves to has changed between releases of this experimental
+package:
+
+- **Documented / current behavior** (shown above): `invoke()` resolves directly to
+  `TOutput` — the envelope's `output` field, auto-unwrapped — and throws on failure instead
+  of returning an `errors` array. The `invocationId` is still emitted via `console.debug`
+  for correlation, without being part of the typed return value.
+- **This machine's installed version (1.31.0)**: `invoke()` instead resolves to the full
+  `Promise<FunctionInvocationResponse<TOutput>>` envelope — callers must read `.output`
+  themselves and check `.errors` / `.status` manually.
+
+Check which behavior applies to your project before writing calling code — the two shapes
+are not interchangeable (`result.output` vs. `result` directly).

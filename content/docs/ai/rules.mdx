@@ -1,0 +1,108 @@
+---
+title: Rules for agents
+description: The condensed set of rules and anti-patterns for writing Rayfin code — read this before generating entities, queries, permissions, or deployment commands.
+---
+
+This is the short version of everything on this site that changes whether generated Rayfin
+code works. If you are an agent and you read only one page, read this one.
+
+Full detail lives in [Known limitations](/docs/reference/known-limitations),
+[Modeling entities](/docs/data/modeling), and [Permissions](/docs/data/permissions).
+
+## Platform
+
+- Rayfin uses **TC39 Stage 3 decorators**. Never enable `experimentalDecorators` or
+  `emitDecoratorMetadata`.
+- Include `ESNext.Decorators` in the tsconfig `lib` array.
+- There are two deployment targets: **Rayfin Local** (Docker; MSSQL or PostgreSQL) and a
+  managed **Fabric app** (MSSQL only).
+- Prefer `npm create @microsoft/rayfin@latest` for new projects — it generates a correct
+  tsconfig and schema boilerplate.
+
+## Data modeling
+
+- Define entities with `@entity()` in `rayfin/data/`, and register each one in
+  `rayfin/data/schema.ts` as `type AppSchema = { Todo: Todo }`.
+- Every field needs exactly one type decorator: `@uuid`, `@text`, `@int`, `@decimal`,
+  `@boolean`, `@date`, `@email`, `@set`.
+- Fields are **required by default**. For a nullable field use `{ optional: true }` and
+  `?` together.
+- `@text()`'s length option is `max`, not `maxLength` — `@text({ max: 200 })`.
+- Use `@one(() => Target)` with a lazy arrow function for relationships. Rayfin
+  auto-generates the foreign key column, named `{property}_id`.
+- Use `import`, not `import type`, for entity classes referenced inside `@one()` / `@many()`
+  arrow functions — the decorator needs the runtime class value.
+- A foreign key column referencing another entity (`{property}_id`) must be `@uuid()` to
+  match the primary key type. An auth-derived field such as `user_id` from `claims.sub` is
+  `@text()`, not a foreign key.
+- Many-to-many is not supported. Use an explicit join entity with two `@one()` fields.
+
+## Security
+
+- **Every entity needs an explicit permission decorator** (`@role`, `@anonymous`,
+  `@authenticated`). Omitting one silently applies `authenticated: *` — full CRUD for any
+  signed-in user — which is almost never what you want in production.
+- Add a policy for row-level filtering on user-scoped data:
+  `policy: (claims, item) => claims.sub.eq(item.user_id)`.
+- Use `exclude` in role options to hide sensitive fields, e.g. `exclude: ['secret']`.
+- Publishable keys (`pk-*`) are safe in client-side code. Never expose service secrets or
+  connection strings.
+- Keep `allowedRedirectUris` in `rayfin.yml` scoped to your app's own origins.
+- Email/password auth is **local development only**. Deployed Fabric apps support Fabric
+  SSO (Entra ID) exclusively.
+- Fabric SSO only works inside the Fabric portal. Do not attempt it in local development.
+
+## Querying
+
+- The query chain is `.select()` → `.where()` → `.orderBy()` → `.execute()`.
+- Fetch a single record with `client.data.Entity.findById('uuid')` — there is no
+  `findByPk`.
+- Filter by foreign key columns using `{property}_id` (`customer_id`), not a dot-path
+  (`customer.id`). Dot-paths are for `.select()` only.
+- Sort directions are lowercase: `'asc'` or `'desc'`.
+- Use `.first(n).executePaginated()` with `.after(endCursor)` for pagination. Collection
+  queries return a single page otherwise; the default page size is 100.
+- `count()` does not exist on the fluent client. Select minimal fields and use
+  `results.length`.
+
+## Auth
+
+- The session change callback is `onSessionChange`. **`onAuthStateChange` does not exist.**
+- Session objects are opaque. Gate UI on `isAuthenticated` or the presence of a `user`
+  property — do not introspect the session.
+- After enabling or disabling auth in `rayfin.yml`, restart the backend so the updated
+  endpoints are exposed.
+
+## Configuration
+
+- Always declare `services.auth` and `services.data` explicitly in `rayfin.yml`, even as
+  `enabled: false`. The CLI reads those keys without guarding and does not apply defaults.
+- If `services.data.enabled` is `true`, `dialect` is required (`mssql` or `postgresql`).
+  Omitting it fails at deploy time with `Dialect is required when Data module is enabled`.
+
+## Deployment
+
+- `rayfin up` is the canonical command for "deploy this change", "apply this schema
+  change", or "push my entity update". It builds and deploys the static app **and** applies
+  pending schema migrations in one step.
+- `rayfin up db apply` is a narrow advanced subcommand that applies schema only. Use it
+  when you explicitly want to skip the static deploy.
+- After adding or changing an entity, verify with `rayfin up status`. A deploy can report
+  success while a newly added entity is not yet readable.
+- `--force` permits destructive changes (drop table, drop column, alter type). Never use it
+  without review.
+- When a user asks you to "build and deploy" or "make it live", run the workflow —
+  `rayfin login` → `rayfin up` → `rayfin up status` — rather than printing steps for them
+  to run.
+
+## Anti-patterns
+
+| Don't | Do |
+| --- | --- |
+| Raw `fetch()` or hand-built GraphQL for data | `client.data.<Entity>` — typed queries with automatic auth |
+| Entities with no permission decorator | An explicit `@anonymous()`, `@authenticated()`, or `@role()` |
+| `@text()` with no `max` on MSSQL | `@text({ max: N })` — `NVARCHAR(MAX)` breaks GraphQL schema generation |
+| `@text()` for a foreign key column | `@uuid()`, to match the referenced primary key |
+| `onAuthStateChange` | `onSessionChange` |
+| `findByPk` | `findById` |
+| Guessing at an API surface | Fetch the relevant `<route>.md` page, or use the [MCP server](/docs/ai/mcp-server) |

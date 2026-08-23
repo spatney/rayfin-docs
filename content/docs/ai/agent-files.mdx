@@ -1,0 +1,74 @@
+---
+title: Agent files in your project
+description: rayfin init ai-files installs AGENTS.md, a Rayfin skill, and an MCP server entry so any coding agent knows how to work in your project.
+---
+
+This site teaches an agent how Rayfin works in general. Agent files teach an agent how
+*your project* works, and they travel with the repository.
+
+The Rayfin CLI installs three of them and keeps them in sync as the platform evolves.
+
+| File | Purpose | Read by |
+| --- | --- | --- |
+| `AGENTS.md` | Cross-agent instructions for your project, at the repo root | Almost every modern coding agent |
+| `.mcp.json` | Wires up the Rayfin MCP docs server for task-time lookups | Copilot, Claude Code, Cursor |
+| `.agents/skills/rayfin/SKILL.md` | Rayfin-specific rules and anti-patterns | Copilot CLI, VS Code Copilot, Codex |
+
+Together they mean you stop pasting the same Rayfin context into chat.
+
+## Install
+
+Scaffolding with `npm create @microsoft/rayfin@latest` or `rayfin init` installs these
+automatically. To add them to an existing project, or to refresh them after upgrading the
+CLI:
+
+```bash
+npx rayfin init ai-files install
+```
+
+Check what is installed and whether anything has drifted:
+
+```bash
+npx rayfin init ai-files status
+```
+
+The command is idempotent — re-running on an up-to-date project writes nothing.
+
+See [`rayfin init ai-files`](/docs/reference/cli/ai-files) for every flag, item state, and
+exit code.
+
+## It is a careful neighbour
+
+- `.mcp.json` is merged at the key level. The CLI manages only `mcpServers.rayfin`; your
+  other servers are preserved.
+- `AGENTS.md` is a **one-time install**. If you or your template already wrote one, the CLI
+  never overwrites it — not even with `--force`. Add your own rules to it freely.
+- `.agents/skills/rayfin/SKILL.md` carries a `rayfin-managed: true` frontmatter sigil.
+  Removing that sigil is the documented opt-out: the CLI stops managing the file.
+
+If you hand-edit a managed file, the CLI marks it `user-modified`, preserves your version,
+and warns rather than clobbering it.
+
+## Drift nudge
+
+Every `rayfin up` prints a one-line nudge if any managed item is out of date, modified,
+missing, or newly shipped. The check is content-based, not version-based, so upgrading the
+CLI to a version shipping identical content produces no nudge.
+
+## Pointing agent files at this site
+
+The generated `AGENTS.md` directs agents to the MCP server and `rayfin docs` first, because
+those are version-locked to your installed packages. Add a line pointing at this site as
+well, so an agent working without a running MCP server still has grounding:
+
+```md title="AGENTS.md"
+For conceptual guidance and full CLI/SDK reference, read https://rayfin.dev/llms.txt.
+Any page is available as raw Markdown by appending .md to its URL.
+Read https://rayfin.dev/docs/ai/rules.md before writing Rayfin code.
+```
+
+```prompt title="Set up agent files in an existing project"
+My project already has source code and I want to add Rayfin agent context to it. Run
+`npx rayfin init ai-files install` from the project root, then show me what it installed
+with `npx rayfin init ai-files status`. Explain what each file does and commit them.
+```

@@ -1,0 +1,19 @@
+{
+  "title": "CLI",
+  "description": "Every rayfin command, flag, and subcommand.",
+  "pages": [
+    "index",
+    "installation",
+    "init",
+    "login",
+    "up",
+    "dev",
+    "env",
+    "functions",
+    "connector",
+    "docs",
+    "ai-files",
+    "templates",
+    "telemetry"
+  ]
+}

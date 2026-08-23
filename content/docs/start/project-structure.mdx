@@ -1,0 +1,227 @@
+---
+title: Project structure
+description: The rayfin/ folder layout — rayfin.yml, entities under rayfin/data/, schema.ts, generated files, and how the frontend picks up backend config.
+---
+
+Every template scaffolded with `npm create @microsoft/rayfin@latest` follows the same
+layout, so data models, backend configuration, and frontend code stay in predictable
+places.
+
+## Folder layout
+
+```text
+my-app/
+├── rayfin/
+│   ├── data/
+│   │   ├── schema.ts
+│   │   └── Todo.ts
+│   ├── .temp/
+│   ├── .env
+│   ├── .deployments.json
+│   ├── rayfin.yml
+│   └── tsconfig.json
+├── src/
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+## rayfin/rayfin.yml
+
+The entry point for your backend configuration. It controls which services `rayfin up`
+starts (or deploys), and its string values support `${VAR}` / `${VAR:-default}`
+interpolation from `rayfin/.env` — see
+[Environment variable interpolation](/docs/reference/config/env-interpolation).
+
+```yaml title="rayfin/rayfin.yml"
+id: my-app
+name: my-app
+version: 1.0.0
+services:
+  auth:
+    enabled: true
+    allowedRedirectUris:
+      - http://localhost:5173
+    password:
+      enabled: true
+    fabric:
+      enabled: false
+  data:
+    enabled: true
+    dialect: mssql
+  storage:
+    enabled: false
+  staticHosting:
+    enabled: true
+    root: .
+    folder: dist
+    buildCommand: npm run build
+    indexDocument: index.html
+```
+
+| Field | Description |
+| --- | --- |
+| `id` | Project slug — used as the Docker Compose project name and the Fabric item identifier. |
+| `name` | Human-readable project display name. |
+| `version` | Project version (semver). |
+| `services.auth` | Enables sign-in and configures redirect URIs, password auth, and Fabric SSO. See [Auth](/docs/auth). |
+| `services.data` | Enables the data service and its `dialect` (`mssql` or `postgresql`). See [Data](/docs/data). |
+| `services.storage` | Enables blob storage. |
+| `services.staticHosting` | Enables building and hosting your frontend, including the `buildCommand` `rayfin up` runs before packaging it. See [Hosting](/docs/hosting). |
+
+Declare `services.auth` and `services.data` explicitly, even as `enabled: false` — the CLI
+reads those keys directly and does not fill in a default when they are missing entirely.
+The full field reference is in [`rayfin.yml`](/docs/reference/config/rayfin-yml).
+
+## rayfin/data/ and schema.ts
+
+Files in `rayfin/data/` define your entities — TypeScript classes decorated with
+`@entity()` plus one field decorator per property:
+
+```typescript title="rayfin/data/Todo.ts"
+import { entity, authenticated, uuid, text, boolean } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated({ policy: (claims, item) => claims.sub.eq(item.user_id) })
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @boolean({ default: false }) done!: boolean;
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+`rayfin/data/schema.ts` maps entity names to their classes. The Rayfin client uses this map
+to provide type-safe access to `client.data.<Entity>`:
+
+```typescript title="rayfin/data/schema.ts"
+import { Todo } from './Todo.js';
+
+export type AppSchema = {
+  Todo: Todo;
+};
+
+export const schema = [Todo];
+```
+
+Register every entity file here — an entity that exists in `rayfin/data/` but is missing
+from `schema.ts` is not part of your typed client. See
+[Modeling entities](/docs/data/modeling) for field types, relationships, and permissions.
+
+## rayfin/.env
+
+An optional environment file that supplies values to `rayfin.yml` via interpolation, and
+the file `rayfin up` writes generated values into: database passwords, allocated ports, and
+the `RAYFIN_PUBLIC_*` variables your frontend reads. It is gitignored — commit a
+`rayfin/.env.example` instead to document the variables a teammate needs to fill in. See
+[Environment variables](/docs/reference/config/environment-variables) for the full list.
+
+## rayfin/.deployments.json
+
+Written after your first `npx rayfin up` deploy to Fabric. It is a per-workspace registry
+of deployment metadata (`fabricItemId`, `hostingUrl`, `publishableKey`, and more) so
+repeated deploys update the same Fabric item instead of creating a new one. Gitignored —
+see [Deploy to Fabric](/docs/start/deploy-to-fabric).
+
+## rayfin/tsconfig.json and the root tsconfig.json
+
+`rayfin/tsconfig.json` is a project-reference config the CLI uses to compile your entity
+definitions. It extends your root `tsconfig.json` and overrides what it needs (for
+example, `composite: true`). You should not need to edit it.
+
+Your root `tsconfig.json` needs a project reference to `rayfin/`, plus the
+decorator-related compiler options Rayfin's TC39 Stage 3 decorators require:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "ESNext.Decorators"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"],
+  "references": [{ "path": "./rayfin" }]
+}
+```
+
+> [!NOTE]
+> Do not set `emitDecoratorMetadata` to `true`. TypeScript only allows it alongside
+> `experimentalDecorators`, which is incompatible with Rayfin's TC39 decorators.
+
+Templates created with `npm create @microsoft/rayfin@latest` already include these
+settings. If you are integrating Rayfin into an existing project, check your
+`tsconfig.json` against them.
+
+## rayfin/.temp/ (generated)
+
+Generated backend artifacts — the compiled entity output, the Data API Builder
+configuration, and the Docker Compose file `rayfin up` runs locally. If the backend seems
+to be using stale schema or configuration, stop the stack and rerun `npx rayfin up` to
+regenerate this folder.
+
+## Frontend wiring
+
+### Vite configuration
+
+Rayfin's decorators require an ES2022 (or later) compilation target. Set `target:
+'es2022'` in all three places Vite reads it:
+
+```typescript title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    target: 'es2022',
+  },
+  esbuild: {
+    target: 'es2022',
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      target: 'es2022',
+    },
+  },
+});
+```
+
+> [!WARNING]
+> Use `@vitejs/plugin-react` (esbuild-based), not `@vitejs/plugin-react-swc`. The SWC
+> plugin only supports legacy/experimental decorators and fails to parse Rayfin's TC39
+> decorators with an `Expression expected` error, regardless of the `target` setting.
+
+### Environment variables and the predev/prebuild hooks
+
+Rayfin writes runtime values to `rayfin/.env` using the `RAYFIN_PUBLIC_*` prefix. Your
+frontend never reads that file directly — instead, the scaffolded `predev` and `prebuild`
+npm scripts call `rayfin env` to generate a framework-specific `.env.local`:
+
+```json title="package.json"
+{
+  "scripts": {
+    "predev": "rayfin env --framework vite",
+    "prebuild": "rayfin env --framework vite",
+    "dev": "vite",
+    "build": "tsc -b && vite build"
+  }
+}
+```
+
+When the CLI detects a Vite or Next.js project automatically, you can omit `--framework`.
+For Vite, `RAYFIN_PUBLIC_API_URL` becomes `VITE_RAYFIN_API_URL` and
+`RAYFIN_PUBLIC_PUBLISHABLE_KEY` becomes `VITE_RAYFIN_PUBLISHABLE_KEY` in `.env.local`. To
+change a value, edit `rayfin/.env` and re-run `npm run dev` (or `rayfin env --framework
+vite` directly) to regenerate it.
+
+## Next
+
+- [Quickstart](/docs/start/quickstart) — scaffold a project with this layout.
+- [Local development](/docs/start/local-development) — run and iterate on the backend.
+- [Modeling entities](/docs/data/modeling) — the full entity and decorator reference.

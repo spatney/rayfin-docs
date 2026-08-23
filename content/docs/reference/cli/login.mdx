@@ -1,0 +1,90 @@
+---
+title: Login
+description: Authenticate the CLI with Entra ID for Fabric operations — rayfin login, login status, logout, service principal auth, and where tokens are stored.
+---
+
+Fabric operations (`rayfin up` and its subcommands) need a signed-in identity. `rayfin up`
+launches an interactive login automatically if you're not signed in, but sign in explicitly
+when you need a specific tenant, a service principal, or want to check status first.
+
+## Sign in
+
+```bash
+npx rayfin login
+```
+
+Opens an interactive Entra ID sign-in flow (MSAL). The account picker is always shown.
+
+| Flag | Description |
+| --- | --- |
+| `-t, --tenant <id>` | Entra ID tenant GUID to sign in to. Use when your account spans multiple tenants. |
+| `--service-principal` | Authenticate with a service principal using client credentials, instead of an interactive browser flow. |
+| `-u, --client-id <id>` | Client ID for service principal auth. Required with `--service-principal`. |
+| `-p, --client-secret <secret>` | Client secret for service principal auth. Required with `--service-principal`. |
+| `--select` | Deprecated. The MSAL account picker is now always shown; this flag is accepted for backward compatibility and has no additional effect. |
+| `--encryption-fallback-enabled` | Allow plaintext token storage when the OS keychain is unavailable (some Linux distros, dev containers, Codespaces). Required only when login fails with a keychain error. |
+
+### Service principal (non-interactive)
+
+For CI or headless environments:
+
+```bash
+npx rayfin login --service-principal --client-id <id> --client-secret <secret> --tenant <tenant-id>
+```
+
+Credentials are persisted, so subsequent commands in the same environment authenticate
+automatically without repeating the flag.
+
+> [!TIP]
+> If a token is already available from an external source (for example
+> `az account get-access-token`), set the `RAYFIN_TOKEN` shell variable instead of signing
+> in — the CLI treats this as an ambient token and skips its own login/logout entirely. See
+> [Environment variables](/docs/reference/config/environment-variables).
+
+## Check status
+
+```bash
+npx rayfin login status
+```
+
+Prints the signed-in account, tenant, resolved Fabric API endpoint, and token expiry (or
+`❌ Not signed in`). Add `--json` for a machine-readable form.
+
+## Sign out
+
+```bash
+npx rayfin logout
+```
+
+Clears the cached account and token cache. Prints whether a session was actually cleared.
+
+## Where auth state is stored
+
+| Path | Contents |
+| --- | --- |
+| `~/.rayfin/auth.json` | Signed-in account and tenant hints, plus any persisted environment overrides. |
+| `~/.rayfin/cache.bin` | The encrypted MSAL token cache. Encrypted using the OS keychain when available. |
+
+Override the `~/.rayfin` directory itself with the `RAYFIN_CONFIG_DIR` environment
+variable.
+
+> [!WARNING]
+> On systems without OS-backed credential storage — some Linux distributions, dev
+> containers, and GitHub Codespaces — token cache encryption can fail. Pass
+> `--encryption-fallback-enabled` (or set `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true`) only
+> when you hit that error, since it stores the token cache in plaintext.
+
+## Next step
+
+```bash
+npx rayfin up
+```
+
+See [Up](/docs/reference/cli/up) to deploy once signed in.
+
+```prompt title="Sign in non-interactively for CI"
+Set up a GitHub Actions workflow step that authenticates the Rayfin CLI using a service
+principal. Use `npx rayfin login --service-principal --client-id $CLIENT_ID --client-secret
+$CLIENT_SECRET --tenant $TENANT_ID` with those three values sourced from repository secrets,
+then run `npx rayfin up --yes` to deploy non-interactively.
+```

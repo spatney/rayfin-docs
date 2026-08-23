@@ -1,0 +1,95 @@
+---
+title: Auth
+description: Compare Rayfin's sign-in methods — email and password, magic link, and Fabric SSO — and see which ones work in Rayfin Local versus a deployed Fabric app.
+---
+
+Rayfin Auth gives you managed sign-up, sign-in, and session handling without building an
+identity service yourself. Enable it in `rayfin.yml`, call `client.auth.signIn(...)` (or the
+Fabric equivalent), and every `client.data.*` call after that automatically carries the
+authenticated context — no manual header or token passing between modules.
+
+## Why use Rayfin Auth
+
+- **Zero auth infrastructure** — sign-up, sessions, and token handling work with no external
+  identity service to deploy or configure.
+- **Pre-integrated with data** — after sign-in, every `client.data.*` call automatically
+  carries the authenticated context.
+- **Automatic per-user data isolation** — JWT claims drive the row-level security policies
+  you declare on your entities (see [Permissions](/docs/data/permissions)), so each user sees
+  only the data they own without hand-written SQL.
+- **One client API across modes** — `signIn`, `signOut`, `getSession`, and `onSessionChange`
+  are the same calls whether you're running Rayfin Local or a deployed Fabric app. What
+  differs by mode is **which sign-in method is available** — see below.
+
+## Auth methods
+
+Rayfin ships three sign-in methods. You can enable more than one at a time in `rayfin.yml`,
+but which ones actually work depends on where the app is running.
+
+| Method | Rayfin Local | Fabric app |
+| --- | --- | --- |
+| [Email and password](/docs/auth/email-password) | Available — enabled by default | Not available |
+| Magic link (passwordless) | Available, if enabled | Not available |
+| [Fabric SSO](/docs/auth/fabric-sso) (Entra ID) | Not available — only works inside the Fabric portal | Available — the only supported method |
+
+> [!WARNING]
+> Email and password (including magic link) is **local-development only**. A deployed Fabric
+> app supports Fabric SSO exclusively — signing in with a password stops working the moment
+> the app is deployed. Conversely, Fabric SSO only works inside the Fabric portal and cannot
+> be used from `localhost`. Design your sign-in UI around this split from the start — see
+> [React integration](/docs/auth/react) for a pattern that picks the right method
+> automatically.
+
+### Why the split exists
+
+Fabric SSO signs a user in through the Microsoft Fabric portal using their Entra identity —
+there is no portal session to broker against when the app is running on `localhost`. Email,
+password, and magic-link sign-in are backed by Rayfin's own auth service, which deployed
+Fabric apps don't expose. In practice: build against password or magic-link auth while
+developing locally, and against Fabric SSO once the app is deployed.
+
+## Configuring auth
+
+Enable the service and whichever methods you need in `rayfin/rayfin.yml`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  auth:
+    enabled: true
+    allowedRedirectUris:
+      - http://localhost:5173
+    password:
+      enabled: true
+    fabric:
+      enabled: true
+```
+
+Restart the backend (`npx rayfin up`, or `npx rayfin dev` in Rayfin Local) after changing
+this file — auth endpoints are only reconfigured on startup. See
+[Redirect URIs](/docs/hosting/redirect-uris) for what `allowedRedirectUris` controls and how
+deployment affects it.
+
+## In this section
+
+- **[Fabric SSO](/docs/auth/fabric-sso)** — enable it, install the provider package, and call
+  `ensureSignedInWithFabric`.
+- **[Email and password](/docs/auth/email-password)** — sign-up, sign-in, and magic links for
+  local development.
+- **[Sessions](/docs/auth/sessions)** — the opaque session object, `onSessionChange`, and
+  token handling.
+- **[React integration](/docs/auth/react)** — an auth context, a hook, and route guarding.
+
+```prompt title="Wire up Rayfin auth for both local dev and Fabric"
+In my Rayfin app, set up authentication that works correctly in both modes:
+
+- In rayfin/rayfin.yml, enable services.auth with password.enabled: true and
+  fabric.enabled: true, and keep allowedRedirectUris scoped to my app's own origin(s).
+- Build an auth abstraction that uses email/password sign-in when running locally (the API
+  URL points at localhost) and Fabric SSO (ensureSignedInWithFabric from
+  @microsoft/rayfin-auth-provider-fabric) otherwise.
+- Use onSessionChange to react to session changes — onAuthStateChange does not exist on the
+  Rayfin auth client. Gate UI on isAuthenticated or the presence of a user object, never on
+  session internals.
+
+Explain which files you changed and how to test each mode.
+```

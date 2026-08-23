@@ -1,0 +1,111 @@
+---
+title: "@microsoft/rayfin-lib"
+description: The shared ApiClient, error classes, and small utilities every other Rayfin SDK package builds on — an internal dependency most builders never import directly.
+appliesTo: "@microsoft/rayfin-lib >= 1.31"
+---
+
+`@microsoft/rayfin-lib` is the shared HTTP client and utility layer underneath every other
+`@microsoft/rayfin-*` SDK package —
+[`rayfin-core`](/docs/reference/sdk/rayfin-core),
+[`rayfin-data`](/docs/reference/sdk/rayfin-data),
+[`rayfin-auth`](/docs/reference/sdk/rayfin-auth),
+[`rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric), and
+[`rayfin-functions`](/docs/reference/sdk/rayfin-functions) all depend on it. Most Rayfin
+applications never import it directly — you get its exports re-exported through
+`@microsoft/rayfin-client` (`ApiClientConfig`, the error classes) — but it's useful to know
+what lives here when you're reading a stack trace or building against the SDK at a lower
+level.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-lib
+```
+
+## `ApiClient`
+
+The isomorphic HTTP client every higher-level SDK class wraps. It works in both browsers
+and Node.js using native `fetch`, with automatic `401` retry when a refresh callback is
+configured.
+
+```typescript
+class ApiClient {
+  constructor(config: ApiClientConfig);
+  setAccessTokenCallback(callback: () => string | null): void;
+  setRefreshCallback(callback: () => Promise<void>): void;
+  get<T>(path: string, options?: RequestOptions): Promise<T>;
+  post<T>(path: string, data?: any, options?: RequestOptions): Promise<T>;
+  put<T>(path: string, data?: any, options?: RequestOptions): Promise<T>;
+  delete<T>(path: string, options?: RequestOptions): Promise<T>;
+  requestRaw(path: string, options?: RequestRawOptions): Promise<Response>;
+}
+
+interface ApiClientConfig {
+  baseUrl: string;
+  publishableKey: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+  getAccessToken?: () => string | null;
+  useProxy?: boolean;
+  onRefreshNeeded?: () => Promise<void>;
+}
+```
+
+See [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client#rayfinclientconfig) for
+the option table — `RayfinClientConfig` and `RayfinServerClientConfig` both extend
+`ApiClientConfig`. `setAccessTokenCallback` and `setRefreshCallback` are how `Auth` attaches
+itself to an `ApiClient` after construction (`Auth.attachToClient()`), which is also how
+`@microsoft/rayfin-auth-provider-fabric` gets its token-refresh behavior for free.
+
+## Errors
+
+Every SDK package's thrown errors extend this hierarchy:
+
+```typescript
+class SdkError extends Error {
+  name: string;
+  code?: string;
+  constructor(message: string, code?: string);
+}
+
+class AuthError extends SdkError {}
+
+class NetworkError extends SdkError {
+  status?: number;
+  constructor(message: string, status?: number, code?: string);
+}
+```
+
+`@microsoft/rayfin-client` declares its **own** `AuthError extends SdkError` rather than
+re-exporting this one — the two classes are structurally identical but distinct; an
+`instanceof` check needs the `AuthError` from whichever package actually threw it. See
+[Errors](/docs/reference/sdk/rayfin-client#errors) on the client reference page.
+
+## Small utilities
+
+Two narrowly-scoped helpers are exported from the package root, used internally by the
+data client and storage tooling:
+
+```typescript
+function normalizeContainerName(input: string): string;
+
+class EntityNameResolver {
+  static getPlural(entityName: string): string;
+  static getSingular(pluralName: string): string;
+  static isPlural(word: string): boolean;
+  static setCustomPlural(singular: string, plural: string): void;
+  static clearCustomPlurals(): void;
+}
+```
+
+`normalizeContainerName` lowercases and hyphenates a string to satisfy Azure Blob container
+naming rules (letters, numbers, and hyphens only; 3–63 characters). `EntityNameResolver`
+backs the automatic singular/plural table-name inference `@microsoft/rayfin-core` performs
+for `@entity()` classes (a `Todo` class maps to a `todos` table), and lets you register
+irregular plurals it wouldn't guess correctly on its own.
+
+## What's intentionally not documented here
+
+`ServicePlugin` (an abstract base class for building custom service plugins) is exported
+from the package but marked `@alpha` and `@hidden` in its own source comments — it is not
+considered part of the public API yet, so this page does not document its shape.

@@ -1,0 +1,192 @@
+---
+title: Environment variables
+description: The canonical, exhaustive reference for every environment variable the Rayfin CLI and runtime read or write — frontend, tooling, ports, passwords, flags, and files.
+---
+
+This page is the single reference for every environment variable Rayfin tooling reads or
+writes. Other pages in this reference link here instead of repeating the tables.
+
+## Frontend-visible variables (`RAYFIN_PUBLIC_*`)
+
+These live in `rayfin/.env` and are the **only** variables exposed to frontend builds.
+[`rayfin env`](/docs/reference/cli/env) (or the auto-emit built into `rayfin up` and
+`rayfin dev`) maps them to framework-specific names in `.env.local`.
+
+| Variable | Description | Populated by |
+| --- | --- | --- |
+| `RAYFIN_PUBLIC_API_URL` | Rayfin backend URL (`http://localhost:5168` for local dev). | `rayfin up` / `rayfin dev` |
+| `RAYFIN_PUBLIC_PUBLISHABLE_KEY` | Public key for Rayfin SDK initialization. | `rayfin up` / `rayfin dev` |
+| `RAYFIN_PUBLIC_ITEM_ID` | Fabric AppBackend item ID. Used for Fabric brokered auth. | `rayfin up` |
+| `RAYFIN_PUBLIC_WORKSPACE_ID` | Fabric workspace ID. Used for Fabric brokered auth. | `rayfin up` |
+| `RAYFIN_PUBLIC_TENANT_ID` | Entra ID tenant for workspace disambiguation. | `rayfin up` |
+| `RAYFIN_PUBLIC_PORTAL_URL` | Fabric Portal base URL (e.g. `https://app.fabric.microsoft.com/`). | `rayfin up` |
+| `RAYFIN_PUBLIC_SERVICE_MODE` | `rayfin` (real backend) or `mock` (local testing). | User-set in `rayfin/.env` |
+| `RAYFIN_PUBLIC_FRONTEND_PORT` | Stable per-project frontend dev-server port, assigned once and reused so the dev server pins a deterministic origin the deployed backend can allow-list. | `rayfin dev` / `rayfin up` |
+
+### Framework mapping
+
+`rayfin env --framework <fw>` maps each `RAYFIN_PUBLIC_*` variable to a framework-specific
+name:
+
+| Source (`rayfin/.env`) | Vite (`.env.local`) | Next.js (`.env.local`) | Plain (`.env.local`) |
+| --- | --- | --- | --- |
+| `RAYFIN_PUBLIC_API_URL` | `VITE_RAYFIN_API_URL` | `NEXT_PUBLIC_RAYFIN_API_URL` | `API_URL` |
+| `RAYFIN_PUBLIC_PUBLISHABLE_KEY` | `VITE_RAYFIN_PUBLISHABLE_KEY` | `NEXT_PUBLIC_RAYFIN_PUBLISHABLE_KEY` | `PUBLISHABLE_KEY` |
+| `RAYFIN_PUBLIC_ITEM_ID` | `VITE_FABRIC_ITEM_ID` | `NEXT_PUBLIC_FABRIC_ITEM_ID` | `ITEM_ID` |
+| `RAYFIN_PUBLIC_WORKSPACE_ID` | `VITE_FABRIC_WORKSPACE_ID` | `NEXT_PUBLIC_FABRIC_WORKSPACE_ID` | `WORKSPACE_ID` |
+| `RAYFIN_PUBLIC_TENANT_ID` | `VITE_FABRIC_TENANT_ID` | `NEXT_PUBLIC_FABRIC_TENANT_ID` | `TENANT_ID` |
+| `RAYFIN_PUBLIC_PORTAL_URL` | `VITE_FABRIC_PORTAL_URL` | `NEXT_PUBLIC_FABRIC_PORTAL_URL` | `PORTAL_URL` |
+| `RAYFIN_PUBLIC_SERVICE_MODE` | `VITE_SERVICE_MODE` | `NEXT_PUBLIC_SERVICE_MODE` | `SERVICE_MODE` |
+| `RAYFIN_PUBLIC_FRONTEND_PORT` | `VITE_PORT` | `PORT` | `FRONTEND_PORT` |
+
+A custom variable follows the same generic pattern: `RAYFIN_PUBLIC_FOO` becomes
+`VITE_RAYFIN_FOO` (Vite), `NEXT_PUBLIC_RAYFIN_FOO` (Next.js), or `FOO` (plain).
+
+`RAYFIN_PUBLIC_FRONTEND_PORT` maps to the port variable each dev server reads (`VITE_PORT`
+for Vite, `PORT` for Next.js); the scaffolded `vite.config.ts` pins the server to it with
+`strictPort`, so if the assigned port is taken the dev server fails fast instead of
+silently drifting to another port. To use a different port, set
+`RAYFIN_PUBLIC_FRONTEND_PORT` in `rayfin/.env` and re-run `rayfin env` — `rayfin up`
+registers whatever value is assigned in the deployed redirect allow-list.
+
+## Tooling overrides
+
+Configure CLI and extension behavior. Not exposed to the frontend. Set in `rayfin/.env` or
+as shell environment variables.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `RAYFIN_FABRIC_API_URL` | Fabric REST API base URL the CLI calls. For `*.fabric.microsoft.com` hosts, accepts a bare origin or a full `<origin>/v1` URL (extra path segments are stripped). For non-Fabric hosts — for example, a credential proxy — accepts an origin plus path prefix; the prefix is preserved and `/v1` is appended only if not already present. | `https://api.fabric.microsoft.com/v1` |
+| `RAYFIN_FABRIC_PORTAL_URL` | Fabric portal base URL for deep links and `RAYFIN_PUBLIC_PORTAL_URL`. | `https://app.fabric.microsoft.com/` |
+| `RAYFIN_ENV_FILE` | Path to an alternate `.env` file. Equivalent to `--env-file`. | `rayfin/.env` |
+
+When set alone (not accompanied by a persisted `rayfin login`), the two Fabric endpoint
+variables apply only to the current process and aren't persisted — later invocations need
+the same shell or `rayfin/.env` value to keep using the override.
+
+Resolution precedence per variable: shell env var > value in `rayfin/.env` > persisted
+`environmentConfig` in `~/.rayfin/auth.json` > built-in default.
+
+> [!WARNING]
+> When `RAYFIN_FABRIC_API_URL` points at a non-`*.fabric.microsoft.com` host, the CLI sends
+> the Fabric bearer token it acquired to that host on every REST call. Only point this at a
+> host you trust to handle tokens responsibly, typically a first-party credential proxy you
+> operate yourself — there is currently no trusted-host allowlist. Operations that return a
+> `202` with a `Location` header are also a known limitation in proxy mode: the CLI follows
+> the absolute URL in `Location`, which usually points back at the upstream Fabric host and
+> bypasses the proxy.
+
+## Runtime port variables
+
+Written to `rayfin/.env` by `rayfin up` and `rayfin dev` during port allocation. Each port
+starts at its default and increments until free, so multiple projects can run side by side.
+Read via `${VAR:-default}` interpolation in the generated container configuration.
+
+| Variable | Default | Service | Docker profile |
+| --- | --- | --- | --- |
+| `RAYFIN_WEBSERVICE_HTTP_PORT` | 5168 | Rayfin WebService (HTTP) | always |
+| `RAYFIN_WEBSERVICE_HTTPS_PORT` | 7126 | Rayfin WebService (HTTPS) | always |
+| `RAYFIN_POSTGRES_PORT` | 5432 | PostgreSQL (admin database) | always |
+| `RAYFIN_POSTGRES_DATAAPI_PORT` | 5433 | PostgreSQL (Data API backend) | `data-api-postgresql` |
+| `RAYFIN_SQLSERVER_PORT` | 1433 | SQL Server (Data API backend) | `data-api-mssql` |
+| `RAYFIN_MAILDEV_SMTP_PORT` | 1025 | MailDev SMTP | `email` |
+| `RAYFIN_MAILDEV_WEB_PORT` | 1080 | MailDev web UI | `email` |
+| `RAYFIN_AZURITE_BLOB_PORT` | 10000 | Azurite Blob | `storage` |
+| `RAYFIN_AZURITE_QUEUE_PORT` | 10001 | Azurite Queue | `storage` |
+| `RAYFIN_AZURITE_TABLE_PORT` | 10002 | Azurite Table | `storage` |
+| `RAYFIN_FUNCTIONS_PORT` | 7071 | Azure Functions | `function` |
+| `RAYFIN_ASPIRE_UI_PORT` | 18888 | Aspire Dashboard UI | `telemetry` |
+| `RAYFIN_ASPIRE_OTLP_PORT` | 4317 | Aspire OTLP (gRPC) | `telemetry` |
+
+Port variables are cleaned up from `rayfin/.env` when `rayfin dev` shuts down.
+
+## Database passwords
+
+Written to `rayfin/.env` on first run and preserved afterward so existing database volumes
+keep working. Never exposed to the frontend.
+
+| Variable | Default | Service |
+| --- | --- | --- |
+| `RAYFIN_POSTGRES_PASSWORD` | `YourStrong!Passw0rd` | PostgreSQL (admin database) |
+| `RAYFIN_SQLSERVER_PASSWORD` | `YourStrong!Passw0rd` | SQL Server |
+| `RAYFIN_POSTGRES_DATAAPI_PASSWORD` | `YourStrong!Passw0rd` | PostgreSQL (Data API backend) |
+
+## Service configuration flags
+
+Written to `rayfin/.env` based on `rayfin.yml` settings. Read by the Rayfin WebService
+container via the ASP.NET Core configuration system.
+
+| Variable | Source (`rayfin.yml`) | Values |
+| --- | --- | --- |
+| `Auth__Enabled` | `services.auth.enabled` | `true` / `false` |
+| `Data__Enabled` | `services.data.enabled` | `true` / `false` |
+| `Storage__Enabled` | `services.storage.enabled` | `true` / `false` |
+
+The signing-key variables below are set to dev-mode defaults and aren't typically edited by
+hand:
+
+- `Auth__AsymmetricKeys__Provider` — `local-file`
+- `Auth__AsymmetricKeys__Algorithm` — `ES256`
+- `Auth__AsymmetricKeys__KeySize` — `256`
+- `Auth__AsymmetricKeys__LocalFile__AutoGenerateKeys` — `true`
+
+## Shell-only variables
+
+Read from the shell environment. Never written to files.
+
+| Variable | Description |
+| --- | --- |
+| `RAYFIN_TOKEN` | Pre-acquired bearer token for headless or non-interactive usage. Bypasses interactive Entra ID login. Prefer `rayfin login --service-principal` for CI; use `RAYFIN_TOKEN` when a token is already available from an external source (e.g. `az account get-access-token`). |
+| `RAYFIN_WORKSPACE_ID` | Fabric workspace ID for non-interactive setup. Used with `RAYFIN_TOKEN`. |
+| `RAYFIN_TENANT_ID` | Entra ID tenant used by `rayfin up` for portal URLs and the `ctid` query parameter. Equivalent to `-t, --tenant <id>` (precedence: flag > env var > signed-in tenant). |
+| `RAYFIN_ENCRYPTION_FALLBACK_ENABLED` | Set to `true` to allow a plaintext token cache on systems without OS credential storage. Development only. Equivalent to `--encryption-fallback-enabled`. |
+| `RAYFIN_FEATURE_FLAGS` | Comma-separated list of preview feature names to enable (case-insensitive) — see the table below. |
+| `RAYFIN_WEBSERVICE_IMAGE_NAME` | Experimental. Overrides the WebService container image used by `rayfin dev` and `docker compose`. Defaults to `ghcr.io/microsoft/project-rayfin/webservice:cli-<version>`. |
+| `RAYFIN_APPINSIGHTS_CONNECTION_STRING` | Overrides the telemetry endpoint used by the CLI and the VS Code extension. |
+| `RAYFIN_CONFIG_DIR` | Overrides the `~/.rayfin` directory where auth state and the token cache are stored. |
+| `RAYFIN_TELEMETRY_OPTOUT` | Set to `1` to disable CLI telemetry — see [Telemetry](/docs/reference/cli/telemetry). |
+
+### Recognized `RAYFIN_FEATURE_FLAGS` values
+
+| Flag | Effect | Also auto-enabled by |
+| --- | --- | --- |
+| `storage` | Exposes `rayfin dev storage *` and the Storage prompt in `rayfin init`. | `services.storage.enabled: true` in `rayfin.yml` |
+| `functions` | Exposes `rayfin functions`, `rayfin dev functions apply`, `rayfin up functions deploy`, and the Functions prompt in `rayfin init`. | `services.functions.enabled: true` in `rayfin.yml` |
+| `postgresql` | Adds PostgreSQL as a selectable dialect in `rayfin init`. | `services.data.dialect: postgresql` in `rayfin.yml` |
+| `connectors` | Exposes the `rayfin connector` command group. | Any entry under `connectors:` in `rayfin.yml` |
+| `docker-local-dev` | Exposes the Docker-backed part of `rayfin dev` (bare `rayfin dev`, `dev db apply`, `dev status`, `dev watch`). | Not auto-enabled — flag only. |
+
+Combine multiple flags with a comma: `RAYFIN_FEATURE_FLAGS=docker-local-dev,storage`.
+
+## File locations
+
+| Path | Purpose | Committed |
+| --- | --- | --- |
+| `rayfin/.env` | All runtime and deployment values. | No (gitignored) |
+| `rayfin/.env.example` | Documents expected variables with placeholder values. | Yes |
+| `rayfin/.deployments.json` | Multi-deployment registry (item IDs, API URLs, workspace IDs). | No (gitignored) |
+| `rayfin/rayfin.yml` | Project configuration, service toggles, static hosting and Functions settings. | Yes |
+| `rayfin/.lockfile.json` | Agent-files install record — see [Ai-files](/docs/reference/cli/ai-files). | Yes |
+| `.env.local` | Framework-specific frontend variables, auto-generated by `rayfin env`. | No (gitignored) |
+| `~/.rayfin/auth.json` | CLI authentication state (tenant, account hints, persisted environment overrides). | N/A (user home) |
+| `~/.rayfin/cache.bin` | Encrypted MSAL token cache (OS-backed encryption when available). | N/A (user home) |
+
+## Resolution priority
+
+When the same variable is defined in more than one place, the value resolves in this order
+(highest priority first):
+
+1. Shell environment variable.
+2. `--env-file <path>` CLI flag (or `RAYFIN_ENV_FILE`).
+3. `rayfin/.env` file.
+4. Default value (hardcoded, or from `rayfin.yml` interpolation defaults).
+
+See [Environment variable interpolation](/docs/reference/config/env-interpolation) for how
+`${VAR}` / `${VAR:-default}` inside `rayfin.yml` resolves against this same priority order.
+
+```prompt title="Find why a frontend build has the wrong API URL"
+My built frontend is calling the wrong backend URL. Check rayfin/.env for
+RAYFIN_PUBLIC_API_URL, check whether a RAYFIN_PUBLIC_API_URL or VITE_RAYFIN_API_URL is set
+in my shell environment (which would take priority), and check .env.local. Tell me which
+value wins and why, then fix it by re-running `npx rayfin env --framework vite`.
+```

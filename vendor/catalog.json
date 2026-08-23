@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-07T05:00:00Z",
+  "packages": [
+    {
+      "name": "@microsoft/rayfin-core",
+      "kind": "sdk",
+      "summary": "Code-first decorators for data model definition. The CLI reads this metadata to generate Data API Builder configuration.",
+      "topics": [
+        "entity",
+        "decorator",
+        "data-model",
+        "schema",
+        "dab",
+        "fabric"
+      ],
+      "modules": ["rayfin-core"]
+    },
+    {
+      "name": "@microsoft/rayfin-data",
+      "kind": "sdk",
+      "summary": "DAB-compliant data client for GraphQL access patterns against the generated DAB endpoint.",
+      "topics": ["graphql", "data", "client", "query", "mutation", "dab"],
+      "modules": ["rayfin-data"]
+    },
+    {
+      "name": "@microsoft/rayfin-auth",
+      "kind": "sdk",
+      "summary": "Authentication helpers: magic-link sign-in, token management, sign-in flows for Rayfin Builder apps.",
+      "topics": [
+        "auth",
+        "authentication",
+        "magic-link",
+        "signin",
+        "login",
+        "token",
+        "session"
+      ],
+      "modules": ["rayfin-auth"]
+    },
+    {
+      "name": "@microsoft/rayfin-client",
+      "kind": "sdk",
+      "summary": "High-level Rayfin client entrypoint composing auth and data APIs behind a single configured client.",
+      "topics": ["client", "service", "composition", "high-level"],
+      "modules": ["rayfin-client"]
+    },
+    {
+      "name": "@microsoft/rayfin-lib",
+      "kind": "sdk",
+      "summary": "Shared HTTP and client utilities used by higher-level Rayfin SDKs.",
+      "topics": ["http", "shared", "utility", "internal"],
+      "modules": ["rayfin-lib"]
+    },
+    {
+      "name": "@microsoft/rayfin-functions",
+      "kind": "sdk",
+      "summary": "TypeScript helpers for function-style workflows on top of Rayfin core.",
+      "topics": ["functions", "serverless", "azure-functions", "workflow"],
+      "modules": []
+    },
+    {
+      "name": "@microsoft/rayfin-storage",
+      "kind": "sdk",
+      "summary": "Type-safe blob storage client for Rayfin storage backends.",
+      "topics": ["storage", "blob", "azure-blob", "file", "upload"],
+      "modules": []
+    },
+    {
+      "name": "@microsoft/rayfin-auth-provider-fabric",
+      "kind": "sdk",
+      "summary": "Microsoft Fabric token provider for Rayfin auth flows.",
+      "topics": ["fabric", "auth-provider", "token", "msal"],
+      "modules": ["rayfin-auth-provider-fabric"]
+    },
+    {
+      "name": "@microsoft/rayfin-cli",
+      "kind": "tool",
+      "summary": "Rayfin command-line interface: scaffolding, configuration, deployment, and the `rayfin docs` command group for offline-friendly agent grounding.",
+      "topics": ["cli", "scaffolding", "init", "deploy", "docs"],
+      "modules": []
+    },
+    {
+      "name": "@microsoft/rayfin-mcp",
+      "kind": "tool",
+      "summary": "Model Context Protocol server exposing Rayfin docs as `list_docs`, `search_docs`, `get_doc`, and `discover_packages` tools.",
+      "topics": ["mcp", "agent", "docs-server", "model-context-protocol"],
+      "modules": []
+    },
+    {
+      "name": "@microsoft/rayfin-docs",
+      "kind": "tool",
+      "summary": "Docs indexing/discovery library powering the CLI and MCP server. Handles the `rayfinDocs` per-package convention and merges installed package docs.",
+      "topics": ["docs-library", "indexer", "search", "discovery"],
+      "modules": []
+    },
+    {
+      "name": "@microsoft/rayfin-guide",
+      "kind": "guide",
+      "summary": "Cross-cutting Builder guides — getting started, auth overview, data permissions, CLI commands. Discovered via the `rayfinDocs` field.",
+      "topics": [
+        "guide",
+        "tutorial",
+        "quickstart",
+        "builder",
+        "getting-started"
+      ],
+      "modules": ["rayfin-guide"]
+    },
+    {
+      "name": "@microsoft/rayfin-host-docs",
+      "kind": "host",
+      "summary": "Host service reference docs for Rayfin .NET hosting components (WebService, Auth, Storage, DataApi, Function). Discovered via the rayfinDocs field.",
+      "topics": [
+        "host",
+        "dotnet",
+        "web-service",
+        "asp-net-core",
+        "graphql-endpoint",
+        "data-api-builder"
+      ],
+      "modules": ["rayfin-host"]
+    },
+    {
+      "name": "@microsoft/create-rayfin",
+      "kind": "tool",
+      "summary": "App scaffolding tool for bootstrapping new Rayfin projects via `npm create rayfin@latest`.",
+      "topics": ["scaffolding", "create", "init", "bootstrap"],
+      "modules": []
+    }
+  ]
+}

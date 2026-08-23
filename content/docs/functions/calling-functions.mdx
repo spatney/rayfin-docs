@@ -1,0 +1,153 @@
+---
+title: Calling functions from your app
+description: Invoke Rayfin functions from the frontend with a type-safe FunctionClient — client.functions.<name>.invoke(), error handling, and local debugging.
+---
+
+Once a function is registered and its schema is generated (see
+[Writing a function](/docs/functions/writing-functions)), calling it from the frontend is a
+single typed call through `RayfinClient` — no separate HTTP client or manual request
+shaping.
+
+## Give `RayfinClient` your functions schema
+
+Import the generated `AppFunctionsSchema` from your functions project and pass it as
+`RayfinClient`'s second type parameter, alongside your data schema:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types.js';
+import type { AppSchema } from '../../rayfin/data/schema';
+
+const client = new RayfinClient<AppSchema, AppFunctionsSchema>({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+});
+```
+
+`AppFunctionsSchema` is a closed object type — only the function names it lists are accepted
+by `client.functions.<name>.invoke(...)`, and each one's parameter and return types are
+checked against the schema entry.
+
+## Invoking a function
+
+```typescript
+// A function with input:
+const greeting = await client.functions.helloWorld.invoke({
+  firstName: 'Ada',
+  lastName: 'Lovelace',
+});
+console.log(greeting); // typed as string
+
+// A void-input function (RayfinContext-only handler):
+const entries = await client.functions.getEntries.invoke();
+```
+
+`invoke()` resolves with the function's output directly — `Promise<TOutput>`, not a wrapper
+envelope. Pass an options object for extra per-call headers:
+
+```typescript
+await client.functions.helloWorld.invoke(
+  { firstName: 'Ada', lastName: 'Lovelace' },
+  { headers: { 'x-request-id': crypto.randomUUID() } }
+);
+```
+
+## Handling errors
+
+`invoke()` throws rather than returning an error value — by the time it resolves, the result
+is safe to use without checking for `undefined`:
+
+```typescript
+import { FunctionsError } from '@microsoft/rayfin-functions';
+
+try {
+  const result = await client.functions.helloWorld.invoke({ firstName, lastName });
+} catch (error) {
+  if (error instanceof FunctionsError) {
+    console.error('Function invocation failed:', error.message, error.code);
+  } else {
+    // NetworkError (transport-level issues) or SdkError (anything else
+    // unexpected) from @microsoft/rayfin-lib.
+    console.error('Unexpected error calling function:', error);
+  }
+}
+```
+
+- A non-empty `errors` array or a non-success status in the underlying response surfaces as
+  a `FunctionsError`.
+- Network failures are wrapped in a `NetworkError`; anything else unexpected is wrapped in a
+  base `SdkError`.
+- The server-side `invocationId` is logged via `console.debug` alongside the function name,
+  so it's available for correlation without being part of the typed return value.
+
+Never call `client.functions.<name>.invoke()` without a working functions backend — see the
+local-development note below for what happens when one isn't configured.
+
+## Local development
+
+Shipped templates intentionally omit `functionsBaseUrl` from the `RayfinClient` config — it's
+a local-debugging feature, and including it unconditionally would surface unused env wiring
+in apps that never run functions locally. When you start using functions,
+`npx rayfin dev functions apply` wires it in for you automatically the first time it runs:
+
+1. It sets `VITE_RAYFIN_FUNCTIONS_URL` in `.env.local`, pointing at
+   `http://localhost:<port>`.
+2. It patches `src/services/rayfinClient.ts` and `src/services/bootstrap.ts` so
+   `functionsBaseUrl` reaches the `RayfinClient` constructor.
+
+If the auto-patch can't find your file structure, wire it manually following the same
+two-file split the templates use:
+
+```typescript title="src/services/rayfinClient.ts"
+export interface RayfinClientConfig {
+  baseUrl: string;
+  publishableKey: string;
+  localDev: boolean;
+  /** Local-debugging override. Set while `rayfin dev functions apply` is running. */
+  functionsBaseUrl?: string;
+}
+
+client = new RayfinClient<AppSchema, AppFunctionsSchema>({
+  baseUrl: config.baseUrl,
+  publishableKey: config.publishableKey,
+  authStorage: true,
+  functionsBaseUrl: config.functionsBaseUrl,
+});
+```
+
+```typescript title="src/services/bootstrap.ts"
+const client = initRayfinClient({
+  baseUrl: apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`,
+  publishableKey: publishableKey ?? 'local-dev-key',
+  localDev,
+  // Gated on localDev so production/Fabric-hosted bootstraps leave this
+  // undefined and the SDK uses its default routing.
+  functionsBaseUrl: localDev ? import.meta.env.VITE_RAYFIN_FUNCTIONS_URL : undefined,
+});
+```
+
+`VITE_RAYFIN_FUNCTIONS_URL` is populated automatically while `rayfin dev functions apply` is
+running — the CLI writes `RAYFIN_PUBLIC_FUNCTIONS_URL` to `rayfin/.env`, and the framework
+env-projector exposes it under the Vite-prefixed name (for Next.js, the equivalent is
+`NEXT_PUBLIC_RAYFIN_FUNCTIONS_URL`). When it's unset — in production, or when functions
+aren't running locally — `functionsBaseUrl` is `undefined` and calls route through the normal
+backend path instead.
+
+If `functionsBaseUrl` is already wired into either file, leave it alone — a prior run of
+`rayfin dev functions apply` (or an earlier pass over this same task) has already done it.
+
+```prompt title="Call a Rayfin function from the frontend"
+In my Rayfin app, wire up calling a function from the frontend:
+
+- Update the RayfinClient construction in src/services/rayfinClient.ts to pass
+  AppFunctionsSchema (imported from rayfin/functions/src/types.js) as the second type
+  parameter, alongside my existing data schema.
+- Call client.functions.<name>.invoke(...) with the right typed parameters, and handle
+  failures by catching FunctionsError from @microsoft/rayfin-functions specifically before
+  falling back to a generic error handler.
+- If I'm developing locally, make sure functionsBaseUrl reaches the RayfinClient config so
+  `npx rayfin dev functions apply` can route calls to my local function host — but leave it
+  undefined in production so calls use the normal backend path.
+
+Show me the updated client setup and the call site.
+```

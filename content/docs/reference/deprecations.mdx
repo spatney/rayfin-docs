@@ -1,0 +1,66 @@
+---
+title: Deprecation warnings
+description: How to silence Rayfin's deprecation warnings in application code, in Node.js scripts, and in browser apps.
+---
+
+Rayfin can emit deprecation warnings when your application uses an API or option that will
+change in a future release. Warnings are printed with `console.warn` and include a stable
+code such as `[RAYFIN_DEP_USE_PROXY]`, so you can search your codebase for the affected
+usage.
+
+> [!NOTE]
+> The APIs on this page — `setDeprecationsSilenced`, `isDeprecationSilenced`, and
+> `RAYFIN_NO_DEPRECATION` — ship in `@microsoft/rayfin-client` **1.34 and later**. If your
+> installed version predates that, these exports won't exist yet; confirm with
+> `rayfin docs get --symbol setDeprecationsSilenced` or the
+> [MCP server](/docs/ai/mcp-server) before relying on them.
+
+## Silence warnings in application code
+
+Call `setDeprecationsSilenced(true)` once you've reviewed the warnings and want to hide
+them for a specific environment. Import it from `@microsoft/rayfin-client` and call it
+early in application startup, before creating Rayfin clients or using deprecated APIs.
+
+```typescript
+import { setDeprecationsSilenced } from '@microsoft/rayfin-client';
+
+setDeprecationsSilenced(true);
+```
+
+Call `setDeprecationsSilenced(false)` to turn warnings back on, and
+`isDeprecationSilenced()` to check the current setting:
+
+```typescript
+import { isDeprecationSilenced } from '@microsoft/rayfin-client';
+
+console.log(isDeprecationSilenced());
+```
+
+## Silence warnings in Node.js
+
+For Node.js scripts, tests, or server-side tooling, set `RAYFIN_NO_DEPRECATION` to `1` or
+`true` in the environment:
+
+```bash
+RAYFIN_NO_DEPRECATION=1 npm run dev
+```
+
+## Silence warnings in browser apps
+
+Browser environments have no Node.js process environment, so `RAYFIN_NO_DEPRECATION` has no
+effect there. Use the programmatic toggle instead, and call it during application startup —
+before any code path that could emit a deprecation warning runs.
+
+```typescript title="src/main.ts"
+import { setDeprecationsSilenced } from '@microsoft/rayfin-client';
+
+if (import.meta.env.PROD) {
+  setDeprecationsSilenced(true);
+}
+```
+
+## See also
+
+- [Known limitations](/docs/reference/known-limitations) for current API constraints.
+- [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client) for the rest of the client
+  configuration surface.

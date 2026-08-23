@@ -1,0 +1,238 @@
+---
+title: Permissions and row-level security
+description: Secure Rayfin entities with @role, @anonymous, and @authenticated, including row-level policies, field visibility, and action-specific rules.
+---
+
+Permissions are declared on the entity class itself, as decorators, and compiled into
+Data API Builder (DAB) configuration when you apply the schema. There is no separate
+permissions file to keep in sync with your models.
+
+## Entities without a permission decorator
+
+> [!WARNING]
+> An entity with **no** `@role()`, `@anonymous()`, or `@authenticated()` decorator does
+> not become inaccessible — it silently receives `authenticated: *`, meaning **full
+> create/read/update/delete access for any signed-in user**, with no row-level
+> restriction. This is rarely what you want for real data. Add an explicit permission
+> decorator to every entity, even if it is as simple as `@authenticated('*')`.
+
+## Built-in roles
+
+Rayfin recognizes two built-in roles:
+
+- **`anonymous`** — public access, no authentication required.
+- **`authenticated`** — requires a valid signed-in session.
+
+> [!NOTE]
+> Anonymous access to a deployed Fabric app additionally requires a tenant admin to
+> enable the "Enable anonymous data access for Fabric Apps" switch for your tenant. Local
+> Rayfin development does not require this.
+
+## `@role()`, and the `@anonymous()` / `@authenticated()` shorthands
+
+`@role()` is the general-purpose class decorator; `@anonymous()` and `@authenticated()`
+are shorthands for `@role('anonymous', ...)` and `@role('authenticated', ...)`. Prefer the
+shorthands — they read better and are what most of this page uses from here on.
+
+```typescript
+@role(roleName, actions, options?)
+@anonymous(actions?, options?)      // shorthand for @role('anonymous', ...)
+@authenticated(actions?, options?)  // shorthand for @role('authenticated', ...)
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `roleName` | `'anonymous' \| 'authenticated'` | Which built-in role this rule applies to. Only present on `@role()` — the shorthands imply it. |
+| `actions` | `'create' \| 'read' \| 'update' \| 'delete' \| '*'`, or an array of those | Which operations this rule grants. `'*'` means all four. Defaults to `'*'` if omitted. |
+| `options` | `{ policy?, include?, exclude? }` | Row-level policy and field visibility, described below. |
+
+### Grant full access to authenticated users
+
+```typescript title="rayfin/data/Category.ts"
+import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*')
+export class Category {
+  @uuid() id!: string;
+  @text({ max: 100 }) name!: string;
+}
+```
+
+### Public read, authenticated write
+
+Combine `@anonymous()` and `@authenticated()` on the same entity to give each role a
+different action set:
+
+```typescript title="rayfin/data/Todo.ts"
+import { entity, anonymous, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@anonymous('read')
+@authenticated(['create', 'read', 'update', 'delete'], {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+Anyone can read every `Todo`; only a signed-in user can create, update, or delete rows,
+and only rows where `user_id` matches their own `claims.sub`.
+
+## Row-level policies with the policy DSL
+
+Pass a `policy` callback in the options object to restrict *which rows* a role can act on.
+The callback receives a typed `claims` object and a proxy for the entity's own fields
+(`item`), and returns a comparison Rayfin compiles into a DAB policy string.
+
+```typescript
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+```
+
+TypeScript infers the entity's shape from the decorated class, so `item.<field>` is
+autocompleted and renaming a field is a compile-time error everywhere it's referenced.
+
+### Supported claims
+
+| Claim | Description |
+| --- | --- |
+| `claims.sub` | Subject identifier — the signed-in user's ID. |
+| `claims.email` | The signed-in user's email address. |
+| `claims.role` | The signed-in user's role. |
+
+### Operators
+
+| Operator | Example |
+| --- | --- |
+| `.eq(value)` | `claims.sub.eq(item.user_id)` |
+| `.neq(value)` | `item.status.neq('archived')` |
+
+`value` can be another claim or field reference, or a literal string, number, boolean, or
+`Date`.
+
+### Combining conditions
+
+Combine expressions with `.and()` and `.or()`. Both sides are parenthesized
+automatically, so grouping is always explicit in the generated policy:
+
+```typescript
+policy: (claims, item) =>
+  claims.sub.eq(item.user_id).and(item.isActive.eq(true))
+
+// (claims.role eq 'admin') or (claims.sub eq item.owner_id)
+policy: (claims, item) =>
+  claims.role.eq('admin').or(claims.sub.eq(item.owner_id))
+```
+
+## Field-level permissions
+
+Use `include` or `exclude` in the options object to control which fields a role can see or
+write, per action.
+
+```typescript title="rayfin/data/Document.ts"
+import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('read', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+  exclude: ['secret'],
+})
+@authenticated(['create', 'update', 'delete'], {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class Document {
+  @uuid() id!: string;
+  @text({ max: 128 }) owner_id!: string;
+  @text({ max: 200 }) title!: string;
+  @text({ optional: true, max: 5000 }) secret?: string;
+}
+```
+
+`exclude` hides `secret` from read responses while leaving it writable on create and
+update. `include` works the other way — list only the fields a role is allowed to touch
+for that action, useful for a restricted create form:
+
+```typescript
+@authenticated('create', {
+  policy: (claims, item) => claims.sub.eq(item.createdBy),
+  include: ['title'],
+})
+```
+
+`include` and `exclude` arrays are typed against the entity's actual property names, so a
+typo or a renamed field is caught at compile time.
+
+## Action-specific permissions
+
+Apply multiple decorators with a single action each when the policy or field visibility
+differs per action, as in the `Document` example above. Rayfin aggregates every decorator
+on the same class per role; conflicting rules for the same role and action produce a
+warning when the schema is generated.
+
+```typescript title="rayfin/data/SecureDocument.ts"
+import { entity, anonymous, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@anonymous('read')
+@authenticated('create', {
+  policy: (claims, item) => claims.sub.eq(item.createdBy),
+  include: ['title'],
+})
+@authenticated('read', {
+  policy: (claims, item) => claims.sub.eq(item.createdBy),
+})
+@authenticated('update', {
+  policy: (claims, item) => claims.sub.eq(item.createdBy),
+  exclude: ['adminContent'],
+})
+export class SecureDocument {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @text({ optional: true, max: 5000 }) adminContent?: string;
+  @text({ max: 128 }) createdBy!: string;
+}
+```
+
+## Storage permissions
+
+The same decorators secure storage folders declared with `@blob()` — see
+[Field types](/docs/data/field-types#blob-storage-folders). Applied to a `@blob()` class,
+Rayfin generates a storage policy instead of a database policy, using the same
+`policy` / `include` / `exclude` options:
+
+```typescript title="rayfin/storage/ProfileImage.ts"
+import { blob, authenticated } from '@microsoft/rayfin-core';
+
+@blob('avatars')
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class ProfileImage {
+  owner_id!: string;
+}
+```
+
+## Best practices
+
+- Add an explicit permission decorator to every entity — never rely on the default (see
+  the warning at the top of this page).
+- Include a `user_id` (or similarly named) field on any entity scoped to the signed-in
+  user, and pair it with a `policy` comparing it to `claims.sub`.
+- Start restrictive and expand as needed — it's easier to widen a policy later than to
+  discover data was over-exposed.
+- Use separate `@role()` / `@authenticated()` entries per action when field visibility
+  differs by action, as shown above.
+- Prefer the `@anonymous()` / `@authenticated()` shorthands over `@role('anonymous', ...)`
+  / `@role('authenticated', ...)`.
+
+```prompt title="Add row-level security to an entity"
+In my Rayfin project, add row-level security to the Todo entity in rayfin/data/Todo.ts so
+each signed-in user can only read and write their own rows. Use @authenticated('*') with
+a policy comparing claims.sub to item.user_id. Remove any implicit reliance on default
+permissions — the decorator must be explicit. Then apply the schema with `rayfin up`.
+```

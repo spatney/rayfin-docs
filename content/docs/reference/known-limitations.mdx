@@ -1,0 +1,197 @@
+---
+title: Known limitations
+description: Current constraints in the Rayfin data client, Data API Builder, relationships, auth, and schema apply — organized by area, each with a workaround.
+---
+
+This page lists the current constraints Rayfin builders run into most often, grouped by
+area. Each entry names the limitation and the workaround to use instead — if you're an
+agent generating Rayfin code, check the relevant section here before you write entities,
+queries, or permission decorators.
+
+## Data client
+
+### `count()` is not available
+
+The fluent GraphQL client (`client.data.<Entity>`) has no `count()` method.
+
+**Workaround:** select the minimal set of fields you need and use `results.length`, or page
+through results with [`.executePaginated()`](/docs/reference/sdk/rayfin-data#pagination) and
+sum `items.length` per page if the total exceeds one page.
+
+### Many-to-many relationships are not supported
+
+`@one()` and `@many()` model one-to-many and many-to-one relationships only — there is no
+decorator for many-to-many.
+
+**Workaround:** create an explicit join entity with two `@one()` fields, one pointing at
+each side of the relationship. See
+[Relationship decorators](/docs/reference/sdk/rayfin-core#relationship-decorators).
+
+## Data API Builder (DAB)
+
+Rayfin's data layer generates configuration for Data API Builder, so some limitations come
+from DAB itself rather than from Rayfin's client or decorators.
+
+### Collection queries return only one page unless you paginate
+
+`.execute()` returns a single page — 100 records by default, up to a maximum page size of
+100,000 — with no signal that more records exist. A query that matches more rows than the
+page size is silently truncated.
+
+**Workaround:** use `.first(n)` with `.executePaginated()` and `.after(endCursor)` for any
+list that can exceed one page. See
+[Pagination](/docs/reference/sdk/rayfin-data#pagination) and
+[Errors and troubleshooting](/docs/reference/errors).
+
+### Date comparisons don't work against PostgreSQL
+
+`gt`, `lt`, `gte`, and `lte` filters on `@date()` fields are silently unreliable when the
+backing database is PostgreSQL ([DAB issue #3094](https://github.com/Azure/data-api-builder/issues/3094)).
+
+**Workaround:** avoid range comparisons on date fields against a PostgreSQL-backed project;
+filter and sort in application code instead, or use MSSQL if date range queries are
+required server-side.
+
+### Total record counts are unsupported
+
+There is no way to request a total row count independent of a page
+([DAB discussion #2234](https://github.com/Azure/data-api-builder/discussions/2234),
+[DAB issue #2369](https://github.com/Azure/data-api-builder/issues/2369)) — this is also why
+`PagedResult.totalCount` exists on the type but is never populated.
+
+**Workaround:** don't rely on `totalCount`. If you need an approximate count, select minimal
+fields and iterate pages with `.executePaginated()`, summing `items.length`.
+
+### Backward pagination (`before`) is unsupported
+
+DAB only supports forward pagination — `first` and `after`
+([DAB issue #2238](https://github.com/Azure/data-api-builder/issues/2238)). There is no
+`before` / `last` equivalent on the fluent client.
+
+**Workaround:** design paged UI around forward-only navigation (a "next page" cursor kept
+in state), rather than jumping backward by cursor.
+
+### Nested queries beyond two levels aren't supported
+
+`.select()` supports one level of relationship dot-path (`'notebook.name'`) but not two
+(`'notebook.owner.email'`) — the query builder's field-selection logic only splits on the
+first `.`.
+
+**Workaround:** issue a second query for the deeper relationship using the first query's
+result as the filter, or add a direct field/relationship on the entity that needs the
+deeper data.
+
+## Relationships
+
+### Foreign key columns are auto-generated
+
+Defining `@one()` or `@many()` already creates the underlying foreign key column — you
+don't need (and normally shouldn't) declare it yourself.
+
+**Workaround:** only declare a foreign key field explicitly when your application code
+needs to read or set the raw ID value directly.
+
+### Foreign keys must use the `{property}_id` naming convention
+
+When you do declare a foreign key field, it must be named `{property}_id` to match the
+relationship. Custom key names (`foreignKey`, `targetKey`) are not supported on
+relationship decorators.
+
+**Workaround:** name the field after the relationship property plus `_id` — for a `@one(()
+=> Category) category` field, the FK column is `category_id`.
+
+### `@one()` / `@many()` only accept `{ optional?, unique? }`
+
+Relationship decorators don't accept the full field option set (no `default`, `max`,
+`min`, etc.) — only `optional` (nullable relationship) and `unique` (make a `@one()`
+relationship one-to-one).
+
+**Workaround:** if you need constraints beyond nullability and uniqueness, apply them to
+the plain field decorator on a manually-declared foreign key column instead of the
+relationship decorator.
+
+## Auth
+
+### The callback is `onSessionChange`, not `onAuthStateChange`
+
+`onAuthStateChange` does not exist on the Rayfin auth client, despite being a common name
+in other auth SDKs.
+
+**Workaround:** subscribe with `auth.onSessionChange(callback)`, which returns an
+unsubscribe function. See [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth#session-management).
+
+### Session objects are opaque
+
+`OpaqueSession` intentionally doesn't expose tokens or internal claim structure.
+
+**Workaround:** gate UI logic on `session.isAuthenticated` or the presence of
+`session.user` — don't try to read or decode internal session fields.
+
+### Auth config changes require a backend restart
+
+Enabling or disabling auth (or changing its settings) in `rayfin.yml` doesn't take effect
+on a running backend.
+
+**Workaround:** restart the backend (`npx rayfin up`) after any `services.auth` change in
+`rayfin.yml` so the updated endpoints are exposed.
+
+## Data
+
+### `@entity()` doesn't accept composite field constraints
+
+There's no class-level option for constraints that span multiple fields (e.g., "field A
+must be less than field B").
+
+**Workaround:** define constraints on individual fields via their own field decorator
+options (`min`, `max`, `regex`, and so on); enforce cross-field constraints in application
+code or with [`toStandardSchema`](/docs/reference/sdk/rayfin-core#form-validation) before
+calling `create` / `update`.
+
+### Prefer `@anonymous()` / `@authenticated()` over `@role('anonymous' | 'authenticated', ...)`
+
+The shorthand decorators are clearer at the call site than the general-purpose `@role()`
+form.
+
+**Workaround:** use `@authenticated(actions, options)` for authenticated-only access. Note
+that `@anonymous()` — and the `'anonymous'` role name on `@role()` — are exported only from
+`@microsoft/rayfin-core/experimental`, not the package root, and Fabric currently rejects
+any DAB configuration that grants the `anonymous` role at apply time regardless of which
+form you used. See
+[Permission decorators](/docs/reference/sdk/rayfin-core#permission-decorators).
+
+## Database and schema apply
+
+### Run `rayfin up` before `rayfin up db apply`
+
+`rayfin up db apply` (or `rayfin dev db apply` locally) expects the backend services it's
+applying schema to already be running and healthy.
+
+**Workaround:** run `npx rayfin up` (or `npx rayfin dev`) first and wait for services to
+report healthy, then run the `db apply` subcommand.
+
+### `unsupported UUID` errors
+
+This usually means another service is already running on the default port, backed by a
+different database dialect than your current project expects.
+
+**Workaround:** stop stale services (`npx rayfin dev --down` locally) and retry. See
+[Errors and troubleshooting](/docs/reference/errors).
+
+### `dialect` is required when the Data module is enabled
+
+Setting `services.data.enabled: true` in `rayfin.yml` without a `dialect` fails at deploy
+time with `Dialect is required when Data module is enabled`.
+
+**Workaround:** always pair `data.enabled: true` with `dialect: mssql` or
+`dialect: postgresql` (Fabric apps support `mssql` only). See
+[Errors and troubleshooting](/docs/reference/errors).
+
+### `@text()` without `max` breaks GraphQL schema generation on MSSQL
+
+Omitting `max` on a `@text()` field produces an `NVARCHAR(MAX)` column on MSSQL. Rayfin's
+metadata provider can fail to build a GraphQL schema from that column, which surfaces as an
+"Internal server error" at runtime — after `rayfin up` itself reported success.
+
+**Workaround:** always set `@text({ max: N })` with an explicit length on every string
+field targeting MSSQL. See [Errors and troubleshooting](/docs/reference/errors) and the
+[`@text()` field options](/docs/reference/sdk/rayfin-core) on the `rayfin-core` reference.

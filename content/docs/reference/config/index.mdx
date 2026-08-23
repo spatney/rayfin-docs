@@ -1,0 +1,29 @@
+---
+title: Configuration
+description: Landing page for Rayfin configuration reference — rayfin.yml schema, the exhaustive environment variable table, and ${VAR} interpolation syntax.
+---
+
+Rayfin projects are configured through two files: `rayfin/rayfin.yml` (checked in) and
+`rayfin/.env` (gitignored, holds runtime values and secrets). This section is the complete
+reference for both.
+
+- **[`rayfin.yml` reference](/docs/reference/config/rayfin-yml)** — the full schema, key by
+  key, with an annotated real-world example.
+- **[Environment variables](/docs/reference/config/environment-variables)** — every
+  variable the CLI and runtime read or write: frontend-visible variables, tooling
+  overrides, ports, passwords, service flags, and file locations.
+- **[Environment variable interpolation](/docs/reference/config/env-interpolation)** —
+  `${VAR}` and `${VAR:-default}` syntax inside `rayfin.yml`, type coercion, and resolution
+  priority.
+
+> [!TIP]
+> Start with [`rayfin.yml` reference](/docs/reference/config/rayfin-yml) if you're looking
+> at a specific config file; start with
+> [Environment variables](/docs/reference/config/environment-variables) if you're looking
+> for a specific variable name.
+
+```prompt title="Audit a project's configuration"
+Read my project's rayfin/rayfin.yml and rayfin/.env.example, and tell me which services are
+enabled, which database dialect is configured, and whether services.auth and services.data
+are both declared explicitly.
+```

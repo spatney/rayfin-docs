@@ -1,0 +1,63 @@
+---
+title: "@microsoft/rayfin-storage"
+description: Type-safe blob storage client for Rayfin — what it's for and how to model storage folders today, pending a version-locked API reference.
+---
+
+`@microsoft/rayfin-storage` is Rayfin's type-safe blob storage client. Per the package
+catalog, it provides a storage client for Rayfin storage backends (blob upload, download,
+and file management).
+
+> [!NOTE]
+> `@microsoft/rayfin-storage` is not installed in the environment this reference was
+> written against, so its method signatures cannot be verified here. Run
+> `rayfin docs search 'storage' --module ts-sdk` (or the MCP server's
+> `search_docs(query: 'storage', module: 'ts-sdk')`) from your project root for the
+> version-locked API surface of the package you actually have installed. See
+> [Machine-readable docs](/docs/ai/machine-readable-docs) and the
+> [MCP server](/docs/ai/mcp-server) for how those lookups work.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-storage
+```
+
+Storage is also gated behind a CLI feature flag in current builds — set
+`RAYFIN_FEATURE_FLAGS=storage` to expose storage prompts in `rayfin init` and the
+`rayfin dev storage *` command group.
+
+## What is verifiable today
+
+The one part of the storage model that is verified independently — because it lives in
+`@microsoft/rayfin-core`, which *is* installed — is the `@blob()` class decorator you use
+to declare a storage folder:
+
+```typescript
+import { blob, role } from '@microsoft/rayfin-core';
+
+@blob('uploads')
+@role('authenticated', '*')
+export class FileModel {
+  owner_id!: string;
+}
+```
+
+- `@blob(folderName?)` marks a class as a blob storage folder. The name defaults to the
+  kebab-case class name when omitted.
+- Permissions use the same `@role()` / `@authenticated()` / `@anonymous()` decorators as
+  data entities (see [`@microsoft/rayfin-core`](/docs/reference/sdk/rayfin-core)) — a
+  folder is inferred public if the `anonymous` role has any granted permission on it,
+  otherwise private.
+
+`@blob()` is what the Rayfin CLI reads to generate storage configuration when you run
+`rayfin up` or `rayfin dev storage apply`. It does not, by itself, give you a client to
+upload or download files — that surface belongs to `@microsoft/rayfin-storage` and is out
+of scope for this page.
+
+## What this page deliberately omits
+
+No client construction signature, upload/download method names, or options are documented
+here, because none could be confirmed against either the vendored package docs or an
+installed copy of the package. Documenting a guessed method signature would be worse than
+leaving it out — use the `rayfin docs` lookup above to get the real surface for your
+project's installed version.

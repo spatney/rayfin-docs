@@ -1,0 +1,140 @@
+---
+title: Schema changes
+description: Apply Rayfin entity changes to the database with rayfin up and rayfin up db apply, and verify the schema actually reached the server.
+---
+
+Editing a class in `rayfin/data/` does not change anything by itself — Rayfin only reads
+your entities and generates Data API Builder (DAB) configuration when you explicitly apply
+it. This page covers the commands that do that, and how to verify the apply actually took
+effect.
+
+## `rayfin up` is the canonical command
+
+`npx rayfin up` is the command to reach for any time you want your latest entity changes
+live — locally or on Microsoft Fabric. It is not schema-only: it syncs runtime settings,
+**applies the database schema generated from your `rayfin/data` decorators**, and builds
+and deploys static content if `staticHosting` is enabled, all in one step. Run it after
+every change to a file under `rayfin/data/`.
+
+```bash
+npx rayfin up
+```
+
+Running it again after the first deploy updates the same deployment rather than creating
+a new one, so it is safe to run repeatedly as you iterate.
+
+## `rayfin up db apply`: the schema-only escape hatch
+
+`npx rayfin up db apply` generates and applies **only** the database schema, without
+touching runtime settings or static content. It is an advanced subcommand — reach for it
+when you specifically want to push a schema change without re-running the full `rayfin up`
+flow (for example, while iterating locally with `npm run dev` serving your frontend and
+the backend already deployed).
+
+```bash
+npx rayfin up db apply
+```
+
+If the change could cause data loss — dropping a column, narrowing a type, renaming a
+table — the CLI blocks it and explains what it found. Add `--force` once you have reviewed
+the listed operations and accept the loss:
+
+```bash
+npx rayfin up db apply --force
+```
+
+### Inspect before applying
+
+Add `--gen-config-only` to generate the underlying DAB configuration without applying it,
+so you can review exactly what would change first:
+
+```bash
+npx rayfin up db apply --gen-config-only
+```
+
+## Verify the change actually reached the server
+
+> [!WARNING]
+> A `rayfin up` (or `rayfin up db apply`) that reports success does not guarantee your
+> frontend can immediately read a newly added or changed entity. The verified failure
+> mode: you add an entity, the deploy command prints success, and GraphQL queries against
+> that entity still fail at runtime — because the schema change had not actually finished
+> applying when you tested it. Treat verification as a required step, not an assumption:
+>
+> 1. After any change to a file in `rayfin/data/`, run `rayfin up status` and confirm the
+>    deployment reports healthy before exercising the new entity from your app.
+> 2. If a new or changed entity still returns GraphQL errors despite a successful deploy,
+>    run `rayfin up db apply` explicitly (add `--force` if it reports a potentially
+>    destructive change), then retest.
+
+```bash
+npx rayfin up status
+```
+
+Add `--json` for machine-readable output, useful in a script that waits for a healthy
+deployment before running further checks:
+
+```bash
+npx rayfin up status --json
+```
+
+## Local development with Docker
+
+The commands above apply during local development too — `rayfin up` (and
+`rayfin up db apply`) work against your local Docker services the same way they work
+against a Fabric deployment. A separate, preview Docker Compose–based workflow is also
+available behind a feature flag, with its own schema-apply subcommand:
+
+```bash
+export RAYFIN_FEATURE_FLAGS=docker-local-dev
+npx rayfin dev            # start the Docker Compose environment
+npx rayfin dev db apply   # apply schema changes to it
+npx rayfin dev db apply --force
+```
+
+Run `rayfin dev db apply` after changing entities under `rayfin/data/` in this preview
+workflow, the same way you would run `rayfin up db apply` in the standard flow. Use
+`rayfin dev status` to check container health first if the apply fails.
+
+## Typical workflow
+
+```bash
+# 1. Edit rayfin/data/Todo.ts, add a field or a new entity
+
+# 2. Apply the change
+npx rayfin up
+
+# 3. Verify the deployment is healthy
+npx rayfin up status
+
+# 4. If a new entity errors at runtime despite a successful deploy, apply schema explicitly
+npx rayfin up db apply --force
+```
+
+## Troubleshooting
+
+**GraphQL returns "Internal server error" after a successful deploy** — check every
+`@text()` field on the affected entity for a missing `max`. On MSSQL, `@text()` without
+`max` generates an `NVARCHAR(MAX)` column, which can break GraphQL schema generation. Add
+explicit `max` values (see
+[Field types](/docs/data/field-types#text-length-and-mssql)) and redeploy with
+`npx rayfin up db apply --force`.
+
+**`rayfin up db apply` reports a potentially destructive change** — review the listed
+operations (dropped columns, narrowed types, renamed tables). Re-run with `--force` only
+once you have confirmed the data loss is acceptable.
+
+**`rayfin up db apply` fails outright** — wait for services to report healthy
+(`rayfin up status`, or `rayfin dev status` in the Docker Compose preview flow) before
+retrying.
+
+**Enabling `data` without a `dialect`** — `rayfin.yml` requires `dialect: mssql` (or
+`postgresql` for local development) whenever `services.data.enabled` is `true`. Omitting
+it causes a 400 error at apply time.
+
+```prompt title="Apply and verify a schema change"
+I just added a new field to an entity in my Rayfin project's rayfin/data/ folder. Run
+`rayfin up` to apply the change, then run `rayfin up status` to confirm the deployment is
+healthy. If querying the changed entity still fails after that, run
+`rayfin up db apply --force` and check again.
+```

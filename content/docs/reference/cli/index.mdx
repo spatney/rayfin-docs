@@ -1,0 +1,67 @@
+---
+title: CLI
+description: Overview of the rayfin CLI — installation, the typical scaffold-to-deploy workflow, and an index of every command page in this reference.
+---
+
+`@microsoft/rayfin-cli` scaffolds Rayfin projects, runs the local Rayfin Local development
+stack, deploys to Microsoft Fabric, and manages the configuration and agent files that ship
+with a project. The binary is `rayfin`, invoked as `npx rayfin <command>` from a project
+root (or directly as `rayfin <command>` when installed globally).
+
+## Typical workflow
+
+```bash
+npm create @microsoft/rayfin@latest my-app   # 1. Create a project from a template
+cd my-app
+npx rayfin login                              # 2. Sign in with Entra ID
+npx rayfin up                                  # 3. Deploy backend services to Fabric
+npm run dev                                    # 4. Run the frontend dev server
+```
+
+> [!NOTE]
+> Use `npx rayfin init` instead of `npm create` to add Rayfin to a project that already has
+> source code, or to reconfigure a project that already has a `rayfin/rayfin.yml`. See
+> [Init](/docs/reference/cli/init).
+
+## Global flags
+
+These are declared on the root `rayfin` program and apply to every subcommand:
+
+| Flag | Description |
+| --- | --- |
+| `-y, --yes` | Auto-accept all confirmation prompts. |
+| `--verbose` | Enable verbose output for the invoked subcommand. |
+| `--json` | Emit machine-readable JSON output from the invoked subcommand. |
+| `-V, --version` | Print the installed CLI version. |
+| `-h, --help` | Show help for `rayfin` or any subcommand. |
+
+Most subcommands also declare their own `-v/--verbose` and `--json` for backward
+compatibility — either form works.
+
+## Command index
+
+| Page | Commands | What it's for |
+| --- | --- | --- |
+| [Installation](/docs/reference/cli/installation) | — | Installing the CLI as a dev dependency, globally, or via `npx`; updating it. |
+| [Init](/docs/reference/cli/init) | `npm create @microsoft/rayfin@latest`, `rayfin init` | Scaffold a new project, or add/reconfigure Rayfin in an existing one. |
+| [Login](/docs/reference/cli/login) | `rayfin login`, `login status`, `logout` | Authenticate with Entra ID for Fabric operations. |
+| [Up](/docs/reference/cli/up) | `rayfin up`, `up status`, `up db apply`, `up secrets apply`, `up staticapp deploy`, `up functions deploy`, `up list`, `up switch` | Deploy the project to Microsoft Fabric. |
+| [Dev](/docs/reference/cli/dev) | `rayfin dev`, `dev db apply`, `dev storage apply`, `dev status`, `dev functions apply`, `dev watch` | Run the local Docker development stack (Rayfin Local). |
+| [Env](/docs/reference/cli/env) | `rayfin env` | Emit a framework-specific `.env.local` from `rayfin/.env`. |
+| [Functions](/docs/reference/cli/functions) | `rayfin functions init`, `functions typegen` | Scaffold and maintain serverless Functions. |
+| [Connector](/docs/reference/cli/connector) | `rayfin connector add`, `list`, `remove` | Connect external Fabric data sources. |
+| [Docs](/docs/reference/cli/docs) | `rayfin docs search`, `get`, `list`, `discover`, `catalog show` | Query version-locked Rayfin documentation from the terminal. |
+| [Ai-files](/docs/reference/cli/ai-files) | `rayfin init ai-files install`, `status` | Install and refresh `AGENTS.md`, `.mcp.json`, and the Rayfin skill. |
+| [Templates](/docs/reference/cli/templates) | (used via `-t/--template` on `init`) | Where project templates come from, and how to author your own. |
+| [Telemetry](/docs/reference/cli/telemetry) | — | What the CLI collects and how to opt out. |
+
+## Configuration reference
+
+The CLI reads and writes `rayfin/rayfin.yml` and `rayfin/.env`. See
+[Configuration](/docs/reference/config) for the complete schema and environment variable
+reference.
+
+```prompt title="Explain a rayfin command"
+Run `npx rayfin --help` in my project, then explain what each top-level command does and
+which one I need to redeploy just my database schema after I add a field to an entity.
+```

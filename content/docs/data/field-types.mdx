@@ -1,0 +1,150 @@
+---
+title: Field types
+description: Complete reference for Rayfin's field decorators — @uuid, @text, @int, @decimal, @boolean, @date, @email, @set, and @blob — and the options each accepts.
+---
+
+Every property on a [`@entity()`](/docs/data/modeling) class needs exactly one field
+decorator. The decorator determines the database column type, the GraphQL scalar, and the
+constraints Rayfin enforces for you. This page lists every decorator, the options it
+accepts, and the patterns that trip people up — especially the MSSQL text length rule.
+
+## Decorator reference
+
+| Decorator | Logical type | Extra options beyond the common set | Notes |
+| --- | --- | --- | --- |
+| `@uuid()` | UUID | — | Conventionally the primary key (`id`). Also used for foreign key columns. |
+| `@text()` | string | `max`, `min`, `regex` | **Always set `max` on MSSQL** — see below. |
+| `@int()` | integer | `max`, `min` | Whole numbers. |
+| `@decimal()` | decimal / numeric | `max`, `min`, `precision`, `scale` | Defaults to `DECIMAL(18,2)` (MSSQL) / `NUMERIC(18,2)` (PostgreSQL). |
+| `@boolean()` | boolean | — | True/false. |
+| `@date()` | datetime | — | Accepts a `Date`, an ISO string, or a numeric timestamp on write; serializes as ISO on read. |
+| `@email()` | string | `max`, `min`, `regex` | Text field with email-shaped validation. Same option set as `@text()`. |
+| `@set(...values)` | string enum | — | A fixed list of allowed string literals. |
+| `@blob()` | — | — | A **class** decorator for storage folders, not a field type. See [below](#blob-storage-folders). |
+
+Every field decorator except `@blob()` also accepts the common options in the next
+section.
+
+## Common options
+
+These apply to `@uuid()`, `@text()`, `@int()`, `@decimal()`, `@boolean()`, `@date()`,
+`@email()`, and `@set()`:
+
+| Option | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `optional` | `boolean` | `false` | Allows `NULL` in the database. Pair with a `?` on the TypeScript property — see [below](#the-nullable-pattern). |
+| `unique` | `boolean` | `false` | Adds a unique constraint on the column. |
+| `default` | matches the field's type | — | Default value used when the field is omitted on create. |
+| `description` | `string` | — | Free-text note attached to the field's metadata. Does not change validation or the database column. |
+
+```typescript title="rayfin/data/Todo.ts"
+import { entity, authenticated, uuid, text, boolean, date } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @boolean({ default: false }) isCompleted!: boolean;
+  @date() createdAt!: Date;
+  @text({ max: 128, description: 'Owning user, set from claims.sub on create' })
+  user_id!: string;
+}
+```
+
+## The nullable pattern
+
+Fields are **required by default**. To make a field nullable, you must do two things
+together — set `{ optional: true }` in the decorator **and** mark the TypeScript property
+with `?`. Either one alone is not enough for consistent behavior between the database
+constraint and the generated types.
+
+```typescript title="rayfin/data/Todo.ts"
+@text() title!: string;                    // required
+@text({ optional: true }) notes?: string;   // nullable — both the option and `?` are present
+```
+
+## Text length and MSSQL
+
+> [!WARNING]
+> On MSSQL, a `@text()` field without `max` generates an `NVARCHAR(MAX)` column. Rayfin's
+> metadata provider can fail to build a GraphQL schema from `NVARCHAR(MAX)` columns,
+> producing an "Internal server error" at runtime — after `rayfin up` has already reported
+> success. Always set `max` on every `@text()` field: `@text({ max: 200 })`. This applies
+> to `@email()` too, since it shares `@text()`'s option set.
+
+There is no safe default length to omit — pick a `max` that fits the data (`50` for a
+short name, `2000` for a description, and so on). If a deploy succeeds but GraphQL queries
+against a new or changed entity start failing, check every `@text()` field on that entity
+for a missing `max` first.
+
+## `@decimal()` precision and scale
+
+`precision` is the total number of digits (before and after the decimal point); `scale` is
+the number of digits after it. They must be provided together — if you set one, set the
+other. Omit both to get the dialect default (`DECIMAL(18,2)` on MSSQL, `NUMERIC(18,2)` on
+PostgreSQL). Maximum precision is 28, a limit imposed by the Data API Builder runtime.
+
+```typescript title="rayfin/data/Product.ts"
+import { entity, authenticated, uuid, decimal } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*')
+export class Product {
+  @uuid() id!: string;
+  @decimal() price!: number;                       // DECIMAL(18,2) by default
+  @decimal({ precision: 10, scale: 4 }) weight!: number; // DECIMAL(10,4)
+}
+```
+
+## `@set()` string enums
+
+`@set()` takes the allowed values as separate string arguments, and the TypeScript union
+type should match:
+
+```typescript title="rayfin/data/Todo.ts"
+@set('low', 'medium', 'high') priority!: 'low' | 'medium' | 'high';
+```
+
+To add common options (`optional`, `unique`, `default`) to a set field, pass an options
+object as the first argument instead, followed by the allowed values:
+
+```typescript title="rayfin/data/Todo.ts"
+@set({ optional: true }, 'low', 'medium', 'high') priority?: 'low' | 'medium' | 'high';
+```
+
+## `@blob()` storage folders
+
+`@blob()` is a **class-level** decorator, structurally different from the field
+decorators above — it marks a class as a storage folder configuration for
+`@microsoft/rayfin-storage`, the same way `@entity()` marks a class as a database table.
+It does not take `optional`, `default`, `max`, or `unique` options itself, and the
+properties inside the class are plain TypeScript fields rather than `@text()` / `@uuid()`
+decorated columns:
+
+```typescript title="rayfin/storage/ProfileImage.ts"
+import { blob, role } from '@microsoft/rayfin-core';
+
+@blob('uploads')
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class ProfileImage {
+  owner_id!: string;
+}
+```
+
+The string argument (`'uploads'` above) is the storage folder name; it defaults to the
+kebab-case class name if omitted. Permissions on a `@blob()` class use the same `@role()` /
+`@anonymous()` / `@authenticated()` decorators described in
+[Permissions and row-level security](/docs/data/permissions), but they generate a storage
+policy instead of a database policy. File upload, download, and listing operations are
+part of the storage client, not the `client.data.<Entity>` API this section covers.
+
+```prompt title="Add a validated field to an entity"
+In my Rayfin project, add an "email" field to the User entity in rayfin/data/User.ts
+using the @email() decorator with max: 254 and unique: true. Make sure the TypeScript
+property is required (no `?`), since the field should not be nullable.
+```

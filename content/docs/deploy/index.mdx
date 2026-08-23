@@ -1,0 +1,43 @@
+---
+title: Deploy
+description: Deploy a Rayfin project to a managed Fabric app with the rayfin up CLI workflow, then manage secrets, environments, and billing.
+---
+
+Deploying ships your Rayfin project to a **Fabric app** — a managed, Microsoft
+Fabric-hosted instance of your backend and frontend. Fabric provisions the database,
+authentication, static hosting, and API endpoints; one CLI command builds and ships all of
+it.
+
+```bash
+npx rayfin login
+npx rayfin up
+```
+
+`rayfin up` builds your static content, deploys it, pushes your `rayfin.yml` settings to
+the remote service, and applies any pending database schema changes — all in one step. Run
+it again for every change you want to ship, including schema-only changes.
+
+Confirm the deployment is healthy:
+
+```bash
+npx rayfin up status
+```
+
+> [!NOTE]
+> Deploying targets a **Fabric app**. If you are running **Rayfin Local** (the self-hosted
+> Docker mode), there is nothing to deploy — this section does not apply.
+
+## In this section
+
+- **[Fabric apps](/docs/deploy/fabric-apps)** — what a managed Fabric app is, its
+  prerequisites, and how to create one in the Fabric portal.
+- **[Deploying with rayfin up](/docs/deploy/rayfin-up)** — the full deploy workflow, useful
+  flags, and what gets written to `rayfin/.deployments.json`.
+- **[Secrets](/docs/deploy/secrets)** — store and apply secret values your deployed app
+  needs at runtime.
+- **[Environments and configuration](/docs/deploy/environments)** — every environment
+  variable Rayfin tooling reads and writes, and where each one lives.
+- **[Capacity and billing](/docs/deploy/pricing)** — how Fabric capacity billing works for
+  a deployed app.
+- **[Deployment troubleshooting](/docs/deploy/troubleshooting)** — symptom-to-fix
+  reference for the most common deploy failures.

@@ -1,0 +1,62 @@
+---
+title: Data
+description: Model entities once as decorated TypeScript classes and get a database schema, GraphQL API, type-safe client, permissions, and validation from the same source.
+---
+
+A Rayfin entity is a TypeScript class. Decorate it once and Rayfin generates the database
+table, a GraphQL API, a type-safe client, row-level security, and form validation from
+that single definition — there is no separate schema file, migration file, or API
+contract to keep in sync by hand.
+
+```typescript title="rayfin/data/Todo.ts"
+import { entity, authenticated, uuid, text, boolean, date } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @boolean({ default: false }) isCompleted!: boolean;
+  @date() createdAt!: Date;
+  @text({ max: 128 }) user_id!: string;
+}
+```
+
+Register it in `schema.ts`, then apply it:
+
+```bash
+npx rayfin up
+```
+
+From there, `client.data.Todo` is a fully typed read/write API, scoped by the row-level
+policy declared above.
+
+## Where to go next
+
+- **[Modeling entities](/docs/data/modeling)** — `@entity()`, file layout, primary keys,
+  and the `schema.ts` registration step.
+- **[Field types](/docs/data/field-types)** — every field decorator and its options,
+  including the MSSQL text-length rule.
+- **[Relationships](/docs/data/relationships)** — `@one()` / `@many()`, foreign key
+  columns, and the many-to-many workaround.
+- **[Permissions and row-level security](/docs/data/permissions)** — `@role()`,
+  `@anonymous()`, `@authenticated()`, and the policy DSL.
+- **[Querying](/docs/data/querying)** — the `select` / `where` / `orderBy` / `execute`
+  chain, filtering, and pagination.
+- **[Creating, updating, deleting](/docs/data/mutations)** — writes, and setting
+  relationships correctly.
+- **[Validation](/docs/data/validation)** — generate form validation from the same
+  entity, with no separate schema library.
+- **[Schema changes](/docs/data/migrations)** — how edits to `rayfin/data/` reach the
+  database, and how to verify they actually did.
+- **[Seeding data](/docs/data/seeding)** — populate a database from a Node.js script.
+
+```prompt title="Model your first entity"
+In my Rayfin project, create a new entity in rayfin/data/ that models [describe your
+data]. Give it a uuid id, appropriate field decorators from @microsoft/rayfin-core with
+explicit max lengths on every text field, and an @authenticated('*') permission decorator
+with a policy scoping rows to the signed-in user via claims.sub. Register it in
+rayfin/data/schema.ts, then apply the schema with `rayfin up`.
+```

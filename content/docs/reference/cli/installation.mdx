@@ -1,0 +1,96 @@
+---
+title: Installation
+description: Install the Rayfin CLI as a project dev dependency, globally, or run it ad hoc with npx — plus how to verify the install and update it.
+---
+
+`@microsoft/rayfin-cli` ships as a normal npm package. Most projects never install it
+directly — `npm create @microsoft/rayfin@latest` adds it as a dev dependency automatically —
+but this page covers every install path.
+
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) 20 or later.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine on
+  Linux), only if you use [`rayfin dev`](/docs/reference/cli/dev) for Rayfin Local.
+
+## New project
+
+Scaffolding a project installs the CLI as a dev dependency for you:
+
+```bash
+npm create @microsoft/rayfin@latest my-app
+cd my-app
+```
+
+## Existing project
+
+Install the CLI as a dev dependency, then run the interactive setup:
+
+```bash
+npm install --save-dev @microsoft/rayfin-cli
+npx rayfin init
+```
+
+See [Init](/docs/reference/cli/init) for what the setup prompts for.
+
+## Global install
+
+You can also install the CLI globally and call `rayfin` directly, without `npx`:
+
+```bash
+npm install -g @microsoft/rayfin-cli
+rayfin --version
+```
+
+> [!NOTE]
+> Run `rayfin` from inside a project directory regardless of how it's installed. Commands
+> like [`rayfin docs`](/docs/reference/cli/docs) discover version-locked documentation by
+> scanning the current project's `node_modules`, so a globally-installed CLI still needs to
+> be invoked from the project root to see the right package versions.
+
+## Run without installing
+
+`npx` fetches and runs the CLI without adding it to `package.json`:
+
+```bash
+npx @microsoft/rayfin-cli --version
+```
+
+Inside a project that already has `@microsoft/rayfin-cli` as a dev dependency, plain
+`npx rayfin <command>` resolves to the locally installed version.
+
+## Verify the installation
+
+```bash
+npx rayfin --version
+npx rayfin --help
+```
+
+## First steps
+
+```bash
+npx rayfin login   # sign in with Entra ID
+npx rayfin up       # deploy backend services to Fabric
+npm run dev         # run the frontend dev server
+```
+
+See [Login](/docs/reference/cli/login) and [Up](/docs/reference/cli/up) for details.
+
+## Update the CLI
+
+```bash
+npm update --save
+npm install
+```
+
+Verify the update:
+
+```bash
+npx rayfin --version
+```
+
+```prompt title="Add Rayfin to an existing project"
+I have an existing TypeScript project at the current directory with no Rayfin backend yet.
+Install @microsoft/rayfin-cli as a dev dependency, then run `npx rayfin init` and walk me
+through the prompts to enable Auth and Data services with the mssql dialect.
+```

@@ -1,0 +1,138 @@
+---
+title: Docs
+description: rayfin docs search, get, list, discover, and catalog show — query version-locked Rayfin documentation from the terminal when the MCP server isn't available.
+---
+
+`rayfin docs` queries the same documentation corpus and search index as the
+[Rayfin MCP server](/docs/ai/mcp-server), as a CLI surface for offline use, scripting, and
+agents without MCP access. Run it from your project root so it resolves documentation from
+*that project's* installed packages.
+
+## How docs are discovered
+
+Rayfin packages declare a `rayfinDocs` field in their `package.json`, naming the package
+and pointing at a bundled directory of Markdown:
+
+```json title="node_modules/@microsoft/rayfin-guide/package.json"
+{
+  "rayfinDocs": {
+    "version": 1,
+    "dir": "assets/docs",
+    "module": "rayfin-guide",
+    "kind": "guide"
+  }
+}
+```
+
+`rayfin docs` scans the current project's `node_modules` for that field and indexes what it
+finds. `kind` sorts each package's docs into one of the three areas the CLI can filter
+on (see below) — it doesn't need to match `module` (`@microsoft/rayfin-core`, for example,
+declares `"kind": "api-reference"`, which is surfaced under the `ts-sdk` area). This is why
+results are **version-locked to the packages installed in your project** — the CLI does
+not fall back to a bundled or hosted corpus. If a package your project doesn't have yet
+would answer your question, [`docs discover`](#docs-discover) finds it.
+
+Three module areas exist: `guide` (builder guides and tutorials), `ts-sdk` (TypeScript SDK
+API reference), and `host` (.NET reference, DocFX-generated). `guide` and `ts-sdk` load by
+default; pass `--module host` to opt into host docs for one invocation.
+
+## `docs search`
+
+```bash
+npx rayfin docs search '<query>' --module guide
+```
+
+Full-text search with ranked results and snippets.
+
+| Flag | Description |
+| --- | --- |
+| `-m, --module <name>` | Limit to one area: `guide`, `host`, or `ts-sdk`. |
+| `-s, --scope <scope>` | `docs` (full-text content, default), `symbols` (symbol names only), or `all`. |
+| `-l, --limit <n>` | Maximum results, 1–50. Default: `10`. |
+| `--json` | Emit a JSON object instead of formatted lines. |
+| `--lean` | With `--json`: emit only the inner results array, dropping the `status`/`schemaVersion`/`count` envelope. |
+| `--no-cache` | Bypass the on-disk search index cache. |
+
+## `docs get`
+
+```bash
+npx rayfin docs get --symbol '@one'
+```
+
+Fetches a doc entry, or resolves a symbol to the sections that reference it. Exactly one of
+`--id`, `--path`, or `--symbol` is required.
+
+| Flag | Description |
+| --- | --- |
+| `-i, --id <id>` | Doc ID, e.g. `guide:guide/data/overview.md`. |
+| `-p, --path <path>` | Doc path, e.g. `guide/data/overview.md`. |
+| `-s, --symbol <name>` | Symbol name, e.g. `RayfinClient` or `@entity`. |
+| `-m, --module <name>` | With `--symbol`: limit to one docs area. |
+| `-l, --limit <n>` | With `--symbol`: max sections to return. Default: all matches. |
+| `--json` | Emit a JSON object instead of formatted lines. |
+| `--lean` | With `--json`: emit only the entry/sections, no envelope. |
+| `--no-cache` | Bypass the on-disk search index cache. |
+
+## `docs list`
+
+```bash
+npx rayfin docs list --module ts-sdk
+```
+
+Lists every available doc entry, optionally filtered to one module.
+
+| Flag | Description |
+| --- | --- |
+| `-m, --module <name>` | Limit to one area: `guide`, `host`, or `ts-sdk`. |
+| `--json` | Emit a JSON object instead of formatted lines. |
+| `--lean` | With `--json`: emit only the items array. |
+| `--no-cache` | Bypass the on-disk search index cache. |
+
+## `docs discover`
+
+```bash
+npx rayfin docs discover '<topic>'
+```
+
+Finds Rayfin packages by free-form query — the escape hatch for when the installed corpus
+doesn't cover what you're looking for (a package you haven't installed yet, or a newer one
+than the version you have). Returns a ranked list with name, kind, summary, and the
+install/update command for each match.
+
+| Flag | Description |
+| --- | --- |
+| `-l, --limit <n>` | Max results, 1–50. Default: `10`. |
+| `--json` | Emit JSON instead of text. |
+| `--lean` | Emit compact JSON without the envelope. |
+
+The catalog covers Rayfin's first-party packages only — third-party service integrations
+(Stripe, Auth0, and similar) are typically built on the SDK rather than shipped as Rayfin
+packages.
+
+## `docs catalog show`
+
+```bash
+npx rayfin docs catalog show
+```
+
+Displays the in-memory package discovery catalog that `docs discover` searches. The catalog
+ships as a version of `@microsoft/rayfin-docs`; upgrade that package to pick up a newer one.
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Emit JSON instead of text. |
+| `--lean` | Emit compact JSON without the envelope. |
+
+## When to use the CLI versus MCP
+
+Prefer the [MCP server](/docs/ai/mcp-server) when it's connected — it exposes the same
+corpus as structured tool calls without shelling out. Use `rayfin docs` when MCP isn't
+available, or when scripting: every subcommand supports `--json` (and `--lean` for a
+smaller LLM-oriented payload), and non-zero exit codes distinguish failures from empty
+results.
+
+```prompt title="Look up known limitations before modeling data"
+Run `npx rayfin docs search 'known limitations' --module guide` from my Rayfin project
+root, read the top result with `npx rayfin docs get --id <id>`, and summarize the
+constraints that affect how I should design entities before I add any new ones.
+```

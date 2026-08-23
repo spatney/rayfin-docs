@@ -1,0 +1,209 @@
+---
+title: Deploy to Fabric
+description: Enable Fabric data apps in your tenant, create one in the Fabric portal, and deploy your project with rayfin login and rayfin up.
+---
+
+Deploying to Fabric takes the same project you have been running locally and provisions it
+as a managed **Fabric app** — Fabric hosts the database, the API, authentication, and your
+built frontend. This page covers the first deployment end to end.
+
+## Prerequisites
+
+- A Rayfin project with a `rayfin/rayfin.yml` configuration file.
+- A Microsoft account with access to a Fabric workspace where you have contributor or
+  admin permissions, and Fabric capacity assigned to that workspace.
+- Fabric data apps enabled in your tenant's admin settings (next section).
+
+## Enable Fabric data apps in your tenant
+
+A Fabric tenant administrator must turn this on before anyone can create a Fabric data
+app. If you are not a tenant admin, send this section to whoever is.
+
+1. Sign in to the [Fabric admin portal](https://app.fabric.microsoft.com/admin-portal).
+2. Navigate to **Tenant settings**.
+3. Under **Fabric Apps (preview)**, toggle the setting to **Enabled**.
+4. Choose whether to enable it for the whole organization or specific security groups.
+5. Click **Apply**.
+
+Changes can take a few minutes to propagate.
+
+## Create a Fabric data app
+
+You can create the Fabric item first and connect your code to it, or deploy from the CLI
+and let it create the item for you.
+
+**From the Fabric portal:** sign in to [Microsoft Fabric](https://app.fabric.microsoft.com),
+select or create a workspace, click **New item**, search for **Fabric data app**, name it,
+and click **Create**. Then click **Open in VS Code** on the new item to load the project
+locally.
+
+**From the CLI:** run `rayfin login` followed by `rayfin up` in an existing project (see
+below) — the first deploy creates the Fabric item in your workspace automatically, and
+every subsequent deploy reuses it.
+
+## Sign in
+
+```bash
+npx rayfin login
+```
+
+This opens a browser window for interactive Entra ID sign-in. Tokens are stored securely
+in the OS keychain under `~/.rayfin/`. Check your status at any time:
+
+```bash
+npx rayfin login status
+```
+
+Force an account picker when you have multiple accounts signed in:
+
+```bash
+npx rayfin login --select
+```
+
+For non-interactive environments (CI pipelines), authenticate as a service principal
+instead:
+
+```bash
+npx rayfin login --service-principal \
+  --client-id <app-registration-client-id> \
+  --client-secret <secret> \
+  --tenant <tenant-id>
+```
+
+## Deploy with `rayfin up`
+
+```bash
+npx rayfin up
+```
+
+If you are not signed in, this launches an interactive login automatically. `rayfin up` is
+the canonical, all-in-one deploy command — it performs these steps in order:
+
+1. Creates a Rayfin item in your Fabric workspace (or reuses the existing one on later
+   deploys).
+2. Retrieves the publishable key from the remote service.
+3. Syncs runtime settings from `rayfin.yml` to the remote service — auth configuration and
+   enabled services.
+4. Applies the database schema generated from your entity decorators.
+5. Builds and deploys static content, if `staticHosting` is enabled — runs your build
+   command, packages the output, and uploads it.
+6. Persists deployment details to `rayfin/.deployments.json` and merges the resulting
+   `RAYFIN_PUBLIC_*` values into `rayfin/.env`.
+
+When it finishes, the CLI prints the **hosting URL**, a **Fabric portal link**, and the
+**deployment ID**.
+
+Preview what a deploy would do without changing anything:
+
+```bash
+npx rayfin up -n
+```
+
+During local development, skip the static build/deploy phase so a local Vite server keeps
+serving your frontend while the backend still deploys:
+
+```bash
+npx rayfin up --exclude-services staticHosting
+```
+
+## Verify the deployment
+
+```bash
+npx rayfin up status
+```
+
+Add `--json` for machine-readable output.
+
+> [!WARNING]
+> After adding or changing an entity, confirm the schema actually applied — a deploy can
+> report success while a newly added entity is not yet readable. Check `npx rayfin up
+> status`, or query the entity directly, before assuming the change is live. See
+> [Schema migrations](/docs/data/migrations) for how migrations are generated and applied.
+
+## Applying schema changes after the first deploy
+
+For any later change to your entities — a new field, a new entity, a new permission —
+redeploy with the same command:
+
+```bash
+npx rayfin up
+```
+
+`rayfin up` applies pending schema migrations as part of its normal run, so it is the right
+command for "deploy this change" even when the change is schema-only. Reach for the
+narrower subcommand only when you explicitly want to push a schema change without
+rebuilding or redeploying static content:
+
+```bash
+npx rayfin up db apply [--force]
+```
+
+If the change could cause data loss (dropping a column, changing a type), the CLI blocks it
+until you add `--force`.
+
+## Authentication after deployment
+
+Only **Fabric SSO (Entra ID)** works on a deployed app — email and password authentication
+is local development only. Make sure Fabric auth is enabled before deploying:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+```
+
+## Redeploy static content only
+
+When you have only changed frontend code, skip the rest of the deploy for a faster cycle:
+
+```bash
+npx rayfin up staticapp deploy
+```
+
+Add `--skip-build` to deploy existing build output without rebuilding it.
+
+## Sign out
+
+```bash
+npx rayfin logout
+```
+
+## Troubleshooting
+
+- **401 or 403 during deploy** — your session expired. Run `npx rayfin login` again, then
+  retry `npx rayfin up`.
+- **Deploy fails with "Dialect is required"** — `services.data.enabled: true` needs an
+  explicit `dialect: mssql` (Fabric supports MSSQL only).
+- **Database apply reports destructive changes** — review the listed operations, then add
+  `--force` only once you accept the data loss.
+- **Static deploy exceeds the size limit** — the compressed archive must stay under 100 MB;
+  exclude source maps and large dev assets, or move binary files to Rayfin storage.
+- **GraphQL "Internal server error" after a successful deploy** — look for `@text()` fields
+  with no `max`; they generate `NVARCHAR(MAX)` on MSSQL, which can break GraphQL schema
+  generation. Add `@text({ max: N })` and redeploy with `npx rayfin up db apply --force`.
+
+See [Deploy troubleshooting](/docs/deploy/troubleshooting) for more.
+
+```prompt title="Deploy my app to Fabric"
+Deploy my Rayfin app to Microsoft Fabric. Run the workflow yourself rather than printing
+steps for me to run:
+
+1. `npx rayfin login` (interactive sign-in if I am not already authenticated).
+2. `npx rayfin up` to deploy the app and apply pending schema migrations.
+3. `npx rayfin up status` to confirm the deployment is healthy.
+
+If I have added or changed an entity in this session, confirm after deploying that the
+change actually applied — a deploy can report success while a newly added entity is not
+yet readable. If it did not apply, run `npx rayfin up db apply` and tell me what happened.
+
+Do not pass `--force` to any command without first showing me what it would change.
+```
+
+## Next
+
+- [How Rayfin runs](/docs/start/how-rayfin-runs) — what changes between local and Fabric.
+- [Fabric apps](/docs/deploy/fabric-apps) — the Fabric item model in depth.
+- [Schema migrations](/docs/data/migrations) — how migrations are generated and applied.
+- [Auth](/docs/auth) — configure Fabric SSO and email/password sign-in.

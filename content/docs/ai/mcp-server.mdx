@@ -1,0 +1,95 @@
+---
+title: The Rayfin MCP server
+description: Expose version-locked Rayfin docs to your agent as MCP tools — search_docs, get_doc, list_docs, and discover_packages.
+---
+
+`@microsoft/rayfin-mcp` is a Model Context Protocol server that exposes the documentation
+bundled inside your project's installed Rayfin packages. Because it reads `node_modules`,
+the answers it gives are locked to the exact versions you are running.
+
+## Setup
+
+`rayfin init ai-files install` writes the server into `.mcp.json` for you. The entry it
+manages looks like this:
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "rayfin": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/rayfin-mcp", "start"]
+    }
+  }
+}
+```
+
+Run the agent from the project root so the server resolves that project's `node_modules`.
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `search_docs(query, module)` | Full-text search. `module: 'guide'` for builder guides, `module: 'ts-sdk'` for API reference |
+| `get_doc(symbol)` | Resolve a decorator or class name to its documentation |
+| `list_docs()` | List every document available in the current project |
+| `discover_packages(query)` | Find a Rayfin package whose docs are not installed yet |
+
+```text
+search_docs(query: 'known limitations', module: 'guide')
+get_doc(symbol: '@one')
+discover_packages(query: 'storage')
+```
+
+## CLI fallback
+
+If MCP is unavailable, the same lookups are available through the CLI. Run them from the
+project root so local `node_modules` wins.
+
+```bash
+npx rayfin docs search 'known limitations' --module guide
+npx rayfin docs search 'query chain' --module ts-sdk
+npx rayfin docs get --symbol '@one'
+npx rayfin docs discover 'storage'
+```
+
+See [`rayfin docs`](/docs/reference/cli/docs) for the full command reference.
+
+## How package docs are discovered
+
+Rayfin packages declare a `rayfinDocs` field in their `package.json` pointing at a
+directory of Markdown:
+
+```json title="node_modules/@microsoft/rayfin-guide/package.json"
+{
+  "rayfinDocs": {
+    "version": 1,
+    "dir": "assets/docs",
+    "module": "rayfin-guide",
+    "kind": "guide"
+  }
+}
+```
+
+`@microsoft/rayfin-docs` scans installed packages for that field and merges what it finds.
+That is why the answers are version-locked — and why a package you have not installed
+contributes nothing until `discover_packages` points you at it.
+
+## When to use which
+
+| | This site | MCP server |
+| --- | --- | --- |
+| Source | Published documentation | Your installed packages |
+| Version | Latest published | Exactly what you have installed |
+| Needs a project on disk | No | Yes |
+| Best for | Concepts, planning, CLI and SDK reference | Confirming a signature for your version |
+
+Use this site to learn the model and the workflow. Use the MCP server to confirm details
+against the version in front of you.
+
+```prompt title="Wire up the Rayfin MCP server"
+In my Rayfin project, run `npx rayfin init ai-files install` to add the Rayfin MCP server
+to .mcp.json, then verify it with `npx rayfin init ai-files status`. Afterwards, use the
+search_docs tool to look up "known limitations" in the guide module and summarise the
+constraints that affect how I should design entities.
+```

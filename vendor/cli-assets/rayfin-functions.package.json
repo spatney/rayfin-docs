@@ -1,0 +1,43 @@
+{
+  "name": "@microsoft/rayfin-functions",
+  "version": "1.34.0",
+  "description": "",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "!dist/**/__tests__/**",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "eslint": "^9.28.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3",
+    "@vitest/coverage-v8": "~3.2.4",
+    "rimraf": "~6.0.1"
+  },
+  "dependencies": {
+    "@microsoft/rayfin-lib": "1.34.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/microsoft/rayfin.git",
+    "directory": "packages/typescript-sdk/functions"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node ../scripts/fix-esm-extensions.mjs ./dist",
+    "build:watch": "tsc --watch",
+    "clean": "rimraf dist && rimraf .tsbuildinfo",
+    "test": "vitest run"
+  }
+}

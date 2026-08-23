@@ -1,0 +1,190 @@
+---
+title: "@microsoft/rayfin-auth"
+description: The Auth client surface — signUp, signIn, signOut, magic links, and session management — with exact signatures and the OpaqueSession shape.
+appliesTo: "@microsoft/rayfin-auth >= 1.31"
+---
+
+`@microsoft/rayfin-auth` implements Rayfin's authentication client: email/password sign-up
+and sign-in, magic-link passwordless sign-in, and session lifecycle management. You
+normally reach it through `client.auth` on a
+[`RayfinClient`](/docs/reference/sdk/rayfin-client) rather than constructing it yourself.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-auth
+```
+
+## The `Auth` class
+
+```typescript
+class Auth {
+  constructor(apiClient: ApiClient, options?: { storage?: AuthStorage | boolean; storageKeyPrefix?: string });
+}
+
+interface AuthStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+  clear(): void;
+}
+```
+
+Rayfin's own SDK auto-detects Node.js, React Native, and Electron, skipping browser-only
+APIs (like `localStorage`) when `window` is undefined — the isomorphic design means the
+same `Auth` code runs in any of these environments without crashing.
+
+## Sign-up and sign-in
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `signUp` | `(credentials: { email: string; password: string }) => Promise<SignUpResponse>` | Registers a new user. Does **not** sign them in — call `signIn` afterward. |
+| `signIn` | `(credentials: { email: string; password: string }) => Promise<TokenResponse>` | Authenticates with OAuth 2.1 password grant and stores the resulting session internally. |
+| `signOut` | `() => Promise<void>` | Revokes the current access token and clears the local session. |
+| `signOutAll` | `() => Promise<SignOutAllResponse>` | Revokes every active session for the user (all devices). Returns `{ count }`. |
+
+```typescript
+await auth.signUp({ email: 'user@example.com', password: 'password123' });
+await auth.signIn({ email: 'user@example.com', password: 'password123' });
+// ... later
+await auth.signOut();
+```
+
+> [!NOTE]
+> Email/password auth is **local development only**. Deployed Fabric apps support Fabric
+> SSO (Entra ID) exclusively — see
+> [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric).
+
+## Magic link (passwordless)
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `sendMagicLink` | `(options: { email: string; redirectUri: string }) => Promise<MagicLinkResult>` | Sends a sign-in email. Generates PKCE parameters and stores the verifier in `localStorage`, keyed by the returned `state`. |
+| `handleMagicLinkCallback` | `(url?: string) => Promise<MagicLinkCallbackResult>` | Exchanges the callback URL's verification code for a session. Defaults to `window.location.href`. |
+| `isMagicLinkCallback` | `(url?: string) => boolean` | Quick check for whether the current URL is a magic-link callback. |
+| `getMagicLinkVerificationCode` | `(url?: string) => string \| null` | Extracts the raw verification code from a callback URL. |
+
+```typescript
+// Sending page
+const { state } = await auth.sendMagicLink({
+  email: 'user@example.com',
+  redirectUri: 'https://myapp.com/auth/callback',
+});
+
+// Callback page
+if (auth.isMagicLinkCallback()) {
+  const result = await auth.handleMagicLinkCallback();
+  if (result.success) {
+    // result.session is an OpaqueSession
+  } else {
+    console.error(result.error, result.errorCode);
+  }
+}
+```
+
+## Session management
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `getSession` | `() => OpaqueSession` | Returns the current session **synchronously** — not a `Promise`. |
+| `onSessionChange` | `(callback: (session: OpaqueSession \| null) => void) => () => void` | Subscribes to session changes; returns an unsubscribe function. |
+| `hasRefreshToken` | `() => boolean` | Whether a refresh token is available for `refreshSession()`. |
+| `refreshSession` | `() => Promise<TokenResponse>` | Refreshes using the stored refresh token. Concurrent calls share one in-flight request. |
+
+```typescript
+const session = auth.getSession(); // no await — synchronous
+if (session.isAuthenticated) {
+  console.log(session.user?.email);
+}
+
+const unsubscribe = auth.onSessionChange((session) => {
+  setCurrentSession(session);
+});
+// later: unsubscribe();
+```
+
+> [!WARNING]
+> The session-change callback is **`onSessionChange`**. `onAuthStateChange` does not exist
+> on the Rayfin auth client — see [Known limitations](/docs/reference/known-limitations).
+
+### Session shape
+
+Session objects are opaque by design — gate UI logic on `isAuthenticated` or the presence
+of `user`, not on internal fields.
+
+```typescript
+interface OpaqueSession {
+  user: User | null;
+  role?: string;
+  expiresAt?: Date;
+  isAuthenticated: boolean;
+  isAnonymous: boolean;
+}
+
+interface User {
+  id: string;
+  email: string;
+  role?: string;
+  emailVerified?: boolean;
+  emailVerifiedAt?: string | null;
+}
+```
+
+## Account management
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `verifyEmail` | `(token: string) => Promise<EmailVerificationResponse>` | Completes email verification from a link token. |
+| `resendVerificationEmail` | `(email: string) => Promise<ResendVerificationEmailResponse>` | Requests a new verification email. Always resolves successfully to avoid email enumeration. |
+| `requestPasswordReset` | `(email: string) => Promise<PasswordResetResponse>` | Starts the password-reset flow. Also always resolves successfully. |
+| `completePasswordReset` | `(token: string, newPassword: string) => Promise<PasswordResetResponse>` | Completes a password reset. Invalidates all existing sessions on success. |
+| `getAuthSettings` | `() => Promise<AuthSettingsConfig>` | Public endpoint describing which auth methods (`password`, `magiclink`, `fabric`) are enabled — use it to drive sign-in UI. |
+| `getJwks` | `() => Promise<JwksResponse>` | Public keys for verifying Rayfin-issued JWTs, for services that validate tokens themselves. |
+
+## Events
+
+`on(event, handler)` subscribes to a specific named event (in addition to the general
+`onSessionChange`), returning an unsubscribe function:
+
+```typescript
+type AuthEvent =
+  | 'AUTH_SIGNUP' | 'AUTH_LOGIN' | 'AUTH_LOGOUT' | 'AUTH_REFRESH'
+  | 'AUTH_SESSION_EXPIRED'
+  | 'AUTH_EMAIL_VERIFIED' | 'AUTH_VERIFICATION_EMAIL_RESENT'
+  | 'AUTH_PASSWORD_RESET_REQUESTED' | 'AUTH_PASSWORD_RESET_COMPLETED'
+  | 'AUTH_MAGIC_LINK_SENT' | 'AUTH_MAGIC_LINK_ERROR';
+
+auth.on('AUTH_SESSION_EXPIRED', () => redirectToLogin());
+```
+
+## React usage
+
+```typescript
+import { useState, useEffect } from 'react';
+import { auth } from './lib/rayfin';
+import type { OpaqueSession } from '@microsoft/rayfin-auth';
+
+export function useAuth() {
+  const [session, setSession] = useState<OpaqueSession | null>(null);
+
+  useEffect(() => {
+    setSession(auth.getSession());
+    return auth.onSessionChange(setSession);
+  }, []);
+
+  return {
+    session,
+    isAuthenticated: session?.isAuthenticated ?? false,
+    signIn: auth.signIn.bind(auth),
+    signOut: auth.signOut.bind(auth),
+  };
+}
+```
+
+## Configuration and restart behavior
+
+Auth is configured in `rayfin.yml` under `services.auth` (`enabled`, `allowedRedirectUris`,
+`password.enabled`, `email.*` for SMTP, `fabric.enabled`). After changing any of these
+values, restart the backend (`npx rayfin up`) so the updated endpoints are exposed — the
+running server does not pick up `rayfin.yml` changes on its own. See
+[Known limitations](/docs/reference/known-limitations).

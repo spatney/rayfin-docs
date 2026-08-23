@@ -1,0 +1,89 @@
+---
+title: Redirect URIs
+description: Configure allowedRedirectUris in rayfin.yml for auth callbacks and the Fabric SSO handoff, and understand what rayfin up appends automatically.
+---
+
+`allowedRedirectUris` is the allow-list of origins and URLs Rayfin will redirect back to
+after an auth flow. It backs two different things — the Fabric SSO `postMessage` handoff and
+ordinary auth callbacks — so it matters for both a local Vite app and a deployed Fabric app.
+
+## Configuring `allowedRedirectUris`
+
+It lives under `services.auth` in `rayfin.yml`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  auth:
+    enabled: true
+    allowedRedirectUris:
+      - http://localhost:5173
+```
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `allowedRedirectUris` | `string[]` | `["http://localhost:5173"]` | Allowed redirect URIs for auth callbacks and the Fabric SSO handoff. Must include the bare origin for Fabric auth. |
+
+## What it's used for
+
+- **Fabric SSO** — the popup flow uses your app's bare origin (e.g. `http://localhost:5173`,
+  with no path) as the `postMessage` target origin for the handoff code. See
+  [Fabric SSO](/docs/auth/fabric-sso) for the full flow.
+- **Magic link callbacks** — the `redirectUri` you pass to `sendMagicLink()` should be an
+  origin covered by this list. See [Email and password](/docs/auth/email-password).
+
+Add every origin your app is actually served from — typically your local dev server and your
+deployed hosting URL — and nothing else.
+
+## What `rayfin up` appends automatically
+
+When [static hosting](/docs/hosting) is enabled, `rayfin up` automatically registers the
+hosting URL's bare origin in `allowedRedirectUris` on every deploy — you don't add it
+yourself. This is required for the Fabric SSO `postMessage` handoff, even when interactive
+Fabric auth is disabled.
+
+For example, if your hosting URL is `https://bold-river-a3f1bc9d02-westus2.webapp.example.com`,
+the deploy tool adds it alongside whatever you already configured, so `rayfin.yml` ends up
+looking like this after the first deploy:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  auth:
+    allowedRedirectUris:
+      - http://localhost:5173
+      - https://bold-river-a3f1bc9d02-westus2.webapp.example.com
+```
+
+The deploy tool updates the configuration and pushes it to the backend during deployment —
+this is why a project's `rayfin.yml` typically grows a second, Fabric-hosted entry the first
+time you deploy, without anyone editing the file by hand.
+
+## Keep the list tightly scoped
+
+`allowedRedirectUris` is a security boundary, not a convenience list. Every origin in it can
+receive a Fabric SSO handoff or complete an auth callback on behalf of your app, so:
+
+- Only add origins your app is actually served from — your local dev server and your
+  deployed hosting URL(s).
+- Don't add wildcard or third-party origins.
+- Review the list after copying a `rayfin.yml` between projects or environments — a stale
+  entry from a previous deployment is a redirect target an attacker could try to exploit.
+
+## Troubleshooting
+
+- **Fabric SSO origin mismatch** — see the origin-related entries in
+  [Fabric SSO troubleshooting](/docs/auth/fabric-sso#troubleshooting); most trace back to
+  `returnOrigin` (or the deployed hosting origin) not matching what's registered here.
+- **Magic link redirect rejected** — confirm the `redirectUri` passed to `sendMagicLink()`
+  shares an origin with an entry in `allowedRedirectUris`.
+- **Changes not taking effect** — `rayfin.yml` changes require a restart (`rayfin up`, or
+  `rayfin dev` in Rayfin Local) before the new redirect URIs are honored.
+
+```prompt title="Audit and tighten allowedRedirectUris"
+Look at services.auth.allowedRedirectUris in my Rayfin project's rayfin/rayfin.yml.
+
+List every origin currently in it and tell me, for each one, whether it looks like: my local
+dev server, a Fabric-hosted deployment origin that rayfin up would have added automatically,
+or something else that shouldn't be there. Flag anything that isn't clearly one of my own
+app's origins, and propose a trimmed list. Do not remove entries without showing me the
+before/after diff first.
+```

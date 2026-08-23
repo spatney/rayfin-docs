@@ -1,0 +1,485 @@
+---
+title: "@microsoft/rayfin-core"
+description: Complete decorator reference for @microsoft/rayfin-core — entities, field types, relationships, and permissions that generate Data API Builder configuration.
+appliesTo: "@microsoft/rayfin-core >= 1.31"
+---
+
+`@microsoft/rayfin-core` provides the decorators you apply to TypeScript classes in
+`rayfin/data/` to define your data model. Decorators store metadata at runtime via
+`Symbol.metadata`; the Rayfin CLI reads that metadata to generate Data API Builder (DAB)
+configuration when you run `rayfin up` or `rayfin up db apply`.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-core
+```
+
+`npm create @microsoft/rayfin@latest` and `rayfin init` configure this for you
+automatically. If you are adding Rayfin to an existing project, configure both manually.
+
+## TC39 Stage 3 decorators
+
+Rayfin's decorators use the TC39 Stage 3 decorators proposal, not the older experimental
+decorators used by frameworks like NestJS or Angular.
+
+- Never enable `experimentalDecorators` or `emitDecoratorMetadata` in `tsconfig.json`.
+- Include `ESNext.Decorators` in the `lib` array.
+- No `reflect-metadata` import is required. Metadata is stored on the class itself via the
+  native `Symbol.metadata` object, which the CLI and client SDKs read directly.
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "ESNext.Decorators"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  }
+}
+```
+
+> [!WARNING]
+> Bundlers that compile decorators to an older target silently break Rayfin's metadata.
+> If you see `Expression expected` errors on `@entity()` or other decorators, your build
+> target is too old. For Vite, set `target: 'es2022'` and use `@vitejs/plugin-react`
+> (esbuild) — `@vitejs/plugin-react-swc` does not support TC39 Stage 3 decorators
+> regardless of the configured target.
+
+## Class decorators
+
+### `@entity()`
+
+Marks a class as a DAB entity — required on every class you want exposed through the data
+API. Entity settings are inferred from the class name and convention: the entity name is
+the kebab-case class name, and the source table is its pluralized snake_case form.
+
+```typescript
+export declare function entity(name?: string): <T extends constructor<IEntity>>(
+  _target: T,
+  _context: ClassDecoratorContext<T>,
+) => void;
+```
+
+```typescript title="rayfin/data/Todo.ts"
+import { entity, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+}
+```
+
+Every entity has an `id` field that serves as its UUID primary key. If you don't declare
+`id` explicitly, Rayfin adds it to the schema automatically; the field is always optional
+on create (the server generates one when omitted). Composite or non-`id` primary keys are
+not supported.
+
+### `@blob()`
+
+Marks a class as a blob storage folder configuration, used with `@microsoft/rayfin-storage`.
+Permissions and visibility (public vs. private) are inferred from the class's `@role()` /
+`@authenticated()` decorators — a folder is public if the `anonymous` role has any granted
+permissions.
+
+```typescript
+export declare function blob(_folderName?: string): <T extends constructor<unknown>>(
+  _target: T,
+  context: ClassDecoratorContext<T>,
+) => void;
+```
+
+The parameter sets the folder name; it defaults to the kebab-case class name.
+
+```typescript
+import { blob, role } from '@microsoft/rayfin-core';
+
+@blob('uploads')
+@role('authenticated', '*')
+export class FileModel {
+  owner_id!: string;
+}
+```
+
+## Field decorators
+
+Every field on an `@entity()` class needs exactly one type decorator. All of them accept a
+shared set of base options, plus type-specific options.
+
+### Shared base options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `optional` | `boolean` | `false` | Allows `NULL`. Fields are **required by default** — combine with a TypeScript `?` on the property. |
+| `unique` | `boolean` | `false` | Adds a unique constraint. |
+| `default` | matches the field's type | none | Default value for the column. |
+
+### `@text(options?)` / `@email(options?)`
+
+Variable-length text. `@email()` accepts the identical option type (`TextFieldOptions`) and
+adds an email-format hint used by downstream validation and UI — it does not have its own
+narrower option set.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max` | `number` | dialect maximum | Maximum character length. Omitting it (or passing `-1`) falls back to the database's maximum, which on MSSQL is `NVARCHAR(MAX)` — this breaks GraphQL schema generation at deploy time. Always set `max` explicitly; see [Known limitations](/docs/reference/known-limitations). |
+| `min` | `number` | none | Minimum character length. |
+| `regex` | `RegExp` | none | Pattern the value must match. |
+
+```typescript
+import { entity, uuid, text, email } from '@microsoft/rayfin-core';
+
+@entity()
+export class Author {
+  @uuid() id!: string;
+  @text({ max: 200 }) name!: string;
+  @text({ optional: true, max: 2000 }) bio?: string;
+  @email({ unique: true }) emailAddress!: string;
+}
+```
+
+### `@uuid(options?)`
+
+UUID identifier — the conventional type for primary keys and foreign key columns. Accepts
+only the shared base options (no type-specific ones). A foreign key column that references
+another entity's `@uuid()` primary key must itself be `@uuid()` — a `@text()` field cannot
+stand in for it (an auth-derived field like `user_id` sourced from `claims.sub` is a
+`@text()` field, not a foreign key, so this rule doesn't apply to it).
+
+```typescript
+@uuid() id!: string;
+@uuid() category_id!: string; // foreign key — must match the referenced PK type
+```
+
+### `@int(options?)`
+
+Whole numbers.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max` / `min` | `number` | none | Value bounds. |
+
+### `@decimal(options?)`
+
+Fixed-point decimal, for money and other precise numeric values.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max` / `min` | `number` | none | Value bounds. |
+| `precision` | `number` | `18` | Total digits. Maximum `28` (the Data API Builder runtime limit). Must be specified together with `scale`. |
+| `scale` | `number` | `2` | Digits after the decimal point. Must be between `0` and `precision`. |
+
+With neither option set, `@decimal()` defaults to `DECIMAL(18,2)` on MSSQL and
+`NUMERIC(18,2)` on PostgreSQL.
+
+```typescript
+@decimal() price!: number;                       // DECIMAL(18,2)
+@decimal({ precision: 10, scale: 4 }) weight!: number; // DECIMAL(10,4)
+```
+
+### `@boolean(options?)`
+
+True/false values. Base options only.
+
+### `@date(options?)`
+
+ISO-8601 date/time, serialized from `Date` objects or ISO strings. Base options only.
+
+### `@set(...)`
+
+String enum with a database check constraint. `@set` has three call forms, all producing
+the same field behavior — pick whichever reads best at the call site:
+
+```typescript
+type FieldDecoratorFn<T> = (
+  target: unknown,
+  context: ClassFieldDecoratorContext<unknown, T | undefined>,
+) => void;
+
+// 1. Values only
+function set<T extends [string, ...string[]]>(...values: T): FieldDecoratorFn<T[number]>;
+
+// 2. A single options object, with values in `enum`
+function set<T extends [string, ...string[]]>(options: SetFieldOptions<T>): FieldDecoratorFn<T[number]>;
+
+// 3. Base options object, followed by values
+function set<T extends [string, ...string[]]>(
+  options: Omit<SetFieldOptions<T>, 'enum'>,
+  ...values: T
+): FieldDecoratorFn<T[number]>;
+```
+
+`SetFieldOptions<T>` adds one required property, `enum: T`, on top of the shared base
+options.
+
+```typescript
+// Form 1 — values only
+@set('todo', 'in-progress', 'done') status!: 'todo' | 'in-progress' | 'done';
+
+// Form 2 — options object with `enum`
+@set({ enum: ['todo', 'in-progress', 'done'], optional: true })
+status?: 'todo' | 'in-progress' | 'done';
+
+// Form 3 — base options, then values
+@set({ optional: true }, 'todo', 'in-progress', 'done')
+status?: 'todo' | 'in-progress' | 'done';
+```
+
+### Field type to database mapping
+
+| Decorator | Logical type | Database mapping |
+| --- | --- | --- |
+| `@uuid()` | UUID | `UNIQUEIDENTIFIER` (MSSQL) / `UUID` (PostgreSQL) |
+| `@text()` | string | `NVARCHAR(n)` / `VARCHAR(n)`, sized from `max` |
+| `@int()` | integer | `INT` / `INTEGER` |
+| `@decimal()` | decimal | `DECIMAL` (MSSQL) / `NUMERIC` (PostgreSQL) |
+| `@boolean()` | boolean | `BIT` / `BOOLEAN` |
+| `@date()` | datetime | `DATETIME2` / `TIMESTAMP` |
+| `@email()` | string | Same as `@text()`, plus an email-format hint |
+| `@set()` | enum | String column with a check constraint |
+
+## Relationship decorators
+
+`@one()` and `@many()` take a lazy `() => Target` function (not the class directly) so
+entities in different files can reference each other without import-order issues. Both
+accept only `RelationshipFieldOptions` — the base options minus `default`:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `optional` | `boolean` | `false` | Nullable relationship (optional foreign key). |
+| `unique` | `boolean` | `false` | Makes a `@one()` relationship one-to-one instead of many-to-one. |
+
+Custom foreign key or target key names are not supported — see
+[Known limitations](/docs/reference/known-limitations).
+
+### `@one(target, options?)`
+
+Many-to-one (or one-to-one with `unique: true`). Rayfin auto-generates a foreign key column
+named `{property}_id` — you don't need to declare it unless your application code reads or
+writes the raw ID.
+
+```typescript
+import { entity, uuid, text, one } from '@microsoft/rayfin-core';
+import { Category } from './Category.js'; // `import`, not `import type` — the decorator needs the runtime class
+
+@entity()
+export class Todo {
+  @uuid() id!: string;
+  @text() title!: string;
+  @one(() => Category) category!: Category;   // generates category_id
+  @one(() => Category, { optional: true }) parentCategory?: Category;
+}
+```
+
+### `@many(target, options?)`
+
+The inverse, one-to-many side of a `@one()` relationship.
+
+```typescript
+import { entity, uuid, text, many } from '@microsoft/rayfin-core';
+import { Todo } from './Todo.js';
+
+@entity()
+export class Category {
+  @uuid() id!: string;
+  @text() name!: string;
+  @many(() => Todo) todos?: Todo[];
+}
+```
+
+Many-to-many relationships are not supported directly — model them with an explicit join
+entity that has two `@one()` fields. See [Known limitations](/docs/reference/known-limitations).
+
+> [!NOTE]
+> `@microsoft/rayfin-core` ships a built-in, read-only `User` system entity (`id`, `email`)
+> that is always a valid `@one()` / `@many()` target — you don't need to declare it in your
+> own schema to reference it.
+
+## Permission decorators
+
+Every entity needs an explicit permission decorator. Omitting one is not the same as
+denying access — it silently applies `authenticated: *` (full CRUD for any signed-in user),
+which is rarely what you want in production.
+
+### `@authenticated(actions?, options?)`
+
+Shorthand for the built-in `authenticated` role — requires a valid user session.
+
+```typescript
+type RoleDecoratorFn<TEntity> = (
+  target: constructor<TEntity>,
+  context: ClassDecoratorContext<constructor<TEntity>>,
+) => void;
+
+function authenticated<TEntity extends object = object>(
+  actions?: SimpleAction | SimpleAction[], // default: '*'
+  options?: RoleDeclarationOptions<TEntity>,
+): RoleDecoratorFn<TEntity>;
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `actions` | `'create' \| 'read' \| 'update' \| 'delete' \| '*'`, or an array of them | `'*'` | The DAB action(s) this role may perform. |
+| `options.policy` | `(claims, item) => PolicyExpression` | none | Row-level filter — see [Policy DSL](#policy-dsl-and-field-visibility) below. |
+| `options.include` | `(keyof TEntity)[]` | none | Restrict the role to only these fields. |
+| `options.exclude` | `(keyof TEntity)[]` | none | Hide these fields from the role. |
+
+```typescript title="rayfin/data/Todo.ts"
+import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.user_id),
+})
+export class Todo {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+  @text() user_id!: string;
+}
+```
+
+### `@role(roleName, actions, options?)`
+
+The general-purpose form that `@authenticated()` is shorthand for. On the stable package
+export, `roleName` only accepts `'authenticated'` — it exists mainly so multiple role
+declarations read consistently when you also use the experimental `anonymous` role
+described below.
+
+```typescript
+function role<TEntity extends object = object>(
+  roleName: 'authenticated',
+  actions: SimpleAction | SimpleAction[],
+  options?: RoleDeclarationOptions<TEntity>,
+): RoleDecoratorFn<TEntity>;
+```
+
+### `@anonymous()` — experimental
+
+Public, unauthenticated access is exported from the `/experimental` subpath, not the
+package root:
+
+```typescript
+import { anonymous, role } from '@microsoft/rayfin-core/experimental';
+```
+
+```typescript
+// From @microsoft/rayfin-core/experimental
+function anonymous<TEntity extends object = object>(
+  actions?: SimpleAction | SimpleAction[], // default: '*'
+  options?: RoleDeclarationOptions<TEntity>,
+): RoleDecoratorFn<TEntity>;
+
+// Also from @microsoft/rayfin-core/experimental — widens roleName to accept 'anonymous'
+const role: <TEntity extends object = object>(
+  roleName: 'authenticated' | 'anonymous',
+  actions: SimpleAction | SimpleAction[],
+  options?: RoleDeclarationOptions<TEntity>,
+) => RoleDecoratorFn<TEntity>;
+```
+
+```typescript
+import { entity, uuid, text, authenticated } from '@microsoft/rayfin-core';
+import { anonymous } from '@microsoft/rayfin-core/experimental';
+
+@entity()
+@anonymous('read')
+@authenticated('*')
+export class PublicPost {
+  @uuid() id!: string;
+  @text({ max: 200 }) title!: string;
+}
+```
+
+> [!WARNING]
+> Anonymous data access is not currently supported when deployed to Fabric: the CLI rejects
+> any DAB configuration that grants the `anonymous` role at apply time, regardless of
+> whether you used `@anonymous(...)` or `@role('anonymous', ...)`. Treat this as a preview
+> of a future stable API, and prefer `@anonymous()` (rather than the `role()` widening) so
+> the intent is clear at the call site. To use anonymous data with Microsoft Fabric,
+> contact your tenant admin about the "Enable anonymous data access for Fabric Apps" setting.
+
+### Policy DSL and field visibility
+
+The `policy` callback receives two typed arguments and returns a composable expression that
+compiles to a DAB policy string:
+
+- `claims` — a `ClaimsDsl` exposing `claims.sub`, `claims.email`, and `claims.role`. These
+  are the only supported claims.
+- `item` — a proxy with one property per entity field, typed from the class itself so a
+  typo fails at compile time.
+
+Both `claims.<name>` and `item.<field>` support `.eq(value)` and `.neq(value)`, each
+returning a `PolicyExpression`. Combine expressions with `.and()` / `.or()`, which
+parenthesize both sides automatically:
+
+```typescript
+policy: (claims, item) =>
+  claims.role.eq('admin').or(claims.sub.eq(item.owner_id).and(item.isActive.eq(true)))
+```
+
+Use `include` / `exclude` on any role decorator to control field-level visibility per
+action. Both arrays are typed against the entity's actual property names:
+
+```typescript
+import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('read', { exclude: ['secret'] })
+@authenticated(['create', 'update'], {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class Document {
+  @uuid() id!: string;
+  @text() owner_id!: string;
+  @text() title!: string;
+  @text({ optional: true }) secret?: string;
+}
+```
+
+Multiple role decorators on the same class are aggregated; conflicting declarations for the
+same role and action produce a warning at generation time.
+
+## Form validation
+
+`@microsoft/rayfin-core` can build a [Standard Schema](https://standardschema.dev)
+validator directly from an `@entity()` class, so you can validate form input without a
+separate library.
+
+```typescript
+function toStandardSchema<T, K extends keyof T = never>(
+  entity: EntityClass<T>,
+  options?: { omit?: readonly K[] },
+): RayfinStandardSchema<Omit<T, K | 'id'>>;
+
+function getFieldConstraints<T, K extends keyof T>(
+  entity: EntityClass<T>,
+  field: K & string,
+): FieldConstraints | undefined;
+```
+
+`toStandardSchema` automatically omits the `id` primary key and any `@one()` / `@many()`
+relationship properties — pass additional field names (like timestamps) via `omit`.
+
+```typescript
+import { toStandardSchema, getFieldConstraints } from '@microsoft/rayfin-core';
+import { Todo } from '../rayfin/data/Todo.js';
+
+const todoInputSchema = toStandardSchema(Todo, {
+  omit: ['createdAt', 'updatedAt'] as const,
+});
+
+const result = todoInputSchema.validate({ title: 'Write docs' });
+if (result.issues) {
+  // result.issues: readonly StandardSchemaV1.Issue[]
+} else {
+  // result.value is typed as Omit<Todo, 'id' | 'createdAt' | 'updatedAt'>
+}
+
+const titleConstraints = getFieldConstraints(Todo, 'title');
+// { type: 'string', min: 1, max: 200, optional: false }
+```
+
+The returned object implements the `StandardSchemaV1` contract (`~standard`), so it works
+directly with TanStack Form, Conform, tRPC v11, and any other Standard Schema–compatible
+library, in addition to its own convenience `.validate()` method.

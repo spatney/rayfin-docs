@@ -1,0 +1,179 @@
+---
+title: Installation
+description: Install Node.js 20+, Docker, and the GitHub CLI on Windows, macOS, or Linux, then verify and update the Rayfin CLI.
+---
+
+Rayfin needs the same prerequisites whether you plan to run locally on Docker or deploy to
+Microsoft Fabric: **Node.js 20 or later**, **Docker Desktop** (or Docker Engine on Linux),
+and the **GitHub CLI**. Install these before you scaffold a project.
+
+## Windows
+
+Install the latest LTS Node.js:
+
+```powershell
+winget install -e --id OpenJS.NodeJS.LTS
+```
+
+Install Docker Desktop:
+
+```powershell
+winget install --id Docker.DockerDesktop -e
+```
+
+Docker Desktop usually adds itself to `PATH`. Verify, add it manually if needed, then start
+Docker Desktop:
+
+```powershell
+where docker
+# If not found, add Docker to PATH:
+$env:PATH += ";C:\Program Files\Docker\Docker\resources\bin"; [Environment]::SetEnvironmentVariable("PATH", $env:PATH, "User")
+# Start Docker Desktop (required before using docker commands)
+Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+```
+
+Install the GitHub CLI:
+
+```powershell
+winget install --id GitHub.cli -e
+```
+
+Add it to `PATH` if it is not already there:
+
+```powershell
+where gh
+# If there are no results, add the GitHub CLI to your PATH:
+$env:PATH += ";C:\Program Files\GitHub CLI"; [Environment]::SetEnvironmentVariable("PATH", $env:PATH, "User")
+```
+
+Sign in and verify every tool:
+
+```powershell
+gh auth login
+node --version
+docker --version
+gh --version
+```
+
+> [!NOTE]
+> If prompted during `gh auth login`, authorize GitHub to access Microsoft.
+
+## macOS
+
+```bash
+brew install node@lts
+brew install --cask docker
+open -a Docker
+brew install gh
+```
+
+Verify Docker and the GitHub CLI are on `PATH`, sign in, and check versions:
+
+```bash
+which docker
+which gh
+gh auth login
+node --version
+docker --version
+gh --version
+```
+
+> [!NOTE]
+> If prompted during `gh auth login`, authorize GitHub to access Microsoft.
+
+## Linux (Ubuntu or Debian)
+
+Install the latest LTS Node.js using the
+[official Node.js download instructions](https://nodejs.org/en/download).
+
+Install Docker Engine and enable non-root access:
+
+```bash
+sudo apt install -y docker.io docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
+
+Install the GitHub CLI:
+
+```bash
+type -p curl >/dev/null || sudo apt install -y curl
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo apt update
+sudo apt install -y gh
+```
+
+Verify Docker and the GitHub CLI, sign in, and check versions:
+
+```bash
+which docker
+sudo systemctl status docker
+which gh
+gh auth login
+node --version
+docker --version
+gh --version
+```
+
+## Install the Rayfin CLI
+
+You do not usually install `@microsoft/rayfin-cli` directly — scaffolding a project
+installs it for you as a dev dependency.
+
+**New project:**
+
+```bash
+npm create @microsoft/rayfin@latest my-app
+cd my-app
+```
+
+**Existing project** — install the CLI, then run the interactive setup to create the
+`rayfin/` directory with starter configuration files:
+
+```bash
+npm install --save-dev @microsoft/rayfin-cli
+npx rayfin init
+```
+
+## Verify the installation
+
+```bash
+npx rayfin --version
+```
+
+List every available command:
+
+```bash
+npx rayfin --help
+```
+
+## Update the CLI
+
+```bash
+npm update --save
+npm install
+```
+
+Confirm the update:
+
+```bash
+npx rayfin --version
+```
+
+```prompt title="Install Rayfin's prerequisites"
+Check whether this machine has Node.js 20 or later, Docker (Desktop or Engine), and the
+GitHub CLI installed, and install or update whichever are missing for this operating
+system. Then run `gh auth login` to sign in, make sure Docker is running, and print the
+output of `node --version`, `docker --version`, and `gh --version` so I can confirm
+everything is ready before I scaffold a Rayfin project.
+```
+
+## Next
+
+- [Quickstart](/docs/start/quickstart) — scaffold your first project.
+- [Project structure](/docs/start/project-structure) — what the scaffold generates.
+- [CLI installation reference](/docs/reference/cli/installation) — every install-related
+  command and flag.

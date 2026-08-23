@@ -1,0 +1,250 @@
+---
+title: Querying
+description: Read Rayfin entities with the type-safe select/where/orderBy/execute chain, including filtering, sorting, and cursor pagination.
+---
+
+`RayfinClient` exposes a fluent, typed query builder for every entity in your schema at
+`client.data.<Entity>`. It compiles to GraphQL against Data API Builder — you never write
+a query string by hand.
+
+## Set up the client
+
+Construct one `RayfinClient` and reuse it across your app. Type it with your
+`AppSchema` so every entity access is fully typed.
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import type { AppSchema } from '../../rayfin/data/schema';
+
+export const rayfinClient = new RayfinClient<AppSchema>({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL ?? 'http://localhost:5168',
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY ?? '',
+});
+```
+
+`VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` are generated into `.env.local` by
+`rayfin up` — see [Schema changes](/docs/data/migrations) for the apply workflow that
+produces them.
+
+## The query chain
+
+Build a query by chaining `.select()`, then optionally `.where()` and `.orderBy()`, then
+call `.execute()`:
+
+```typescript
+const todos = await rayfinClient.data.Todo.select([
+  'id',
+  'title',
+  'isCompleted',
+  'createdAt',
+])
+  .where({ isCompleted: { eq: false } })
+  .orderBy({ createdAt: 'desc' })
+  .execute();
+```
+
+`.select()` is required — list every field your code needs. `.where()` and `.orderBy()`
+are optional and can be omitted or reordered relative to each other, but `.execute()` (or
+`.executePaginated()`, see [Pagination](#paginate-large-lists)) always comes last.
+
+> [!WARNING]
+> `.execute()` returns a single page — 100 records by default — and does not tell you
+> whether more records exist. A list that grows past one page is silently truncated. Use
+> `.execute()` only for queries you know are bounded (a lookup table, a filter that can
+> match only a handful of rows). For anything unbounded — a user's notes, an order
+> history — use [pagination](#paginate-large-lists) instead.
+
+## Fetch a single record
+
+```typescript
+const todo = await rayfinClient.data.Todo.findById('00000000-0000-0000-0000-000000000000');
+```
+
+Use `findById` — not `findByPk`. It returns the record or `null` if no row matches.
+
+`findFirst` returns the first record matching an optional filter, or `null`:
+
+```typescript
+const notebook = await rayfinClient.data.Notebook.findFirst({ name: { eq: 'Work' } });
+```
+
+`findMany` runs a filtered query in one call without building a chain, equivalent to
+`.select([...]).where(filter).execute()` for cases where you want every field:
+
+```typescript
+const active = await rayfinClient.data.Todo.findMany({ isCompleted: { eq: false } });
+```
+
+## Filter with `.where()`
+
+`.where()` takes an object keyed by field name. A bare value is shorthand for `eq`; an
+operator object is more explicit and required for anything other than equality.
+
+```typescript
+.where({ isCompleted: { eq: true } })
+```
+
+### Operators by field type
+
+| Field type | Available operators |
+| --- | --- |
+| `@text()` / `@email()` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `notContains`, `startsWith`, `endsWith`, `isNull`, `in` |
+| `@int()` / `@decimal()` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` |
+| `@boolean()` | `eq`, `neq`, `isNull`, `in` |
+| `@date()` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` |
+
+> [!NOTE]
+> `gt` / `gte` / `lt` / `lte` on `@date()` fields are not supported when the backend runs
+> on PostgreSQL. This is a Data API Builder limitation, not Rayfin-specific — use `eq` or
+> filter client-side if you need date range comparisons on Postgres.
+
+### Combine conditions
+
+Multiple keys in one `.where()` object are implicitly ANDed. Use explicit `and` / `or`
+arrays to combine or nest conditions:
+
+```typescript
+.where({
+  or: [
+    { title: { contains: 'urgent' } },
+    { isCompleted: { eq: false } },
+  ],
+})
+```
+
+### Filter by foreign key, not by dot-path
+
+Filter relationships by their `{property}_id` foreign key column, not by a dot-path into
+the related entity:
+
+```typescript
+.where({ notebook_id: { eq: notebookId } })   // correct
+.where({ 'notebook.id': { eq: notebookId } })  // wrong — dot-paths are select-only
+```
+
+For an optional relationship, filter for rows with no related record using `isNull`:
+
+```typescript
+.where({ notebook: { isNull: true } })
+```
+
+## Select nested fields with dot-paths
+
+Dot-paths are for `.select()` only — use them to pull fields off a related entity into the
+same result row:
+
+```typescript
+const notes = await rayfinClient.data.Note.select([
+  'id',
+  'title',
+  'notebook_id',
+  'notebook.id',
+  'notebook.name',
+])
+  .orderBy({ createdAt: 'desc' })
+  .execute();
+
+// notes[0].notebook.name is available directly
+```
+
+Nesting is supported to exactly one level past the root entity — `notebook.name` works,
+but `notebook.owner.email` (a third level) does not.
+
+## Sort with `.orderBy()`
+
+Sort directions are the lowercase strings `'asc'` and `'desc'` — not capitalized
+constants:
+
+```typescript
+.orderBy({ createdAt: 'desc' })
+```
+
+## Paginate large lists
+
+Because `.execute()` returns only one page and gives no signal that more records exist,
+use `.first(n)` with `.executePaginated()` for any query that can grow past a single page.
+
+### Fetch one page
+
+```typescript
+const page = await rayfinClient.data.Note.select(['id', 'title', 'createdAt'])
+  .orderBy({ createdAt: 'desc' })
+  .first(25)
+  .executePaginated();
+
+page.items;       // up to 25 records
+page.hasNextPage; // true if more records remain
+page.endCursor;   // pass to .after() to fetch the next page
+```
+
+### Fetch the next page
+
+```typescript
+const nextPage = await rayfinClient.data.Note.select(['id', 'title', 'createdAt'])
+  .orderBy({ createdAt: 'desc' })
+  .first(25)
+  .after(page.endCursor)
+  .executePaginated();
+```
+
+Keep `.select()`, `.where()`, and `.orderBy()` identical across every page in a sequence —
+a stable sort order is required for the cursor to advance correctly.
+
+### Fetch every record
+
+Loop, passing each page's `endCursor` into the next call's `.after()`, until
+`hasNextPage` is `false`:
+
+```typescript
+async function fetchAllNotes() {
+  const all: Array<{ id: string; title: string; createdAt: Date }> = [];
+  let cursor: string | undefined;
+
+  do {
+    const page = await rayfinClient.data.Note.select(['id', 'title', 'createdAt'])
+      .orderBy({ createdAt: 'desc' })
+      .first(100)
+      .after(cursor)
+      .executePaginated();
+
+    all.push(...page.items);
+    cursor = page.hasNextPage ? page.endCursor : undefined;
+  } while (cursor);
+
+  return all;
+}
+```
+
+> [!NOTE]
+> `.first(n)` is bounded by Data API Builder's maximum page size of 100,000.
+> `.first(-1)` requests an unbounded page and still hits that same cap, so it only works
+> when the full result set fits under it. For anything that might not, page through
+> results with `.after()` instead of requesting everything in one large `.first(n)`.
+>
+> `PagedResult` also exposes a `totalCount` field, but Data API Builder does not populate
+> it on paginated queries — do not rely on it.
+
+## There is no `count()`
+
+Counting matching records is not implemented on the fluent client. Select the minimal
+fields you need and use `results.length`:
+
+```typescript
+const openTodos = await rayfinClient.data.Todo.select(['id'])
+  .where({ isCompleted: { eq: false } })
+  .execute();
+
+const openCount = openTodos.length; // only correct if the result fits in one page
+```
+
+For a count that might exceed one page, page through with `.executePaginated()` and sum
+`page.items.length` across pages, since `.execute()` truncates and `totalCount` is not
+populated.
+
+```prompt title="Add a paginated list query"
+In my Rayfin project, write a function that fetches all Todo records for the current
+user's "Archive" view using the RayfinClient. Select id, title, isCompleted, and
+createdAt, filter to isCompleted: { eq: true }, order by createdAt descending, and page
+through with .first(50) and .executePaginated() until hasNextPage is false, returning the
+combined list.
+```

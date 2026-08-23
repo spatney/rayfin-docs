@@ -1,0 +1,190 @@
+---
+title: Static content hosting
+description: Deploy your built frontend alongside your Rayfin backend with staticHosting in rayfin.yml — configuration, deployment, limits, and troubleshooting.
+---
+
+Rayfin can build, package, and serve your frontend as static content alongside your backend
+APIs. Once static hosting is enabled, `rayfin up` deploys your built assets to the Rayfin
+host, which serves them at a public URL — no separate static-hosting service to configure.
+
+## How it works
+
+1. Rayfin runs your configured build command (for example, `npm run build`).
+2. The CLI validates that the output folder exists and contains files.
+3. All files are packaged into a compressed ZIP archive (100 MB maximum).
+4. The archive is uploaded to the Rayfin host, which extracts and serves the content.
+5. The host returns a public hosting URL where your site is accessible.
+
+## Configuration
+
+Add a `staticHosting` block under `services` in `rayfin.yml`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  staticHosting:
+    enabled: true
+    folder: dist
+    buildCommand: npm run build
+    indexDocument: index.html
+```
+
+| Option | Required | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | Yes | — | Set to `true` to enable static hosting. |
+| `folder` | Yes | `"dist"` | Output folder containing built static files, relative to `root`. |
+| `root` | No | Project root | Root directory of the frontend project, relative to the project root. |
+| `buildCommand` | No | — | Shell command to run before packaging, e.g. `npm run build`. |
+| `indexDocument` | No | — | Default document to serve for directory requests, e.g. `index.html`. |
+
+### A separate frontend directory
+
+If your frontend lives in a subdirectory, set `root`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  staticHosting:
+    enabled: true
+    root: frontend
+    folder: dist
+    buildCommand: npm run build
+    indexDocument: index.html
+```
+
+This resolves the output path to `<project-root>/frontend/dist`.
+
+## Deploying static content
+
+### Full deployment with `rayfin up`
+
+When you run `rayfin up`, static content deploys automatically as part of the full-stack
+deployment — the CLI builds your frontend, packages the output, and uploads it alongside
+your data and auth configuration.
+
+```bash
+npx rayfin up
+```
+
+#### Skip static deployment during local dev
+
+When iterating locally with `npm run dev` (Vite serves the frontend directly), pass
+`--exclude-services staticHosting` to deploy the backend without rebuilding and uploading the
+static bundle:
+
+```bash
+npx rayfin up --exclude-services staticHosting
+```
+
+This skips only the static build/package/deploy phase — runtime settings still get posted,
+so previously deployed static content keeps serving from Fabric. Scaffolded templates use
+this flag in their `npm run dev` script.
+
+### Standalone static deployment
+
+Use `staticapp deploy` to redeploy only your static content, without rerunning the full
+`rayfin up` flow — useful when only frontend code changed and you want a faster iteration
+cycle:
+
+```bash
+npx rayfin up staticapp deploy
+```
+
+Skip the build step if you've already built and just want to deploy the existing output:
+
+```bash
+npx rayfin up staticapp deploy --skip-build
+```
+
+Add `-v` / `--verbose` for detailed logging:
+
+```bash
+npx rayfin up staticapp deploy -v
+```
+
+> [!NOTE]
+> `staticapp deploy` requires an existing remote deployment. Run `rayfin up` at least once
+> first to provision the remote endpoint.
+
+## Redirect URIs
+
+When static hosting is enabled, `rayfin up` automatically registers the hosting URL's bare
+origin in `allowedRedirectUris` — this is required for the Fabric SSO `postMessage` handoff,
+even when interactive Fabric auth is disabled. See
+[Redirect URIs](/docs/hosting/redirect-uris) for the full explanation and what you still need
+to configure yourself.
+
+## Deployment limits
+
+- The compressed ZIP archive must not exceed **100 MB**.
+- The CLI uses maximum compression to minimize upload size.
+- If your build output exceeds the limit, exclude large assets or move binary files to
+  [Storage](/docs/storage) instead of bundling them as static content.
+
+## Complete example
+
+A full `rayfin.yml` with static hosting, auth, and data all enabled:
+
+```yaml title="rayfin/rayfin.yml"
+id: my-app
+name: my-app
+version: 1.0.0
+services:
+  auth:
+    enabled: true
+    allowedRedirectUris:
+      - http://localhost:5173
+  data:
+    enabled: true
+    dialect: postgresql
+  staticHosting:
+    enabled: true
+    folder: dist
+    buildCommand: npm run build
+    indexDocument: index.html
+```
+
+## Troubleshooting
+
+### Static folder not found
+
+Verify that:
+
+- The `folder` path in `rayfin.yml` is correct and relative to `root` (or the project root
+  if `root` isn't set).
+- Your build command ran successfully and produced output in the expected directory.
+
+### Empty static folder
+
+An empty output folder usually means the build command didn't produce output. Run it
+manually to check for errors:
+
+```bash
+npm run build
+```
+
+### Deployment too large
+
+If the ZIP exceeds 100 MB:
+
+- Review your build output for unnecessary files — source maps, unoptimized images.
+- Configure your bundler to exclude development artifacts from the production build.
+- Move large binary assets to [Storage](/docs/storage) instead of bundling them as static
+  content.
+
+### No remote endpoint configured
+
+`rayfin up staticapp deploy` requires an existing remote deployment. Run `rayfin up` first to
+provision it, then use `staticapp deploy` for subsequent updates.
+
+```prompt title="Enable static hosting and deploy the frontend"
+In my Rayfin project, enable static hosting:
+
+- Add a staticHosting block to rayfin/rayfin.yml with enabled: true, folder: dist, a
+  buildCommand matching my project's build script, and indexDocument: index.html. If my
+  frontend lives in a subdirectory, set root accordingly.
+- Deploy with `npx rayfin up` and tell me the resulting hosting URL.
+- Explain that `npx rayfin up --exclude-services staticHosting` is what my dev script should
+  use, since Vite already serves the frontend locally.
+
+If the deploy fails because the static folder is missing or empty, run my build command
+directly first and show me the error.
+```

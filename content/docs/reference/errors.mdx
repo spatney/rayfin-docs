@@ -1,0 +1,254 @@
+---
+title: Errors and troubleshooting
+description: A symptom-to-fix index of the errors Rayfin builders hit most — deployment, schema apply, secrets, static hosting, Fabric auth, and local Docker issues.
+---
+
+This page consolidates the troubleshooting sections scattered across the Rayfin guide into
+one symptom → cause → fix index. Search it by the error text you're seeing, then jump to
+the matching heading for the full fix.
+
+## Quick reference
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| "Internal server error" from the data API, after a deploy that reported success | `@text()` field with no `max` produced `NVARCHAR(MAX)` on MSSQL | Add `@text({ max: N })` to every string field, then reapply the schema |
+| `Dialect is required when Data module is enabled` (400 at deploy time) | `services.data.enabled: true` with no `dialect` in `rayfin.yml` | Set `dialect: mssql` or `dialect: postgresql` |
+| `unsupported UUID` error | Another service is already running on the default port with a different database dialect | Stop stale services (`rayfin dev --down`), then retry |
+| `rayfin dev` / `rayfin up` fails to start services | Docker isn't running | Start Docker Desktop (or the Docker daemon), then retry |
+| `Failed to acquire authentication token` | Not signed in, or no OS credential storage available | `rayfin login`; on restricted systems set `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` |
+| `rayfin up db apply` refuses to run, warns of data loss | The pending change drops a column/table or alters a type | Review the change; re-run with `--force` only once you accept the loss |
+| A newly added entity isn't readable right after a deploy that reported success | The schema migration step hadn't finished applying, or the client/cache is stale | Run `rayfin up status`; confirm schema apply completed before querying the new entity |
+| Deployment fails with `401` or `403` | Your Fabric session expired | `rayfin login`, then retry `rayfin up` |
+| `No remote endpoint configured` from `staticapp deploy` | No full deployment has happened yet | Run `rayfin up` once, then use `staticapp deploy` for subsequent updates |
+| Static deploy exceeds the size limit | Build output includes source maps or dev-only assets | Exclude dev artifacts from the production build, or move binaries to storage |
+| `No secrets found in .env file` | Missing `rayfin/.env`, or variables aren't prefixed `RAYFIN_SECRET_` | Create `rayfin/.env` with `RAYFIN_SECRET_*` entries |
+| Popup blocked during Fabric sign-in | `ensureSignedInWithFabric` was called outside a user-gesture handler | Call it directly from a button's `onClick` |
+
+## Deployment and schema apply
+
+### "Internal server error" after a successful deploy
+
+**Symptom:** `rayfin up` (or `rayfin up db apply`) reports success, but the GraphQL or REST
+data API returns a generic "Internal server error" at runtime.
+
+**Cause:** a `@text()` field with no `max` option produces an `NVARCHAR(MAX)` column on
+MSSQL. Rayfin's metadata provider can fail to build a GraphQL schema from that column type.
+
+**Fix:** add an explicit length to every string field targeting MSSQL —
+`@text({ max: 200 })` rather than bare `@text()` — then reapply the schema
+(`npx rayfin up db apply --force` if the column already exists with the wrong type). See
+[`@microsoft/rayfin-core`](/docs/reference/sdk/rayfin-core) and
+[Known limitations](/docs/reference/known-limitations).
+
+### "Dialect is required when Data module is enabled"
+
+**Symptom:** `rayfin up` fails with a 400 error during deployment.
+
+**Cause:** `rayfin.yml` has `services.data.enabled: true` but no `dialect` key.
+
+**Fix:** add `dialect: mssql` (Fabric apps support MSSQL only) or `dialect: postgresql`
+(Rayfin Local only) under `services.data`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  data:
+    enabled: true
+    dialect: mssql
+```
+
+### `unsupported UUID` errors
+
+**Symptom:** commands like `rayfin dev db apply` or `rayfin up db apply` fail with an
+`unsupported UUID` error.
+
+**Cause:** another service is already listening on the default port, backed by a database
+dialect different from the one your current project expects.
+
+**Fix:** stop stale services — `npx rayfin dev --down` locally — then retry. If the problem
+persists, `npx rayfin dev --purge` for a full reset of containers and volumes.
+
+### Database apply refuses to run (potential data loss)
+
+**Symptom:** `rayfin up db apply` (or `rayfin dev db apply`) stops and warns instead of
+applying the change.
+
+**Cause:** the pending schema change would drop a column, drop a table, or alter a column's
+type — all are treated as potentially destructive.
+
+**Fix:** review the listed operations. If the data loss is acceptable, re-run with
+`--force`:
+
+```bash
+npx rayfin up db apply --force
+```
+
+Never pass `--force` without reviewing what will be dropped.
+
+### A newly added entity isn't readable after a deploy that reported success
+
+**Symptom:** `rayfin up` prints success, but querying a newly added entity immediately
+afterward returns nothing, or errors as if the entity doesn't exist.
+
+**Cause:** the static app and runtime settings can finish deploying slightly before the
+database schema migration for the new entity has fully applied, or a client built before
+the deploy is still caching the old schema.
+
+**Fix:** run `npx rayfin up status` and confirm the deployment is fully healthy before
+relying on the new entity. Refresh or rebuild the frontend client so it isn't holding a
+stale schema.
+
+### Deployment fails with 401 or 403
+
+**Symptom:** `rayfin up` fails partway through with an authorization error.
+
+**Cause:** your signed-in Fabric session has expired.
+
+**Fix:** `npx rayfin login` to reauthenticate, then retry `npx rayfin up`.
+
+## Local development (Docker)
+
+### Docker is not running
+
+**Symptom:** `rayfin dev` or `rayfin up` fails immediately, unable to reach Docker.
+
+**Cause:** Docker Desktop (or the Docker daemon on Linux) isn't started.
+
+**Fix:** start Docker Desktop, or `sudo systemctl start docker` on Linux, then rerun the
+command.
+
+### `rayfin dev db apply` fails right after starting services
+
+**Symptom:** applying schema locally fails immediately after `rayfin dev` starts.
+
+**Cause:** the WebService and database containers haven't finished their health checks yet.
+
+**Fix:** wait for `npx rayfin dev status` to report all services healthy before running
+`npx rayfin dev db apply`.
+
+## Sign-in and secrets
+
+### Sign-in or keychain failures
+
+**Symptom:** `rayfin login` or any command needing authentication fails with
+`Failed to acquire authentication token` or a similar credential-storage error.
+
+**Cause:** you aren't signed in, or the current environment (a container, a restricted
+CI runner) has no OS-backed credential storage for the CLI's token cache.
+
+**Fix:** run `npx rayfin login` (or `rayfin login --select` to choose a different
+account). On systems without OS credential storage, set
+`RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` (development environments only — this stores the
+token cache in plaintext).
+
+### "No secrets found in .env file"
+
+**Symptom:** `rayfin up secrets apply` reports no secrets found.
+
+**Cause:** `rayfin/.env` doesn't exist, or none of its variables use the `RAYFIN_SECRET_`
+prefix.
+
+**Fix:** create `rayfin/.env` with secrets prefixed `RAYFIN_SECRET_` (for example,
+`RAYFIN_SECRET_API_KEY=...`), then rerun `npx rayfin up secrets apply`.
+
+### Secrets validation is inconclusive
+
+**Symptom:** `rayfin up secrets apply` sends secrets but validation doesn't confirm them.
+
+**Cause:** a network issue reaching Fabric, or the workload endpoint isn't healthy yet.
+
+**Fix:** check `npx rayfin up status`, then re-run `npx rayfin up secrets apply`.
+
+### Permission denied applying secrets
+
+**Symptom:** `rayfin up secrets apply` fails with a permission error.
+
+**Cause:** the signed-in account doesn't have access to the target Fabric workspace.
+
+**Fix:** confirm you're signed in with an account that has workspace access; use
+`npx rayfin login --select` to pick a different account or tenant.
+
+## Static hosting
+
+### Static folder not found / empty static folder
+
+**Symptom:** deployment fails saying the static output folder doesn't exist, or it exists
+but is empty.
+
+**Cause:** the `folder` path in `rayfin.yml` (relative to `root`, or the project root) is
+wrong, or `buildCommand` didn't actually produce output.
+
+**Fix:** verify the `staticHosting.folder` path, and run the build command manually
+(`npm run build`) to confirm it produces files where expected.
+
+### Deployment too large
+
+**Symptom:** static deployment fails because the packaged archive exceeds the limit.
+
+**Cause:** the compressed build output exceeds the 100 MB static hosting limit — often
+source maps or unoptimized assets.
+
+**Fix:** exclude development artifacts (source maps, unminified assets) from the production
+build, or move large binary files to a storage service instead of bundling them as static
+content.
+
+### "No remote endpoint configured"
+
+**Symptom:** `rayfin up staticapp deploy` fails, saying no remote endpoint is configured.
+
+**Cause:** `staticapp deploy` only redeploys static content for a deployment that already
+exists — it can't create one.
+
+**Fix:** run `npx rayfin up` once to provision the remote deployment, then use
+`npx rayfin up staticapp deploy` for subsequent static-only updates.
+
+## Fabric brokered auth
+
+See [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric)
+for the full option reference these fixes refer to.
+
+### Popup blocked
+
+**Cause:** `ensureSignedInWithFabric` (or `initiateFabricLogin`) was called outside a
+synchronous user-gesture handler.
+
+**Fix:** call it directly from a button's `onClick`, not on page load or after an `await`.
+
+### Session not persisting
+
+**Cause:** `RayfinClient` is misconfigured — usually the wrong `baseUrl` or
+`publishableKey`.
+
+**Fix:** confirm both match your deployed backend.
+
+### Timeout after 5 minutes
+
+**Cause:** the Fabric portal never sent the handoff code back.
+
+**Fix:** confirm `returnOrigin` matches your app's actual origin.
+
+### Origin mismatch
+
+**Cause:** `fabricPortalUrl` doesn't match the Fabric portal environment you're actually
+using (production, PPE, dev).
+
+**Fix:** use the correct portal URL for your environment.
+
+### `initEmbeddedAuth` returns `null`
+
+**Cause:** the SDK didn't detect embedded mode.
+
+**Fix:** ensure the URL includes `?fabricEmbedded=true`, or set `fabricEmbedded: true`
+explicitly in `FabricAuthOptions`.
+
+### State mismatch error
+
+**Cause:** the response's state parameter didn't match the request — a stale response from
+a previous flow, or a replay attempt.
+
+**Fix:** retry the sign-in flow from scratch.
+
+## See also
+
+- [Known limitations](/docs/reference/known-limitations)
+- [Deprecation warnings](/docs/reference/deprecations)
+- [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client)

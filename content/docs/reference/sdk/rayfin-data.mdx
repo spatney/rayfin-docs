@@ -1,0 +1,252 @@
+---
+title: "@microsoft/rayfin-data"
+description: The fluent GraphQL query and mutation API behind client.data — select, where, orderBy, pagination, and CRUD methods with exact signatures.
+appliesTo: "@microsoft/rayfin-data >= 1.31"
+---
+
+`@microsoft/rayfin-data` is the DAB-compliant data client that powers `client.data` on both
+[`RayfinClient` and `RayfinServerClient`](/docs/reference/sdk/rayfin-client). Most
+applications never import it directly — you get a typed instance for free from
+`@microsoft/rayfin-client` — but it is a standalone package if you want the query builder
+without the rest of the SDK.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-data
+```
+
+## Getting a client
+
+`createDataApi` builds the typed proxy that `client.data` is:
+
+```typescript
+function createDataApi<TSchema extends EntitySchema>(
+  apiClient: ApiClient,
+): DataApi<TSchema> & TypedDataClients<TSchema>;
+
+type TypedDataClients<TSchema extends EntitySchema> = {
+  [K in keyof TSchema]: GraphQLEntityClient<TSchema, K>;
+};
+```
+
+Each property on the result — `dataApi.Todo`, `dataApi.Note`, and so on — is a
+`GraphQLEntityClient` scoped to that entity.
+
+## Query chain
+
+`GraphQLEntityClient` exposes both direct query methods and a fluent builder
+(`GraphQLQueryBuilder`) for composing `select` / `where` / `orderBy` / pagination:
+
+```typescript
+class GraphQLEntityClient<TSchema extends EntitySchema, TEntity extends keyof TSchema> {
+  select<TFields extends FieldSelection<TSchema[TEntity]>>(fields: TFields): GraphQLQueryBuilder<TSchema, TEntity>;
+  where(conditions: FilterInput<TSchema[TEntity]>): GraphQLQueryBuilder<TSchema, TEntity>;
+  orderBy(order: OrderByInput<TSchema[TEntity]>): GraphQLQueryBuilder<TSchema, TEntity>;
+  first(count: number): GraphQLQueryBuilder<TSchema, TEntity>;
+  findMany(filter?: FilterInput<TSchema[TEntity]>): Promise<TSchema[TEntity][]>;
+  findFirst(filter?: FilterInput<TSchema[TEntity]>): Promise<TSchema[TEntity] | null>;
+  findById(id: string): Promise<TSchema[TEntity] | null>;
+  create(input: CreateInput<TSchema[TEntity]>): Promise<TSchema[TEntity]>;
+  update(where: WhereUniqueInput<TSchema[TEntity]>, data: UpdateInput<TSchema[TEntity]>): Promise<TSchema[TEntity]>;
+  delete(where: WhereUniqueInput<TSchema[TEntity]>): Promise<TSchema[TEntity]>;
+  upsert(
+    where: WhereUniqueInput<TSchema[TEntity]>,
+    create: CreateInput<TSchema[TEntity]>,
+    update: UpdateInput<TSchema[TEntity]>,
+  ): Promise<TSchema[TEntity]>;
+}
+
+class GraphQLQueryBuilder<TSchema extends EntitySchema, TEntity extends keyof TSchema> {
+  select<TFields extends FieldSelection<TSchema[TEntity]>>(fields: TFields): this;
+  where(conditions: FilterInput<TSchema[TEntity]>): this;
+  orderBy(order: OrderByInput<TSchema[TEntity]>): this;
+  first(count: number): this;
+  after(cursor: string): this;
+  execute(): Promise<TSchema[TEntity][]>;
+  executePaginated(): Promise<PagedResult<TSchema[TEntity]>>;
+  findFirst(): Promise<TSchema[TEntity] | null>;
+}
+```
+
+`select`, `where`, `orderBy`, and `first` return `this`, so they chain in any order before a
+terminal call to `execute()`, `executePaginated()`, or `findFirst()`.
+
+### Reading records
+
+```typescript
+const notes = await client.data.Note.select([
+  'id',
+  'title',
+  'isPinned',
+  'notebook.id',      // dot-path — only valid inside select(), not where()
+  'notebook.name',
+])
+  .where({ isPinned: { eq: true } })
+  .orderBy({ createdAt: 'desc' })
+  .execute();
+```
+
+`.execute()` returns a single page — the Data API caps a response at its default page size
+(100 records) even when the underlying table has more rows, and gives no signal that more
+records exist. Use it only for queries you know are bounded (a `.where()` filter that can
+match at most a handful of rows, or a small lookup table); for anything that can grow
+unbounded, use pagination instead.
+
+### Filtering — `FilterInput`
+
+`where()` takes one entry per field, keyed to a type-specific filter shape, plus optional
+`and` / `or` arrays for boolean composition:
+
+```typescript
+type FilterInput<T> = {
+  [K in keyof T]?: FilterValue<T, K>;
+} & {
+  and?: FilterInput<T>[];
+  or?: FilterInput<T>[];
+};
+```
+
+| Field type | Filter operators |
+| --- | --- |
+| `string` (`StringFilterInput`) | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `notContains`, `startsWith`, `endsWith`, `isNull`, `in` |
+| `number` (`NumberFilterInput`) | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` |
+| `boolean` (`BooleanFilterInput`) | `eq`, `neq`, `isNull`, `in` |
+| `Date` (`DateFilterInput`) | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` — comparison operators are unsupported against PostgreSQL |
+| relationship field | `{ isNull: boolean }` (only when the relationship itself is optional) |
+
+Filter by the foreign key column (`customer_id`), not a relationship dot-path
+(`customer.id`) — dot-paths are select-only. See
+[Known limitations](/docs/reference/known-limitations).
+
+### Sorting — `OrderByInput`
+
+```typescript
+type OrderByInput<T> = { [K in keyof T]?: 'asc' | 'desc' };
+```
+
+Directions are lowercase strings, not an enum.
+
+### Pagination
+
+```typescript
+interface PaginationConfig {
+  first?: number;
+  after?: string;
+}
+
+interface PagedResult<T> {
+  items: T[];
+  hasNextPage: boolean;
+  endCursor?: string;
+  totalCount?: number;
+}
+```
+
+Data API Builder only supports forward pagination (`first` / `after`) — there is no
+`before` / `last`. Use `.first(n)` to set the page size and `.executePaginated()` to get a
+page plus cursor metadata; pass the previous page's `endCursor` to `.after()` for the next
+page:
+
+```typescript
+const page = await client.data.Note.select(['id', 'title'])
+  .orderBy({ createdAt: 'desc' })
+  .first(25)
+  .executePaginated();
+
+// page.items, page.hasNextPage, page.endCursor
+
+const nextPage = await client.data.Note.select(['id', 'title'])
+  .orderBy({ createdAt: 'desc' })
+  .first(25)
+  .after(page.endCursor!)
+  .executePaginated();
+```
+
+Keep `select`, `where`, and `orderBy` identical across pages — a stable sort order is
+required for the cursor to advance correctly. `first(n)` is bounded by DAB's maximum page
+size (100,000); `totalCount` is present on `PagedResult` but is not populated by DAB today.
+There is no `count()` method — select minimal fields and use `results.length`, or
+`page.items.length` per page. See [Known limitations](/docs/reference/known-limitations).
+
+## Mutations
+
+```typescript
+// MutationInput<T> turns @one() relationship fields into "full object or { id }" inputs
+type CreateInput<T> = Omit<MutationInput<T>, 'id'> & Partial<Pick<T, 'id'>>;
+type UpdateInput<T> = Partial<MutationInput<T>>;
+type WhereUniqueInput<T> = { id: string };
+```
+
+`create`, `update`, `delete`, and `upsert` are available both directly on
+`GraphQLEntityClient` (`client.data.Todo.create(...)`) and do not go through the query
+builder.
+
+```typescript
+const todo = await client.data.Todo.create({
+  title: 'Write docs',
+  isCompleted: false,
+  user_id: session.user.id,
+});
+
+await client.data.Todo.update({ id: todo.id }, { isCompleted: true });
+
+await client.data.Todo.delete({ id: todo.id });
+
+await client.data.Todo.upsert(
+  { id: todo.id },
+  { title: 'Write docs', isCompleted: false, user_id: session.user.id },
+  { isCompleted: true },
+);
+```
+
+### Relationship fields in mutations
+
+A `@one()` relationship field in `create` / `update` input accepts either the full related
+object or an object with just the primary key — both produce the same GraphQL mutation. The
+primary-key-only form is the recommended shorthand:
+
+```typescript
+// ID-only shorthand (recommended)
+await client.data.Note.create({
+  title: 'Meeting notes',
+  notebook: { id: notebookId },
+});
+
+// Full object also works
+await client.data.Note.create({
+  title: 'Meeting notes',
+  notebook: notebookObject,
+});
+```
+
+`@many()` array fields are accepted on mutation input but ignored at runtime — manage the
+inverse side by updating the child entity's `@one()` field instead.
+
+## Field selection and types
+
+```typescript
+type FieldSelection<T> = readonly (CleanEntityKeys<T> | NestedFieldPath<T>)[];
+```
+
+`select()` accepts entity field names and one level of relationship dot-paths
+(`'notebook.name'`). Nested queries beyond the second level are not supported — see
+[Known limitations](/docs/reference/known-limitations).
+
+## Advanced: the underlying GraphQL client
+
+`@microsoft/rayfin-data` also exports the lower-level pieces `GraphQLEntityClient` builds
+on, for advanced or standalone use:
+
+```typescript
+class GraphQLClient {
+  constructor(apiClient: ApiClient, endpoint?: string);
+  request<T = any>(query: string, variables?: Record<string, any>, operationName?: string): Promise<T>;
+  query<T = any>(query: string, variables?: Record<string, any>): Promise<T>;
+  mutation<T = any>(mutation: string, variables?: Record<string, any>): Promise<T>;
+}
+```
+
+Most applications should use `client.data.<Entity>` rather than calling `GraphQLClient`
+directly — it exists so `GraphQLEntityClient` and `GraphQLQueryBuilder` have a raw
+query/mutation execution primitive to build on.

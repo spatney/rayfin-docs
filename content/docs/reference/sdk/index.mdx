@@ -1,0 +1,85 @@
+---
+title: SDK
+description: Which @microsoft/rayfin-* package to install for each capability, how they depend on each other, and version notes for the whole family.
+---
+
+The Rayfin SDK is split into small, single-purpose packages rather than one monolithic
+library. Most applications only install one or two of them directly — the rest arrive as
+transitive dependencies.
+
+## Which package do I need?
+
+| I want to... | Package |
+| --- | --- |
+| Define entities, fields, relationships, and permissions in TypeScript | [`@microsoft/rayfin-core`](/docs/reference/sdk/rayfin-core) |
+| Query and mutate data with a type-safe GraphQL client | [`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data) — usually via `client.data`, rarely installed on its own |
+| Sign users up, sign them in, and manage sessions | [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) — usually via `client.auth` |
+| Add Microsoft Fabric SSO | [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric) |
+| One configured client for data, auth, and functions | [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client) — `RayfinClient` / `RayfinServerClient` |
+| Call serverless functions from the client | [`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) — experimental |
+| Store and serve files | [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage) |
+| *(internal)* shared HTTP client, error types, naming utilities | [`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib) |
+
+In practice, most applications install just two packages:
+
+```bash
+npm install @microsoft/rayfin-core @microsoft/rayfin-client
+```
+
+Add `@microsoft/rayfin-auth-provider-fabric` when deploying to Fabric with Fabric SSO, and
+`@microsoft/rayfin-storage` or `@microsoft/rayfin-functions` when you use those services.
+`@microsoft/rayfin-data`, `@microsoft/rayfin-auth`, and `@microsoft/rayfin-lib` are pulled
+in automatically as dependencies of `@microsoft/rayfin-client` — install them directly only
+if you need their lower-level API without the rest of the client.
+
+## How the packages compose
+
+```mermaid
+graph TD
+  Client["@microsoft/rayfin-client"] --> Auth["@microsoft/rayfin-auth"]
+  Client --> Data["@microsoft/rayfin-data"]
+  Client --> Functions["@microsoft/rayfin-functions"]
+  Client --> Lib["@microsoft/rayfin-lib"]
+  AuthFabric["@microsoft/rayfin-auth-provider-fabric"] --> Auth
+  AuthFabric --> Lib
+  Data --> Core["@microsoft/rayfin-core"]
+  Data --> Lib
+  Auth --> Lib
+  Functions --> Lib
+  Core --> Lib
+```
+
+`@microsoft/rayfin-core` is the odd one out in this graph: every other package is a
+*runtime* client that talks to your deployed backend, while `rayfin-core` is what you
+import in `rayfin/data/*.ts` to describe your schema at build/deploy time. `rayfin-data`
+depends on it only for the shared `PrimaryKeyField` type, not for any runtime behavior.
+
+## Version notes
+
+- `rayfin-core`, `rayfin-client`, `rayfin-data`, `rayfin-auth`, `rayfin-auth-provider-fabric`,
+  `rayfin-lib`, and `rayfin-functions` are versioned in lockstep — in the environment this
+  reference was checked against, all seven were at the same `1.31.0` release. Keep them on
+  matching versions in your own project; mixing versions across this family is untested.
+- The CLI and tooling packages version independently from the SDK — `@microsoft/rayfin-cli`
+  and `@microsoft/rayfin-docs` were at different version numbers than the SDK family in that
+  same environment. Don't assume a CLI version implies a matching SDK version, or vice
+  versa.
+- `@microsoft/rayfin-functions` and `@microsoft/rayfin-storage` are the two packages still
+  actively evolving — the functions package is explicitly marked experimental, and both are
+  gated behind CLI feature flags in current builds. Expect their APIs to change faster than
+  `rayfin-core`, `rayfin-client`, `rayfin-data`, and `rayfin-auth`.
+- When in doubt about the exact signature for the version you have installed, use
+  `rayfin docs get --symbol <name>` or the [MCP server](/docs/ai/mcp-server) rather than
+  trusting a cached mental model of the API — see
+  [Machine-readable docs](/docs/ai/machine-readable-docs).
+
+## In this section
+
+- [`@microsoft/rayfin-core`](/docs/reference/sdk/rayfin-core) — decorators for entities, fields, relationships, and permissions.
+- [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client) — `RayfinClient` / `RayfinServerClient` construction and configuration.
+- [`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data) — the fluent query and mutation API behind `client.data`.
+- [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) — the auth client behind `client.auth`.
+- [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric) — Fabric brokered SSO.
+- [`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) — typed serverless function calls.
+- [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage) — blob storage client.
+- [`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib) — shared HTTP client and utilities.

@@ -1,0 +1,59 @@
+---
+title: Reference
+description: Landing page for the complete Rayfin reference — CLI commands, configuration schema, SDK packages, known limitations, deprecations, and troubleshooting.
+---
+
+This section is exhaustive, precise detail rather than task-first guidance — reach for it
+when you need an exact flag, option, signature, or error message rather than an explanation
+of how a feature works. If you're learning a concept for the first time, the
+[Data](/docs/data), [Auth](/docs/auth), or [Deploy](/docs/deploy) guides are a better
+starting point.
+
+## In this section
+
+- **[CLI](/docs/reference/cli)** — every `rayfin` command, subcommand, and flag.
+- **[Configuration](/docs/reference/config)** — the `rayfin.yml` schema and every
+  environment variable the CLI and runtime read or write.
+- **[SDK](/docs/reference/sdk)** — API reference for every `@microsoft/rayfin-*` package:
+  decorators, client construction, the query API, and auth.
+- **[Known limitations](/docs/reference/known-limitations)** — current constraints in the
+  data client, DAB, relationships, auth, and schema apply, each with a workaround.
+- **[Deprecations](/docs/reference/deprecations)** — how to silence deprecation warnings in
+  application code, Node.js, and browser apps.
+- **[Errors](/docs/reference/errors)** — a symptom → cause → fix index gathered from every
+  troubleshooting section in the guide.
+
+> [!TIP]
+> Check [Known limitations](/docs/reference/known-limitations) before generating entities,
+> queries, or permission decorators — several common mistakes (missing `@text()` length,
+> missing permission decorators, `findByPk` instead of `findById`) are constraints, not
+> bugs, and are documented there with the correct pattern.
+
+## Package overview
+
+Every package that ships as part of Rayfin, from `catalog.json`:
+
+| Package | Kind | What it does |
+| --- | --- | --- |
+| [`@microsoft/rayfin-core`](/docs/reference/sdk/rayfin-core) | SDK | Code-first decorators for data model definition. The CLI reads this metadata to generate Data API Builder configuration. |
+| [`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data) | SDK | DAB-compliant data client for GraphQL access patterns against the generated DAB endpoint. |
+| [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) | SDK | Authentication helpers: magic-link sign-in, token management, sign-in flows for Rayfin Builder apps. |
+| [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client) | SDK | High-level Rayfin client entrypoint composing auth and data APIs behind a single configured client. |
+| [`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib) | SDK | Shared HTTP and client utilities used by higher-level Rayfin SDKs. |
+| [`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) | SDK | TypeScript helpers for function-style workflows on top of Rayfin core. |
+| [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage) | SDK | Type-safe blob storage client for Rayfin storage backends. |
+| [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric) | SDK | Microsoft Fabric token provider for Rayfin auth flows. |
+| [`@microsoft/rayfin-cli`](/docs/reference/cli) | Tool | Command-line interface: scaffolding, configuration, deployment, and the `rayfin docs` command group for offline-friendly agent grounding. |
+| [`@microsoft/rayfin-mcp`](/docs/ai/mcp-server) | Tool | Model Context Protocol server exposing Rayfin docs as `list_docs`, `search_docs`, `get_doc`, and `discover_packages` tools. |
+| [`@microsoft/rayfin-docs`](/docs/ai/mcp-server#how-package-docs-are-discovered) | Tool | Docs indexing/discovery library powering the CLI and MCP server. Merges installed package docs via the `rayfinDocs` `package.json` convention. |
+| `@microsoft/rayfin-guide` | Guide | Cross-cutting builder guides — getting started, auth overview, data permissions, CLI commands. |
+| `@microsoft/rayfin-host-docs` | Host | Host service reference docs for Rayfin .NET hosting components (WebService, Auth, Storage, DataApi, Function). |
+| [`@microsoft/create-rayfin`](/docs/start/quickstart) | Tool | App scaffolding tool for bootstrapping new Rayfin projects via `npm create rayfin@latest`. |
+
+```prompt title="Diagnose a Rayfin deploy error"
+My rayfin project just failed to deploy with `npx rayfin up` and printed a 400 error whose
+message includes "Dialect is required when Data module is enabled". Read
+https://rayfin.dev/docs/reference/errors.md and https://rayfin.dev/docs/reference/known-limitations.md
+to find the matching entry, then fix my rayfin/rayfin.yml so the data service has an
+explicit dialect and redeploy.
+```

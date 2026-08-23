@@ -1,0 +1,146 @@
+---
+title: Creating, updating, deleting
+description: Create, update, and delete Rayfin records through the type-safe client, and set relationship fields correctly in mutations.
+---
+
+`client.data.<Entity>` also handles writes. `create`, `update`, and `delete` are fully
+typed against your entity — including relationship fields defined with `@one()`.
+
+## Create a record
+
+Pass every required field. `id` is optional — omit it and the server generates a UUID.
+
+```typescript
+const todo = await rayfinClient.data.Todo.create({
+  title: 'Ship the changelog',
+  isCompleted: false,
+  createdAt: new Date(),
+  user_id: session.user.id,
+});
+```
+
+Supply your own `id` at creation time only if you specifically need a client-generated
+identifier — it is validated as a UUID like any other write.
+
+## Update a record
+
+`update` takes a filter identifying the record, then the fields to change. Only `id` is
+supported in the filter.
+
+```typescript
+await rayfinClient.data.Todo.update(
+  { id: todo.id },
+  { isCompleted: true },
+);
+```
+
+Send only the fields that changed — `update` does a partial patch, not a full replace.
+
+## Delete a record
+
+```typescript
+await rayfinClient.data.Todo.delete({ id: todo.id });
+```
+
+`delete` resolves once the backend confirms the row is gone.
+
+## Setting `@one()` relationships in mutations
+
+For an entity with a `@one()` field (see [Relationships](/docs/data/relationships)), pass
+the **related object** — either the full object or an object containing just its `id` —
+never the raw foreign key column directly.
+
+```typescript title="rayfin/data/Note.ts (relevant fields)"
+// @uuid() notebook_id!: string;
+// @one(() => Notebook, { optional: true }) notebook?: Notebook;
+```
+
+```typescript
+// Correct — pass the relationship object, primary key only
+const note = await rayfinClient.data.Note.create({
+  title: 'Meeting notes',
+  content: 'Discussion points…',
+  createdAt: new Date(),
+  notebook: { id: notebookId },
+});
+
+// Also correct — pass the full object if you already have it
+const notebook = await rayfinClient.data.Notebook.findFirst({ name: { eq: 'Work' } });
+const note2 = await rayfinClient.data.Note.create({
+  title: 'Weekly summary',
+  content: 'Use the full object when convenient',
+  createdAt: new Date(),
+  notebook, // full Notebook object
+});
+```
+
+```typescript
+// Wrong — do not set the generated foreign key column directly in a mutation
+await rayfinClient.data.Note.create({
+  title: 'Meeting notes',
+  content: 'Discussion points…',
+  createdAt: new Date(),
+  notebook_id: notebookId, // not how relationships are set on write
+});
+```
+
+Both the full-object and `{ id }` forms produce the same GraphQL mutation; the client
+converts whichever one you pass into the entity's foreign key field
+(`notebook_id`) internally. The same rule applies to `update`:
+
+```typescript
+// Move a note to a different notebook by passing just the target's id
+await rayfinClient.data.Note.update(
+  { id: note.id },
+  { notebook: { id: newNotebookId } },
+);
+```
+
+`@many()` fields are the inverse side of a relationship and are read-only in mutations —
+passing an array for a `@many()` field is ignored. Manage that side of the relationship by
+updating the `@one()` foreign key on the child records instead (set each child's
+`notebook: { id }` to reassign it, as shown above), not by writing to the parent's `@many()`
+collection.
+
+## Full example
+
+```typescript title="src/services/todos.ts"
+import { rayfinClient } from './rayfinClient';
+
+export async function createTodo(title: string, userId: string) {
+  return rayfinClient.data.Todo.create({
+    title,
+    isCompleted: false,
+    createdAt: new Date(),
+    user_id: userId,
+  });
+}
+
+export async function completeTodo(id: string) {
+  return rayfinClient.data.Todo.update({ id }, { isCompleted: true });
+}
+
+export async function deleteTodo(id: string) {
+  await rayfinClient.data.Todo.delete({ id });
+}
+```
+
+## Upsert
+
+`client.data.<Entity>` also exposes `upsert(where, create, update)`: it applies `update`
+if a record matching `where` exists, or `create` otherwise.
+
+```typescript
+await rayfinClient.data.Category.upsert(
+  { id: categoryId },
+  { id: categoryId, name: 'Work' }, // used if no row with this id exists
+  { name: 'Work' },                  // used if it already exists
+);
+```
+
+```prompt title="Add a create-and-assign mutation"
+In my Rayfin project, write a function in src/services/notes.ts that creates a new Note
+using the RayfinClient. It should accept a title, content, and notebookId, set createdAt
+to the current time, and assign the note to its notebook by passing
+`notebook: { id: notebookId }` rather than setting a notebook_id field directly.
+```

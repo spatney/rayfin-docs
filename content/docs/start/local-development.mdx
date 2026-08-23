@@ -1,0 +1,191 @@
+---
+title: Local development
+description: Iterate against a Fabric-deployed backend by default, or opt into the Docker-based rayfin dev stack for a fully local environment.
+---
+
+Rayfin has two ways to develop locally. By default, your frontend runs locally on Vite
+while the backend is a real deployment on Microsoft Fabric — there is no bundled local
+database. A separate preview command, `rayfin dev`, provisions a fully local Docker stack
+instead. This page covers both.
+
+## Fabric-backed local development (default)
+
+This is what `npm create @microsoft/rayfin@latest` scaffolds for you, and what the
+[Quickstart](/docs/start/quickstart) walks through. Deploy (or update) the backend:
+
+```bash
+npx rayfin up --exclude-services staticHosting
+```
+
+`--exclude-services staticHosting` skips building and uploading your frontend bundle, since
+a local Vite server serves it instead — this is the invocation the scaffolded workflow is
+built around. Runtime settings, auth configuration, and the database schema generated from
+your entities are still synced and applied normally. Wait for it to report success.
+
+Then run the frontend:
+
+```bash
+npm run dev
+```
+
+The scaffolded `predev` script runs `rayfin env --framework vite`, generating a
+`.env.local` that points your frontend at the backend you just deployed.
+
+## Applying schema changes
+
+After editing an entity under `rayfin/data/`, redeploy with the same command:
+
+```bash
+npx rayfin up --exclude-services staticHosting
+```
+
+`rayfin up` is the canonical command for applying a schema change — it reapplies your
+configuration and any pending schema migration to your **Fabric** deployment in one step.
+For a narrower, schema-only pass against that same remote deployment:
+
+```bash
+npx rayfin up db apply [--force]
+```
+
+If the CLI reports that a change could cause data loss (dropping a column, changing a
+type), it refuses to proceed until you add `--force`. See
+[Schema migrations](/docs/data/migrations) for how migrations are generated, and
+[Deploy to Fabric](/docs/start/deploy-to-fabric) for why you should confirm a schema change
+actually applied after redeploying.
+
+## Preview: a fully local Docker stack with `rayfin dev`
+
+`rayfin dev` provisions the same kind of services as a Fabric deployment, but as Docker
+containers on your machine, using `rayfin/.temp/docker-compose.yml`. It is a preview
+capability gated behind a feature flag and is not part of the default workflow:
+
+```bash
+export RAYFIN_FEATURE_FLAGS=docker-local-dev
+```
+
+Without the flag set, `rayfin dev` and its `db`, `status`, and `watch` subcommands are not
+available. `rayfin dev storage` additionally requires its own `storage` flag
+(`RAYFIN_FEATURE_FLAGS=docker-local-dev,storage`).
+
+### What runs in the stack
+
+| Container | Runs when | Purpose |
+| --- | --- | --- |
+| Rayfin WebService | Always | Serves the GraphQL/REST API and auth endpoints |
+| SQL Server | `services.data.dialect: mssql` | Your project database |
+| PostgreSQL (data API) | `services.data.dialect: postgresql` | Your project database |
+| Azurite | `services.storage.enabled: true`, `storage` flag | Local blob storage emulator |
+| MailDev | `services.auth.email.enabled: true` | Captures outgoing email at `http://localhost:1080` |
+
+A separate PostgreSQL container always runs as Rayfin's own admin/control-plane database,
+regardless of your project's data dialect — it is not where your entities live. Ports
+(`RAYFIN_WEBSERVICE_HTTP_PORT` and similar variables in `rayfin/.env`) start at fixed values
+and increment automatically if something else on your machine is already using them. See
+[Environment variables](/docs/reference/config/environment-variables) for the full port
+table.
+
+### Start, stop, and reset
+
+```bash
+npx rayfin dev
+```
+
+This validates that Docker is available, generates `rayfin/.temp/docker-compose.yml`,
+starts containers for your enabled services, waits for health checks, and — unless you
+pass `--skip-db-apply` — applies your database schema automatically.
+
+| Flag | Behavior |
+| --- | --- |
+| `npx rayfin dev --stop` | Stop running containers without removing them |
+| `npx rayfin dev --down` | Stop and remove containers, keep data |
+| `npx rayfin dev --purge` | Stop, remove containers, and delete volumes — a full reset |
+
+Changes to `rayfin.yml` require restarting the environment: `npx rayfin dev --down`, then
+`npx rayfin dev` again.
+
+### Applying schema changes locally
+
+After editing an entity, apply the change to the running local stack without restarting
+it:
+
+```bash
+npx rayfin dev db apply [--force] [--gen-config-only]
+```
+
+This targets the **local** Docker stack only — it has no effect on a Fabric deployment.
+Use `npx rayfin dev storage apply` the same way for storage configuration, and
+`npx rayfin dev watch` to auto-apply changes under `rayfin/data` or `rayfin/storage` as you
+edit. Check overall health with `npx rayfin dev status`.
+
+### Inspecting the local database
+
+List running containers to find your database container's name:
+
+```bash
+docker ps
+```
+
+Open a shell inside it:
+
+```bash
+docker exec -it <container_name_or_id> bash
+```
+
+Then connect with the client for your dialect — `psql` for PostgreSQL:
+
+```bash
+psql -U RayfinDB
+```
+
+or `sqlcmd` for SQL Server, using the credentials the container already has in its
+environment:
+
+```bash
+/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C
+```
+
+## Troubleshooting
+
+**Fabric-backed development (default):**
+
+- **401 or 403 during deploy** — your session expired. Run `npx rayfin login` again, then
+  retry `npx rayfin up --exclude-services staticHosting`.
+- **Database apply fails or reports destructive changes** — review what the CLI lists,
+  then retry with `--force` only once you accept the change.
+
+**`rayfin dev` (Docker preview):**
+
+- **"This command is not available"** — the `docker-local-dev` feature flag is not set.
+  Export `RAYFIN_FEATURE_FLAGS=docker-local-dev` and retry.
+- **Docker is not running** — start Docker Desktop (or `sudo systemctl start docker` on
+  Linux), then rerun `npx rayfin dev`.
+- **`unsupported UUID` errors** — another service may already be running on the default
+  port with a different database dialect. Stop stale containers with
+  `npx rayfin dev --down` and restart.
+- **Port conflicts** — run `npx rayfin dev --purge` for a full reset.
+- **Stale configuration** — stop the stack and rerun `npx rayfin dev` to regenerate
+  `rayfin/.temp/docker-compose.yml`.
+
+```prompt title="Redeploy the backend and confirm it's healthy"
+My Rayfin project's local frontend seems to be talking to a stale backend. From the
+project root:
+
+1. Redeploy the backend with `npx rayfin up --exclude-services staticHosting` and wait for
+   it to report success.
+2. Check `npx rayfin up status` to confirm the deployment is healthy.
+3. If I changed any files under `rayfin/data/` since the last deploy, confirm the schema
+   change actually applied — a deploy can report success while a newly added entity is not
+   yet readable.
+4. Restart the frontend with `npm run dev` and confirm the app loads and talks to the
+   redeployed backend.
+
+Tell me the deployment status and whether the app came back up cleanly.
+```
+
+## Next
+
+- [Deploy to Fabric](/docs/start/deploy-to-fabric) — the full deploy, including static
+  hosting.
+- [Schema migrations](/docs/data/migrations) — how entity changes become migrations.
+- [`rayfin up`](/docs/reference/cli/up) and [`rayfin dev`](/docs/reference/cli/dev) — every
+  flag and subcommand.
