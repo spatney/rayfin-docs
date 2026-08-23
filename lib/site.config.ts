@@ -11,7 +11,16 @@ export const siteConfig = {
   description:
     'Rayfin is a backend platform built for the agentic era. Define your data model in TypeScript and get a database, APIs, type-safe clients, auth, and hosting — deployed and managed on Microsoft Fabric.',
   baseUrl: (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://rayfin.ai').replace(/\/$/, ''),
-  repo: 'https://github.com/microsoft/rayfin',
+  repo: 'https://github.com/spatney/rayfin-docs',
+
+  /** Used to build "edit this page" and "report an issue" links. */
+  github: {
+    owner: 'spatney',
+    name: 'rayfin-docs',
+    branch: 'master',
+    /** Directory holding the MDX sources, relative to the repo root. */
+    contentDir: 'content/docs',
+  },
 
   /** Rayfin package versions this documentation set was written against. */
   sdkVersion: '1.34.0',

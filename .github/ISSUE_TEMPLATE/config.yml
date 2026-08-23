@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Rayfin product issues
+    url: https://github.com/microsoft/rayfin/issues
+    about: Bugs in the Rayfin SDK or CLI itself, rather than the documentation.
