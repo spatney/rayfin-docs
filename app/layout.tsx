@@ -28,6 +28,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         {/* Advertise the machine-readable mirrors to crawling agents. */}
         <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
         <link rel="alternate" type="text/plain" href="/llms-full.txt" title="llms-full.txt" />
+        <Analytics />
       </head>
       <body className="flex flex-col min-h-screen">
         <RootProvider
@@ -39,7 +40,6 @@ export default function Layout({ children }: { children: ReactNode }) {
         >
           {children}
         </RootProvider>
-        <Analytics />
       </body>
     </html>
   );
