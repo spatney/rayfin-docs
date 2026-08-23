@@ -13,7 +13,14 @@
     "---Ship---",
     "deploy",
     "recipes",
-    "reference",
+    "---Reference---",
+    "reference/index",
+    "reference/cli",
+    "reference/config",
+    "reference/sdk",
+    "reference/known-limitations",
+    "reference/deprecations",
+    "reference/errors",
     "ai"
   ]
 }

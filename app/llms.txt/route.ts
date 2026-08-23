@@ -20,7 +20,7 @@ managed Fabric app on Microsoft Fabric.
   Example: ${absoluteUrl('/docs/data/querying')} -> ${absoluteUrl('/docs/data/querying.md')}
 - [llms-full.txt](${absoluteUrl('/llms-full.txt')}) contains the entire documentation set in one file.
 - [AGENTS.md](${absoluteUrl('/AGENTS.md')}) contains the short operating rules for writing Rayfin code.
-- Start with [Rules for agents](${absoluteUrl('/docs/ai/rules')}) before generating any Rayfin code.
+- Start with [Rules for coding agents](${absoluteUrl('/docs/ai/rules')}) before generating any Rayfin code.
 
 Documented against \`@microsoft/rayfin-*\` v${siteConfig.sdkVersion} and \`@microsoft/rayfin-cli\` v${siteConfig.cliVersion}.
 

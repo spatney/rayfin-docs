@@ -1,12 +1,5 @@
 {
-  "title": "AI & Agents",
-  "description": "Point a coding agent at these docs and let it operate Rayfin for you.",
-  "pages": [
-    "index",
-    "rules",
-    "machine-readable-docs",
-    "agent-files",
-    "mcp-server",
-    "prompts"
-  ]
+  "title": "Build with AI",
+  "description": "Get a coding agent producing correct Rayfin code.",
+  "pages": ["index", "rules", "agent-files", "mcp-server", "prompts"]
 }
