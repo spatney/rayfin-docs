@@ -13,6 +13,12 @@
     "---Ship---",
     "deploy",
     "recipes",
+    "---Build with AI---",
+    "ai/index",
+    "ai/rules",
+    "ai/agent-files",
+    "ai/mcp-server",
+    "ai/prompts",
     "---Reference---",
     "reference/index",
     "reference/cli",
@@ -20,7 +26,6 @@
     "reference/sdk",
     "reference/known-limitations",
     "reference/deprecations",
-    "reference/errors",
-    "ai"
+    "reference/errors"
   ]
 }
