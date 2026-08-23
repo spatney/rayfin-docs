@@ -1,11 +1,12 @@
 ---
 title: Seeding data
-description: Populate a Rayfin database with development data using RayfinClient in a Node.js script.
+description: Populate a Rayfin database with development data using RayfinServerClient in a Node.js script.
 ---
 
-Use `RayfinClient` from a plain Node.js script to populate development or test data — the
-same client and the same `client.data.<Entity>` calls you use from your frontend, just run
-with `tsx` instead of in a browser.
+Use `RayfinServerClient` from a plain Node.js script to populate development or test
+data — the same `client.data.<Entity>` calls you use from your frontend, just run with
+`tsx` instead of in a browser, and authenticated with a supplied access token instead of a
+browser session.
 
 ## Write the seed script
 
@@ -14,7 +15,7 @@ rather than hardcoding them — the port and key vary per project and per deploy
 
 ```typescript title="scripts/seed.ts"
 import { readFileSync } from 'fs';
-import { RayfinClient } from '@microsoft/rayfin-client';
+import { RayfinServerClient } from '@microsoft/rayfin-client';
 import type { AppSchema } from '../rayfin/data/schema';
 
 function loadEnv(): Record<string, string> {
@@ -27,24 +28,18 @@ function loadEnv(): Record<string, string> {
 }
 
 const env = loadEnv();
-const client = new RayfinClient<AppSchema>({
+const client = new RayfinServerClient<AppSchema>({
   baseUrl: env['RAYFIN_PUBLIC_API_URL'],
   publishableKey: env['RAYFIN_PUBLIC_PUBLISHABLE_KEY'],
-  authStorage: false, // no localStorage in Node.js
+  // A Node.js script can't drive the browser-based Fabric SSO flow itself — supply a
+  // token from a session your app already established. See "Key rules" below.
+  accessToken: process.env.RAYFIN_SEED_ACCESS_TOKEN,
 });
 
 async function seed() {
-  // Email/password auth works for local development seeding only —
-  // deployed Fabric apps use Entra SSO exclusively.
-  try {
-    await client.auth.signUp({ email: 'admin@example.com', password: 'Admin123!' });
-  } catch {
-    // user may already exist from a previous seed run
-  }
-  await client.auth.signIn({ email: 'admin@example.com', password: 'Admin123!' });
-  const session = client.auth.getSession();
-  if (!session.isAuthenticated || !session.user) {
-    throw new Error('Seed sign-in failed.');
+  const userId = process.env.RAYFIN_SEED_USER_ID;
+  if (!userId) {
+    throw new Error('Set RAYFIN_SEED_USER_ID to the id of the user the seed data belongs to.');
   }
 
   // Create parent records first, then children that reference their IDs.
@@ -52,7 +47,7 @@ async function seed() {
     name: 'Work',
     isDefault: true,
     createdAt: new Date(),
-    user_id: session.user.id,
+    user_id: userId,
   });
 
   await client.data.Note.create({
@@ -60,7 +55,7 @@ async function seed() {
     content: 'Hello world',
     createdAt: new Date(),
     notebook: { id: notebook.id },
-    user_id: session.user.id,
+    user_id: userId,
   });
 }
 
@@ -91,23 +86,26 @@ npm run seed
 
 - **Read `baseUrl` and `publishableKey` from `rayfin/.env`**, not hardcoded values — they
   vary per project and change on every deploy.
-- **Set `authStorage: false`.** `RayfinClient` auto-detects Node.js and falls back to
-  memory-only session storage even without this, but setting it explicitly makes the
-  intent clear and avoids relying on the auto-detection.
+- **Use `RayfinServerClient`, not `RayfinClient`.** It skips the browser-coupled `Auth`
+  module and takes a pre-acquired `accessToken` instead — the right shape for a script
+  that can't run a browser-based sign-in flow. See
+  [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client#rayfinserverclient).
+- **Supply a valid access token for entities that require authentication.** Fabric SSO
+  signs a user in through a browser popup or the Fabric portal iframe, which a Node.js
+  script can't drive itself. Pass a token from a session your app already established —
+  for example, through an environment variable your shell or CI pipeline sets — rather
+  than attempting to sign in from the script.
 - **Create parents before children.** A `@one()` relationship needs the parent's `id` to
   exist first — create the `Notebook` before the `Note` that references it, as shown
   above. See [Relationships](/docs/data/relationships) for how `@one()` / `@many()` work.
-- **Email/password sign-in is local-development only.** Deployed Fabric apps accept only
-  Fabric SSO (Entra ID) — a seed script using `signUp` / `signIn` like the one above only
-  works against a local backend.
 
 ## Seeding a single entity
 
-For an entity with no relationships, the script is shorter — sign in, then create:
+For an entity with no relationships, the script is shorter — just create:
 
 ```typescript title="scripts/seed-todos.ts"
 import { readFileSync } from 'fs';
-import { RayfinClient } from '@microsoft/rayfin-client';
+import { RayfinServerClient } from '@microsoft/rayfin-client';
 import type { AppSchema } from '../rayfin/data/schema';
 
 function loadEnv(): Record<string, string> {
@@ -120,22 +118,16 @@ function loadEnv(): Record<string, string> {
 }
 
 const env = loadEnv();
-const client = new RayfinClient<AppSchema>({
+const client = new RayfinServerClient<AppSchema>({
   baseUrl: env['RAYFIN_PUBLIC_API_URL'],
   publishableKey: env['RAYFIN_PUBLIC_PUBLISHABLE_KEY'],
-  authStorage: false,
+  accessToken: process.env.RAYFIN_SEED_ACCESS_TOKEN,
 });
 
 async function seed() {
-  try {
-    await client.auth.signUp({ email: 'admin@example.com', password: 'Admin123!' });
-  } catch {
-    /* user may already exist */
-  }
-  await client.auth.signIn({ email: 'admin@example.com', password: 'Admin123!' });
-  const session = client.auth.getSession();
-  if (!session.isAuthenticated || !session.user) {
-    throw new Error('Seed sign-in failed.');
+  const userId = process.env.RAYFIN_SEED_USER_ID;
+  if (!userId) {
+    throw new Error('Set RAYFIN_SEED_USER_ID to the id of the user the seed data belongs to.');
   }
 
   const titles = ['Write the changelog', 'Review PR #42', 'Ship the release'];
@@ -144,7 +136,7 @@ async function seed() {
       title,
       isCompleted: false,
       createdAt: new Date(),
-      user_id: session.user.id,
+      user_id: userId,
     });
   }
 }
@@ -153,9 +145,10 @@ seed().catch(console.error);
 ```
 
 ```prompt title="Write a seed script"
-In my Rayfin project, write a Node.js seed script at scripts/seed.ts using RayfinClient.
-Read RAYFIN_PUBLIC_API_URL and RAYFIN_PUBLIC_PUBLISHABLE_KEY from rayfin/.env, set
-authStorage: false, sign up and sign in as admin@example.com for local development, and
-create three sample Todo records owned by that user. Add a "seed" script to package.json
-that runs it with tsx.
+In my Rayfin project, write a Node.js seed script at scripts/seed.ts using
+RayfinServerClient from @microsoft/rayfin-client. Read RAYFIN_PUBLIC_API_URL and
+RAYFIN_PUBLIC_PUBLISHABLE_KEY from rayfin/.env, pass an access token from the
+RAYFIN_SEED_ACCESS_TOKEN environment variable, and create three sample Todo records owned
+by the user id in the RAYFIN_SEED_USER_ID environment variable. Add a "seed" script to
+package.json that runs it with tsx.
 ```

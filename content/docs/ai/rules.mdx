@@ -14,8 +14,7 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Rayfin uses **TC39 Stage 3 decorators**. Never enable `experimentalDecorators` or
   `emitDecoratorMetadata`.
 - Include `ESNext.Decorators` in the tsconfig `lib` array.
-- There are two deployment targets: **Rayfin Local** (Docker; MSSQL or PostgreSQL) and a
-  managed **Fabric app** (MSSQL only).
+- Rayfin has one deployment target: a managed **Fabric app** (MSSQL only).
 - Prefer `npm create @microsoft/rayfin@latest` for new projects — it generates a correct
   tsconfig and schema boilerplate.
 
@@ -48,9 +47,9 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Publishable keys (`pk-*`) are safe in client-side code. Never expose service secrets or
   connection strings.
 - Keep `allowedRedirectUris` in `rayfin.yml` scoped to your app's own origins.
-- Email/password auth is **local development only**. Deployed Fabric apps support Fabric
-  SSO (Entra ID) exclusively.
-- Fabric SSO only works inside the Fabric portal. Do not attempt it in local development.
+- Fabric SSO (Entra ID) is the only supported authentication method. Its popup flow works
+  from any registered origin, including a local Vite dev server (`http://localhost:5173`);
+  only the embedded (iframe) flow requires running inside the Fabric portal itself.
 
 ## Querying
 
@@ -77,8 +76,9 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 
 - Always declare `services.auth` and `services.data` explicitly in `rayfin.yml`, even as
   `enabled: false`. The CLI reads those keys without guarding and does not apply defaults.
-- If `services.data.enabled` is `true`, `dialect` is required (`mssql` or `postgresql`).
-  Omitting it fails at deploy time with `Dialect is required when Data module is enabled`.
+- If `services.data.enabled` is `true`, `dialect` is required — `mssql` is the only
+  supported value. Omitting it fails at deploy time with `Dialect is required when Data
+  module is enabled`.
 
 ## Deployment
 

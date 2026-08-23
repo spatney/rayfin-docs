@@ -113,8 +113,9 @@ wire it into the client. Use onSessionChange to react to session changes — onA
 does not exist on the Rayfin auth client. Session objects are opaque, so gate UI on
 isAuthenticated or the presence of a user property rather than introspecting the session.
 
-Note that Fabric SSO only works inside the Fabric portal, so also keep a local development
-path working. Explain how I test each one.
+Fabric SSO's popup flow works from a local Vite dev server as well as a deployed Fabric
+app, as long as its origin is registered in allowedRedirectUris. Explain how I test sign-in
+in both places.
 ```
 
 ## Deployment

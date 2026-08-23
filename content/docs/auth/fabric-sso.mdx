@@ -8,9 +8,9 @@ they already used to open the Fabric portal. There's no separate login form — 
 authenticates once in Fabric and the app inherits that session.
 
 > [!WARNING]
-> Fabric SSO only works inside the Fabric portal. It cannot be used from `localhost` — use
-> [email and password](/docs/auth/email-password) for local development instead. See
-> [Auth](/docs/auth) for the full split between modes.
+> Fabric SSO only works inside the Fabric portal. It cannot be exercised from a bare
+> `localhost` dev server — see [Local frontend development](#local-frontend-development)
+> below for what that means in practice.
 
 The SDK supports two flows:
 
@@ -46,6 +46,24 @@ No callback page or redirect is needed.
 5. The SDK exchanges the handoff code for Rayfin session tokens and creates a session.
 
 No popup, redirect, or user click is needed.
+
+## Local frontend development
+
+Both flows above require Fabric to recognize the app — the popup flow's return trip and
+the embedded flow's `postMessage` handoff are unrelated to standalone `localhost`
+development. Neither flow completes from a bare Vite dev server.
+
+The normal local development loop (`rayfin up --exclude-services staticHosting` plus `npm
+run dev`) still works for everything that doesn't require an authenticated session — UI,
+data queries against `@anonymous()` entities, and any page that isn't gated on sign-in. To
+exercise the sign-in flow itself, deploy the static frontend too and open the app through
+Fabric:
+
+```bash
+npx rayfin up
+```
+
+Then open the printed hosting URL, or open the app from the Fabric portal directly.
 
 ## Enable Fabric SSO
 
@@ -93,15 +111,15 @@ import { RayfinClient } from '@microsoft/rayfin-client';
 import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
 
 const client = new RayfinClient({
-  baseUrl: 'http://localhost:5168',
-  publishableKey: 'pk-commonSampleAppKey',
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
 });
 
 async function handleSignIn() {
   const session = await ensureSignedInWithFabric(client.auth, {
-    workspaceId: '<your-fabric-workspace-id>',
-    projectId: '<your-rayfin-item-id>',
-    fabricPortalUrl: 'https://app.fabric.microsoft.com',
+    workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+    projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
+    fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
     returnOrigin: window.location.origin,
   });
   console.log('Signed in:', session.user);
@@ -346,6 +364,7 @@ dynamic import — it needs to capture the ?fabricEmbedded=true URL flag on firs
 Use onSessionChange to react to session changes — onAuthStateChange does not exist. Gate UI
 on isAuthenticated or the presence of a user property rather than introspecting the session.
 
-Remind me that Fabric SSO only works inside the Fabric portal, so keep a local development
-path (email/password) working too, and tell me how to test each one.
+Remind me that Fabric SSO only works inside the Fabric portal, so signing in has to be
+tested by deploying the static frontend and opening the app through Fabric — not from the
+local Vite dev server. Tell me the exact commands to do that.
 ```

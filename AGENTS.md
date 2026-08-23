@@ -70,11 +70,28 @@ policy comparing claims.sub to the user_id field. Then apply the schema with `ra
 
 Do not write "ask your agent to do X" as prose. Write the prompt.
 
+## Product scope
+
+Rayfin currently documents **one** way to run: as a managed **Fabric app** on Microsoft
+Fabric. Do not document these — they are experimental or unsupported and will be added
+back deliberately later:
+
+- `rayfin dev`, Docker, Docker Compose, local database containers, Azurite, MailDev
+- The `docker-local-dev` feature flag, or "Rayfin Local" / self-hosted as a backend mode
+- A backend running on `localhost`, or local backend ports
+- PostgreSQL as a dialect — Fabric supports `mssql` only
+- Email/password auth and magic links. **Fabric SSO (Entra ID) is the only supported
+  authentication method.**
+
+What *is* in scope, and must be kept: running your **frontend** locally with `npm run dev`
+(Vite) against a deployed Fabric backend. That is the normal development loop —
+`rayfin up --exclude-services staticHosting` deploys the backend while Vite serves the
+frontend from `localhost`. Keep `http://localhost:5173` in `allowedRedirectUris` examples.
+
 ## Naming
 
 - **Rayfin** is the product. Use it as the primary name.
 - **Fabric app** (or "managed Fabric app") is the deployed, Microsoft Fabric–hosted mode.
-- **Rayfin Local** is the self-hosted Docker mode.
 - Never write "Project Rayfin" — it is not an official term.
 
 ## Accuracy

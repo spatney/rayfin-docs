@@ -1,11 +1,11 @@
 ---
 title: Installation
-description: Install Node.js 20+, Docker, and the GitHub CLI on Windows, macOS, or Linux, then verify and update the Rayfin CLI.
+description: Install Node.js 20+ and the GitHub CLI on Windows, macOS, or Linux, then verify and update the Rayfin CLI.
 ---
 
-Rayfin needs the same prerequisites whether you plan to run locally on Docker or deploy to
-Microsoft Fabric: **Node.js 20 or later**, **Docker Desktop** (or Docker Engine on Linux),
-and the **GitHub CLI**. Install these before you scaffold a project.
+Rayfin needs the same prerequisites whether you're scaffolding a new project or deploying
+to Microsoft Fabric: **Node.js 20 or later** and the **GitHub CLI**. Install these before
+you scaffold a project.
 
 ## Windows
 
@@ -13,23 +13,6 @@ Install the latest LTS Node.js:
 
 ```powershell
 winget install -e --id OpenJS.NodeJS.LTS
-```
-
-Install Docker Desktop:
-
-```powershell
-winget install --id Docker.DockerDesktop -e
-```
-
-Docker Desktop usually adds itself to `PATH`. Verify, add it manually if needed, then start
-Docker Desktop:
-
-```powershell
-where docker
-# If not found, add Docker to PATH:
-$env:PATH += ";C:\Program Files\Docker\Docker\resources\bin"; [Environment]::SetEnvironmentVariable("PATH", $env:PATH, "User")
-# Start Docker Desktop (required before using docker commands)
-Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 ```
 
 Install the GitHub CLI:
@@ -51,7 +34,6 @@ Sign in and verify every tool:
 ```powershell
 gh auth login
 node --version
-docker --version
 gh --version
 ```
 
@@ -62,19 +44,15 @@ gh --version
 
 ```bash
 brew install node@lts
-brew install --cask docker
-open -a Docker
 brew install gh
 ```
 
-Verify Docker and the GitHub CLI are on `PATH`, sign in, and check versions:
+Verify the GitHub CLI is on `PATH`, sign in, and check versions:
 
 ```bash
-which docker
 which gh
 gh auth login
 node --version
-docker --version
 gh --version
 ```
 
@@ -85,15 +63,6 @@ gh --version
 
 Install the latest LTS Node.js using the
 [official Node.js download instructions](https://nodejs.org/en/download).
-
-Install Docker Engine and enable non-root access:
-
-```bash
-sudo apt install -y docker.io docker-compose-plugin
-sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"
-newgrp docker
-```
 
 Install the GitHub CLI:
 
@@ -106,15 +75,12 @@ sudo apt update
 sudo apt install -y gh
 ```
 
-Verify Docker and the GitHub CLI, sign in, and check versions:
+Verify the GitHub CLI is on `PATH`, sign in, and check versions:
 
 ```bash
-which docker
-sudo systemctl status docker
 which gh
 gh auth login
 node --version
-docker --version
 gh --version
 ```
 
@@ -164,11 +130,10 @@ npx rayfin --version
 ```
 
 ```prompt title="Install Rayfin's prerequisites"
-Check whether this machine has Node.js 20 or later, Docker (Desktop or Engine), and the
-GitHub CLI installed, and install or update whichever are missing for this operating
-system. Then run `gh auth login` to sign in, make sure Docker is running, and print the
-output of `node --version`, `docker --version`, and `gh --version` so I can confirm
-everything is ready before I scaffold a Rayfin project.
+Check whether this machine has Node.js 20 or later and the GitHub CLI installed, and
+install or update whichever are missing for this operating system. Then run `gh auth
+login` to sign in, and print the output of `node --version` and `gh --version` so I can
+confirm everything is ready before I scaffold a Rayfin project.
 ```
 
 ## Next

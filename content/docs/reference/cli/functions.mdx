@@ -4,9 +4,9 @@ description: rayfin functions scaffolds a serverless TypeScript Functions projec
 ---
 
 > [!NOTE]
-> The `rayfin functions` command group, `rayfin dev functions apply`, and
-> `rayfin up functions deploy` are only registered when `services.functions.enabled: true`
-> in `rayfin.yml` (or `RAYFIN_FEATURE_FLAGS` includes `functions`).
+> The `rayfin functions` command group and `rayfin up functions deploy` are only
+> registered when `services.functions.enabled: true` in `rayfin.yml` (or
+> `RAYFIN_FEATURE_FLAGS` includes `functions`).
 
 `rayfin functions` scaffolds and maintains a serverless Functions project that shares
 entity types with your data model.
@@ -51,14 +51,11 @@ the current function source files, without re-scaffolding anything.
 | --- | --- |
 | `-w, --watch` | Watch for changes and regenerate automatically. This is what the background watcher started by `functions init` runs. |
 
-## Running and deploying
+## Deploying
 
-- **Run locally**: [`rayfin dev functions apply`](/docs/reference/cli/dev#dev-functions-apply)
-  verifies Azure Functions Core Tools prerequisites and starts the local Functions runtime
-  against your active deployment.
-- **Deploy**: [`rayfin up functions deploy`](/docs/reference/cli/up#up-functions-deploy)
-  (experimental) builds, packages, and deploys Functions to the remote Rayfin item. A plain
-  `rayfin up` also deploys Functions automatically when the service is enabled.
+[`rayfin up functions deploy`](/docs/reference/cli/up#up-functions-deploy) (experimental)
+builds, packages, and deploys Functions to the remote Rayfin item. A plain `rayfin up` also
+deploys Functions automatically when the service is enabled.
 
 ```prompt title="Scaffold a Functions project"
 Enable Functions in my Rayfin project (set services.functions.enabled: true if not already),

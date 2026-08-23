@@ -13,13 +13,19 @@ Every Fabric app exposes a single Rayfin endpoint backed by a set of child servi
 
 ```mermaid
 flowchart TD
-  AppBackend[Fabric App] --> Database[(SQL Database)]
-  AppBackend --> Auth[Authentication]
+  AppBackend[Fabric App] --> Auth[Authentication]
   AppBackend --> StaticHosting[Static Content]
   AppBackend --> WebService[Rayfin WebService]
   WebService --> DataApi[Data API / GraphQL]
-  DataApi --> Database
+  WebService --> Functions[Functions]
+  WebService --> Storage[(Blob Storage)]
+  DataApi --> Database[(SQL Database)]
+  Functions --> Database
 ```
+
+Data, authentication, and static hosting are the core services. [Functions](/docs/functions)
+and [blob storage](/docs/storage) are optional — enable them in `rayfin.yml` when you need
+them.
 
 A Fabric app lives inside a Fabric workspace. A workspace can hold multiple Fabric apps —
 for example, one per environment or one per project.

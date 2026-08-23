@@ -1,6 +1,6 @@
 ---
 title: Calling functions from your app
-description: Invoke Rayfin functions from the frontend with a type-safe FunctionClient — client.functions.<name>.invoke(), error handling, and local debugging.
+description: Invoke Rayfin functions from the frontend with a type-safe FunctionClient — client.functions.<name>.invoke() and error handling.
 ---
 
 Once a function is registered and its schema is generated (see
@@ -80,61 +80,9 @@ try {
 - The server-side `invocationId` is logged via `console.debug` alongside the function name,
   so it's available for correlation without being part of the typed return value.
 
-Never call `client.functions.<name>.invoke()` without a working functions backend — see the
-local-development note below for what happens when one isn't configured.
-
-## Local development
-
-Shipped templates intentionally omit `functionsBaseUrl` from the `RayfinClient` config — it's
-a local-debugging feature, and including it unconditionally would surface unused env wiring
-in apps that never run functions locally. When you start using functions,
-`npx rayfin dev functions apply` wires it in for you automatically the first time it runs:
-
-1. It sets `VITE_RAYFIN_FUNCTIONS_URL` in `.env.local`, pointing at
-   `http://localhost:<port>`.
-2. It patches `src/services/rayfinClient.ts` and `src/services/bootstrap.ts` so
-   `functionsBaseUrl` reaches the `RayfinClient` constructor.
-
-If the auto-patch can't find your file structure, wire it manually following the same
-two-file split the templates use:
-
-```typescript title="src/services/rayfinClient.ts"
-export interface RayfinClientConfig {
-  baseUrl: string;
-  publishableKey: string;
-  localDev: boolean;
-  /** Local-debugging override. Set while `rayfin dev functions apply` is running. */
-  functionsBaseUrl?: string;
-}
-
-client = new RayfinClient<AppSchema, AppFunctionsSchema>({
-  baseUrl: config.baseUrl,
-  publishableKey: config.publishableKey,
-  authStorage: true,
-  functionsBaseUrl: config.functionsBaseUrl,
-});
-```
-
-```typescript title="src/services/bootstrap.ts"
-const client = initRayfinClient({
-  baseUrl: apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`,
-  publishableKey: publishableKey ?? 'local-dev-key',
-  localDev,
-  // Gated on localDev so production/Fabric-hosted bootstraps leave this
-  // undefined and the SDK uses its default routing.
-  functionsBaseUrl: localDev ? import.meta.env.VITE_RAYFIN_FUNCTIONS_URL : undefined,
-});
-```
-
-`VITE_RAYFIN_FUNCTIONS_URL` is populated automatically while `rayfin dev functions apply` is
-running — the CLI writes `RAYFIN_PUBLIC_FUNCTIONS_URL` to `rayfin/.env`, and the framework
-env-projector exposes it under the Vite-prefixed name (for Next.js, the equivalent is
-`NEXT_PUBLIC_RAYFIN_FUNCTIONS_URL`). When it's unset — in production, or when functions
-aren't running locally — `functionsBaseUrl` is `undefined` and calls route through the normal
-backend path instead.
-
-If `functionsBaseUrl` is already wired into either file, leave it alone — a prior run of
-`rayfin dev functions apply` (or an earlier pass over this same task) has already done it.
+Never call `client.functions.<name>.invoke()` before functions are deployed — see
+[Deploying functions](/docs/functions/deploying) to enable `services.functions` and ship
+your functions project with `rayfin up`.
 
 ```prompt title="Call a Rayfin function from the frontend"
 In my Rayfin app, wire up calling a function from the frontend:
@@ -145,9 +93,6 @@ In my Rayfin app, wire up calling a function from the frontend:
 - Call client.functions.<name>.invoke(...) with the right typed parameters, and handle
   failures by catching FunctionsError from @microsoft/rayfin-functions specifically before
   falling back to a generic error handler.
-- If I'm developing locally, make sure functionsBaseUrl reaches the RayfinClient config so
-  `npx rayfin dev functions apply` can route calls to my local function host — but leave it
-  undefined in production so calls use the normal backend path.
 
 Show me the updated client setup and the call site.
 ```

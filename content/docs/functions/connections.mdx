@@ -161,12 +161,6 @@ the relevant Azure SDK client:
   not the project root.
 - For SQL, use `mssql@^12.6.0` with `encrypt: true`.
 
-## Local development
-
-When `rayfin dev functions apply` starts the local host, it uses `InteractiveBrowserCredential`
-to acquire tokens for all audiences, so connections work the same way locally as they do once
-deployed.
-
 ```prompt title="Add a connection to a Rayfin function"
 In my Rayfin project's rayfin/functions/src/function_app.ts, add a function that connects to
 an external resource (tell me which one — SQL, Key Vault, OneLake, Cosmos DB, or Blob

@@ -11,7 +11,7 @@ effect.
 ## `rayfin up` is the canonical command
 
 `npx rayfin up` is the command to reach for any time you want your latest entity changes
-live — locally or on Microsoft Fabric. It is not schema-only: it syncs runtime settings,
+live on your deployed Fabric app. It is not schema-only: it syncs runtime settings,
 **applies the database schema generated from your `rayfin/data` decorators**, and builds
 and deploys static content if `staticHosting` is enabled, all in one step. Run it after
 every change to a file under `rayfin/data/`.
@@ -78,24 +78,6 @@ deployment before running further checks:
 npx rayfin up status --json
 ```
 
-## Local development with Docker
-
-The commands above apply during local development too — `rayfin up` (and
-`rayfin up db apply`) work against your local Docker services the same way they work
-against a Fabric deployment. A separate, preview Docker Compose–based workflow is also
-available behind a feature flag, with its own schema-apply subcommand:
-
-```bash
-export RAYFIN_FEATURE_FLAGS=docker-local-dev
-npx rayfin dev            # start the Docker Compose environment
-npx rayfin dev db apply   # apply schema changes to it
-npx rayfin dev db apply --force
-```
-
-Run `rayfin dev db apply` after changing entities under `rayfin/data/` in this preview
-workflow, the same way you would run `rayfin up db apply` in the standard flow. Use
-`rayfin dev status` to check container health first if the apply fails.
-
 ## Typical workflow
 
 ```bash
@@ -125,12 +107,10 @@ operations (dropped columns, narrowed types, renamed tables). Re-run with `--for
 once you have confirmed the data loss is acceptable.
 
 **`rayfin up db apply` fails outright** — wait for services to report healthy
-(`rayfin up status`, or `rayfin dev status` in the Docker Compose preview flow) before
-retrying.
+(`rayfin up status`) before retrying.
 
-**Enabling `data` without a `dialect`** — `rayfin.yml` requires `dialect: mssql` (or
-`postgresql` for local development) whenever `services.data.enabled` is `true`. Omitting
-it causes a 400 error at apply time.
+**Enabling `data` without a `dialect`** — `rayfin.yml` requires `dialect: mssql` whenever
+`services.data.enabled` is `true`. Omitting it causes a 400 error at apply time.
 
 ```prompt title="Apply and verify a schema change"
 I just added a new field to an entity in my Rayfin project's rayfin/data/ folder. Run

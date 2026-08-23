@@ -25,11 +25,9 @@ services:
 
 ## What it's used for
 
-- **Fabric SSO** — the popup flow uses your app's bare origin (e.g. `http://localhost:5173`,
-  with no path) as the `postMessage` target origin for the handoff code. See
-  [Fabric SSO](/docs/auth/fabric-sso) for the full flow.
-- **Magic link callbacks** — the `redirectUri` you pass to `sendMagicLink()` should be an
-  origin covered by this list. See [Email and password](/docs/auth/email-password).
+The Fabric SSO popup flow uses your app's bare origin (e.g. `http://localhost:5173`, with no
+path) as the `postMessage` target origin for the handoff code. See
+[Fabric SSO](/docs/auth/fabric-sso) for the full flow.
 
 Add every origin your app is actually served from — typically your local dev server and your
 deployed hosting URL — and nothing else.
@@ -73,10 +71,8 @@ receive a Fabric SSO handoff or complete an auth callback on behalf of your app,
 - **Fabric SSO origin mismatch** — see the origin-related entries in
   [Fabric SSO troubleshooting](/docs/auth/fabric-sso#troubleshooting); most trace back to
   `returnOrigin` (or the deployed hosting origin) not matching what's registered here.
-- **Magic link redirect rejected** — confirm the `redirectUri` passed to `sendMagicLink()`
-  shares an origin with an entry in `allowedRedirectUris`.
-- **Changes not taking effect** — `rayfin.yml` changes require a restart (`rayfin up`, or
-  `rayfin dev` in Rayfin Local) before the new redirect URIs are honored.
+- **Changes not taking effect** — `rayfin.yml` changes require a restart (`rayfin up`)
+  before the new redirect URIs are honored.
 
 ```prompt title="Audit and tighten allowedRedirectUris"
 Look at services.auth.allowedRedirectUris in my Rayfin project's rayfin/rayfin.yml.

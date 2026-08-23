@@ -42,12 +42,11 @@ import { RayfinClient } from '@microsoft/rayfin-client';
 import type { AppSchema } from '../../rayfin/data/schema';
 
 const client = new RayfinClient<AppSchema>({
-  baseUrl: 'http://localhost:5168',
+  baseUrl: 'https://<your-app>-app.rayfin.windows.net/',
   publishableKey: 'pk-commonSampleAppKey',
 });
 
 const todos = await client.data.Todo.select(['id', 'title']).execute();
-await client.auth.signIn({ email: 'user@example.com', password: 'password123' });
 ```
 
 ### `RayfinClientConfig`
@@ -125,9 +124,11 @@ API.
 
 ## The `auth` facade
 
-`RayfinClient.auth` is a full `Auth` instance from `@microsoft/rayfin-auth` — `signUp`,
-`signIn`, `signOut`, `sendMagicLink`, `onSessionChange`, and the rest of the session
-lifecycle. See [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) for the complete
+`RayfinClient.auth` is a full `Auth` instance from `@microsoft/rayfin-auth` —
+`signOut`, `onSessionChange`, `getSession`, and the rest of the session lifecycle. Sign-in
+itself goes through [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric),
+which operates on this same `Auth` instance. See
+[`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) for the complete
 surface. `RayfinServerClient` has no `auth` property, since server code authenticates via
 the `accessToken` config option instead of a browser session.
 
@@ -163,7 +164,7 @@ not match. Catch by branching on failure type:
 import { RayfinClient } from '@microsoft/rayfin-client';
 
 try {
-  await client.auth.signIn({ email, password });
+  await client.auth.refreshSession();
 } catch (error) {
   if (error instanceof RayfinClient.errors.AuthError) {
     console.error('Auth failed:', error.message);

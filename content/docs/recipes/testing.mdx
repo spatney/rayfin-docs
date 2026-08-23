@@ -106,9 +106,9 @@ export interface AuthUser {
  *
  * Two implementations ship with this template:
  *
- * - {@link MockAuthService} — used when the API URL points at localhost.
- *   Signs into the bundled local backend with a fixture email/password.
- * - {@link RayfinAuthService} — used in production. Wraps the Fabric
+ * - {@link MockAuthService} — used when the API URL points at localhost, before a
+ *   Fabric backend has been deployed.
+ * - {@link RayfinAuthService} — used once deployed. Wraps the Fabric
  *   brokered auth flow from `@microsoft/rayfin-auth-provider-fabric`.
  *
  * `bootstrapAuth()` picks the right one from VITE_* env vars at startup.

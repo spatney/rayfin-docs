@@ -1,5 +1,5 @@
 {
   "title": "Auth",
-  "description": "Sign users in with Fabric SSO or email and password.",
-  "pages": ["index", "fabric-sso", "email-password", "sessions", "react"]
+  "description": "Sign users in with Fabric SSO (Entra ID).",
+  "pages": ["index", "fabric-sso", "sessions", "react"]
 }

@@ -1,35 +1,68 @@
 ---
 title: Get started
-description: Two ways to run Rayfin — self-hosted on Docker or as a managed Fabric app — with the fastest path into each.
+description: Install Rayfin, scaffold a project, and deploy it as a managed Fabric app — from an empty terminal to a running app in four commands.
 ---
 
-Rayfin runs the same project two ways: self-hosted on Docker (**Rayfin Local**) or as a
-managed **Fabric app** on Microsoft Fabric. Both modes share the same CLI, SDK, and
-data-modeling workflow, so nothing you build locally has to change when you deploy.
+Rayfin runs one way: as a managed **Fabric app** on Microsoft Fabric. Fabric hosts the
+database, the API, authentication, and your built frontend. The path is the same for every
+project — install the prerequisites, scaffold with the CLI, deploy the backend to Fabric,
+and run your frontend locally against that deployed backend.
 
 If you read only one page in this section, read the [Quickstart](/docs/start/quickstart) —
-it goes from an empty terminal to a running app in three commands.
+it goes from an empty terminal to a running app in four commands.
 
 ## Set up your machine
 
-- **[Installation](/docs/start/installation)** — install Node.js 20+, Docker, and the
-  GitHub CLI on Windows, macOS, or Linux.
+- **[Installation](/docs/start/installation)** — install Node.js 20+ and the GitHub CLI on
+  Windows, macOS, or Linux.
 - **[Quickstart](/docs/start/quickstart)** — scaffold a project with
-  `npm create @microsoft/rayfin@latest` and have it running in minutes.
+  `npm create @microsoft/rayfin@latest`, deploy its backend to Fabric, and run the frontend
+  locally against it.
 
-## Build locally
+## Build your project
 
 - **[Project structure](/docs/start/project-structure)** — the `rayfin/` folder,
   `rayfin.yml`, and how entity classes become a database schema.
-- **[Local development](/docs/start/local-development)** — run the Docker stack, apply
-  schema changes, and stop or reset it.
-
-## Ship to Microsoft Fabric
-
-- **[How Rayfin runs](/docs/start/how-rayfin-runs)** — what changes between Rayfin Local
-  and a Fabric app: architecture, authentication, and database dialects.
 - **[Deploy to Fabric](/docs/start/deploy-to-fabric)** — enable the tenant setting, create
   a Fabric data app, and deploy with `rayfin login` and `rayfin up`.
+
+## How a Fabric app runs
+
+```mermaid
+flowchart TB
+  Dev[Developer] -->|rayfin up| CLI[Rayfin CLI]
+  CLI -->|deploy| Fabric
+
+  subgraph Fabric[Microsoft Fabric]
+    direction LR
+    StaticApp[Static Content]
+    WebService[WebService]
+    DataApi[Data API Builder]
+    Functions[Functions]
+    Storage[(Blob Storage)]
+    MSSQL[(MSSQL)]
+  end
+
+  User[End User] --> StaticApp
+  StaticApp --> WebService
+  WebService --> DataApi
+  WebService --> Functions
+  WebService --> Storage
+  DataApi --> MSSQL
+  Functions --> MSSQL
+  WebService -->|Fabric SSO| EntraID[Entra ID]
+```
+
+`rayfin up` packages your project and provisions it as a Fabric data app: Fabric hosts the
+MSSQL database, a WebService and Data API Builder layer in front of it, your built frontend
+as static content, and sign-in through Fabric SSO (Entra ID) — the only auth provider
+available once the app is deployed. [Functions](/docs/functions) and
+[blob storage](/docs/storage) are optional services you enable in `rayfin.yml`.
+
+During development, a local Vite server takes the place of the *Static Content* node above:
+`npx rayfin up --exclude-services staticHosting` deploys everything else to Fabric, and
+`npm run dev` serves the frontend from `localhost` against that deployed backend. See the
+[Quickstart](/docs/start/quickstart) for the full loop.
 
 ## Next
 

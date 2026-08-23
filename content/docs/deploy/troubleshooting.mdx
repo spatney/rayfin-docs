@@ -37,8 +37,7 @@ npx rayfin login --encryption-fallback-enabled
 **Cause:** `services.data.enabled: true` is set in `rayfin.yml` without a `dialect`. This
 produces a 400 error at deploy time.
 
-**Fix:** add `dialect: mssql` under `services.data` (Fabric apps support MSSQL only; use
-`postgresql` for Rayfin Local):
+**Fix:** add `dialect: mssql` under `services.data` — Fabric apps support MSSQL only:
 
 ```yaml title="rayfin/rayfin.yml"
 services:
@@ -65,14 +64,6 @@ dialect than the one your project expects.
 
 **Fix:** stop the conflicting service (or free the port) and retry the command that
 failed.
-
-## Local backend won't start (Docker not running)
-
-**Cause:** Rayfin's local development services run in containers. If Docker Desktop or the
-Docker daemon isn't running, container startup fails before any service — including the
-database you'd apply schema changes against — comes up.
-
-**Fix:** start Docker Desktop (or the Docker daemon on Linux) and retry.
 
 ## Static deploy exceeds the size limit
 

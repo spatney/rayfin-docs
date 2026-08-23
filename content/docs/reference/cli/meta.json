@@ -7,7 +7,6 @@
     "init",
     "login",
     "up",
-    "dev",
     "env",
     "functions",
     "connector",

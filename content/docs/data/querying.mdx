@@ -17,7 +17,7 @@ import { RayfinClient } from '@microsoft/rayfin-client';
 import type { AppSchema } from '../../rayfin/data/schema';
 
 export const rayfinClient = new RayfinClient<AppSchema>({
-  baseUrl: import.meta.env.VITE_RAYFIN_API_URL ?? 'http://localhost:5168',
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
   publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY ?? '',
 });
 ```
@@ -92,11 +92,6 @@ operator object is more explicit and required for anything other than equality.
 | `@int()` / `@decimal()` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` |
 | `@boolean()` | `eq`, `neq`, `isNull`, `in` |
 | `@date()` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` |
-
-> [!NOTE]
-> `gt` / `gte` / `lt` / `lte` on `@date()` fields are not supported when the backend runs
-> on PostgreSQL. This is a Data API Builder limitation, not Rayfin-specific — use `eq` or
-> filter client-side if you need date range comparisons on Postgres.
 
 ### Combine conditions
 

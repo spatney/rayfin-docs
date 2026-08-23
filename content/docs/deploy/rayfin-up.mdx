@@ -85,10 +85,9 @@ After it finishes, the CLI prints the **hosting URL** where your app is live, a 
 portal link** to manage the deployment, and the **deployment ID**.
 
 > [!NOTE]
-> Only Fabric brokered authentication (Entra SSO) works on a deployed app. Email and
-> password auth is available during local development but does not work once deployed.
-> Make sure `services.auth.fabric.enabled` is `true` in `rayfin.yml` before deploying if
-> your app needs sign-in. See [Fabric SSO](/docs/auth/fabric-sso).
+> Fabric brokered authentication (Entra SSO) is the only supported sign-in method. Make
+> sure `services.auth.fabric.enabled` is `true` in `rayfin.yml` before deploying if your
+> app needs sign-in. See [Fabric SSO](/docs/auth/fabric-sso).
 
 ### Useful flags
 

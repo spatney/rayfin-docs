@@ -1,7 +1,6 @@
 {
   "title": "AI & Agents",
   "description": "Point a coding agent at these docs and let it operate Rayfin for you.",
-  "root": true,
   "pages": [
     "index",
     "rules",

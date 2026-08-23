@@ -112,7 +112,7 @@ type FilterInput<T> = {
 | `string` (`StringFilterInput`) | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `notContains`, `startsWith`, `endsWith`, `isNull`, `in` |
 | `number` (`NumberFilterInput`) | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` |
 | `boolean` (`BooleanFilterInput`) | `eq`, `neq`, `isNull`, `in` |
-| `Date` (`DateFilterInput`) | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` — comparison operators are unsupported against PostgreSQL |
+| `Date` (`DateFilterInput`) | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `isNull`, `in` |
 | relationship field | `{ isNull: boolean }` (only when the relationship itself is optional) |
 
 Filter by the foreign key column (`customer_id`), not a relationship dot-path

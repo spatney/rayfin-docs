@@ -3,9 +3,9 @@ title: Deploy to Fabric
 description: Enable Fabric data apps in your tenant, create one in the Fabric portal, and deploy your project with rayfin login and rayfin up.
 ---
 
-Deploying to Fabric takes the same project you have been running locally and provisions it
-as a managed **Fabric app** — Fabric hosts the database, the API, authentication, and your
-built frontend. This page covers the first deployment end to end.
+Deploying to Fabric provisions your project as a managed **Fabric app** — Fabric hosts the
+database, the API, authentication, and your built frontend. This page covers the first
+deployment end to end.
 
 ## Prerequisites
 
@@ -141,10 +141,10 @@ npx rayfin up db apply [--force]
 If the change could cause data loss (dropping a column, changing a type), the CLI blocks it
 until you add `--force`.
 
-## Authentication after deployment
+## Authentication
 
-Only **Fabric SSO (Entra ID)** works on a deployed app — email and password authentication
-is local development only. Make sure Fabric auth is enabled before deploying:
+Fabric SSO (Entra ID) is the only supported authentication method — make sure it's enabled
+before you deploy:
 
 ```yaml title="rayfin/rayfin.yml"
 services:
@@ -203,7 +203,6 @@ Do not pass `--force` to any command without first showing me what it would chan
 
 ## Next
 
-- [How Rayfin runs](/docs/start/how-rayfin-runs) — what changes between local and Fabric.
 - [Fabric apps](/docs/deploy/fabric-apps) — the Fabric item model in depth.
 - [Schema migrations](/docs/data/migrations) — how migrations are generated and applied.
-- [Auth](/docs/auth) — configure Fabric SSO and email/password sign-in.
+- [Auth](/docs/auth) — configure Fabric SSO.

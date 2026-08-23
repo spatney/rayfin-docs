@@ -9,7 +9,6 @@ import { notFound } from 'next/navigation';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
 import { getMDXComponents } from '@/components/mdx';
-import { PageActions } from '@/components/page-actions';
 import { absoluteUrl, siteConfig } from '@/lib/site.config';
 
 export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
@@ -23,7 +22,6 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
     <DocsPage toc={page.data.toc} full={page.data.full}>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
-      <PageActions url={page.url} title={page.data.title ?? 'Rayfin docs'} />
       <DocsBody>
         <MDX
           components={getMDXComponents({

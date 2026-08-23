@@ -4,7 +4,8 @@ description: The rayfin/functions project layout, registering functions with udf
 ---
 
 This page covers the `rayfin/functions/` project itself — its layout, how to register a
-function, how to read and write your entities from inside one, and how to run it locally.
+function, how to read and write your entities from inside one, and how its generated types
+work.
 
 ## Project layout
 
@@ -138,9 +139,7 @@ udf.func('readApiKey', async (ctx: RayfinContext): Promise<string> => {
 }, []);
 ```
 
-Set project secrets with `rayfin secret set <NAME>`. For local debugging, mirror the same key
-in `rayfin/functions/local.settings.json` under `Values` so it flows into `process.env` and
-reaches `ctx.getSecret(name)`.
+Set project secrets with `rayfin secret set <NAME>`.
 
 ## Generated types
 
@@ -161,34 +160,12 @@ export type AppFunctionsSchema = {
 ```
 
 - `rayfin functions init` runs typegen once after scaffolding, to seed `types.ts`.
-- `rayfin dev functions apply` runs typegen once at startup, then keeps a visible watcher
-  running in the same terminal (prefixed `[typegen]`) until you stop it with Ctrl+C. There's
-  no separate `typegen` CLI command.
 - Never hand-edit `types.ts` — it's regenerated from your `udf.func()` calls and any manual
   changes are overwritten.
 - `Promise<T>` return types are unwrapped to `T` in the generated schema.
 
 See [Calling functions from your app](/docs/functions/calling-functions) for importing
 `AppFunctionsSchema` on the frontend.
-
-## Local development
-
-```bash
-npx rayfin dev functions apply           # Start a local function host against the active deployment
-npx rayfin dev functions apply --port 7072           # Use a different port
-npx rayfin dev functions apply --no-debug            # Disable the Node.js inspector
-npx rayfin dev functions apply --inspect-port 9230   # Custom inspector port
-```
-
-This starts a local function host against your active deployment, and also automatically:
-
-1. Sets `VITE_RAYFIN_FUNCTIONS_URL` in `.env.local`, pointing at `http://localhost:<port>`.
-2. Patches `src/services/rayfinClient.ts` and `src/services/bootstrap.ts` to pass
-   `functionsBaseUrl` through to the `RayfinClient` constructor.
-
-See [Calling functions from your app](/docs/functions/calling-functions#local-development)
-for what that wiring does and how to add it by hand if the auto-patch can't find your file
-structure.
 
 ```prompt title="Write a Rayfin function with typed data access"
 In my Rayfin project, add a new function to rayfin/functions/src/function_app.ts (running
@@ -200,6 +177,7 @@ RayfinContext<AppSchema> parameter so ctx.getDataClient() is fully typed against
 RayfinContext from @microsoft/fabric-user-data-functions, not @microsoft/rayfin-functions,
 and use import type for any data entity classes.
 
-After adding it, run `npx rayfin dev functions apply` and confirm the function appears in the
-regenerated rayfin/functions/src/types.ts — do not hand-edit that file.
+After adding it, confirm it appears in the regenerated rayfin/functions/src/types.ts — never
+hand-edit that file — then deploy with `npx rayfin up` (or `npx rayfin up functions deploy`)
+and tell me how to call it from the frontend.
 ```

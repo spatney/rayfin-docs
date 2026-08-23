@@ -3,9 +3,9 @@ title: Sessions
 description: How Rayfin's opaque session object works — subscribe with onSessionChange, gate UI on isAuthenticated, and let Rayfin manage tokens for you.
 ---
 
-Every Rayfin auth method — password, magic link, or Fabric SSO — produces the same kind of
-session object. Once you know how to read it, it doesn't matter which method signed the user
-in.
+Every Rayfin session comes from signing in with Fabric SSO — the popup and embedded flows
+both produce the same opaque session object. Once you know how to read it, it doesn't
+matter which flow completed it.
 
 ## Sessions are opaque
 
@@ -106,8 +106,8 @@ if (client.auth.hasRefreshToken()) {
 
 ```typescript
 await client.auth.signOut();       // End the current session.
-await client.auth.signOutAll();    // Revoke every session for this user (e.g. after a
-                                    // password change), returning the number revoked.
+await client.auth.signOutAll();    // Revoke every session for this user across every
+                                    // device, returning the number revoked.
 ```
 
 ## Auth events
@@ -117,17 +117,10 @@ events with `on(event, handler)`:
 
 | Event | Fires when |
 | --- | --- |
-| `AUTH_SIGNUP` | A new user registers. |
-| `AUTH_LOGIN` | A session is established (sign-in, magic link, or Fabric SSO). |
+| `AUTH_LOGIN` | A session is established via Fabric SSO. |
 | `AUTH_LOGOUT` | The user signs out. |
 | `AUTH_REFRESH` | The session is refreshed. |
 | `AUTH_SESSION_EXPIRED` | The access token expires with no refresh token available. |
-| `AUTH_EMAIL_VERIFIED` | An email address is verified. |
-| `AUTH_VERIFICATION_EMAIL_RESENT` | A verification email is resent. |
-| `AUTH_PASSWORD_RESET_REQUESTED` | A password-reset email is requested. |
-| `AUTH_PASSWORD_RESET_COMPLETED` | A password reset completes. |
-| `AUTH_MAGIC_LINK_SENT` | A magic link is sent successfully. |
-| `AUTH_MAGIC_LINK_ERROR` | Sending a magic link fails. |
 
 ```typescript
 const unsubscribe = client.auth.on('AUTH_SESSION_EXPIRED', () => {

@@ -1,6 +1,6 @@
 ---
 title: Deploying functions
-description: How Rayfin functions ship to Fabric alongside the rest of your app, and how to run them locally against an active deployment.
+description: How Rayfin functions ship to Fabric with rayfin up, and how to deploy just the functions project with rayfin up functions deploy.
 ---
 
 > [!NOTE]
@@ -58,19 +58,6 @@ It is the functions equivalent of [`rayfin up staticapp deploy`](/docs/reference
 for static content and `rayfin up db apply` for schema. Use plain `rayfin up` when you want
 the whole app deployed consistently.
 
-## Local development against a deployment
-
-```bash
-npx rayfin dev functions apply
-```
-
-This starts a local function host **against your active deployment** — so run `rayfin up`
-at least once first to establish one. From there, iterate on
-`rayfin/functions/src/function_app.ts` locally; see
-[Writing a function](/docs/functions/writing-functions#local-development) for the available
-flags (`--port`, `--no-debug`, `--inspect-port`) and what the command wires up for you
-automatically.
-
 ```prompt title="Deploy my Rayfin app including functions"
 Deploy my Rayfin app to Microsoft Fabric, functions included.
 
@@ -82,6 +69,5 @@ standard deploy workflow yourself:
 2. `npx rayfin up`
 3. `npx rayfin up status`
 
-After deploying, tell me how to run `npx rayfin dev functions apply` to test functions
-locally against this deployment, and how to call one from the frontend afterward.
+After deploying, tell me how to call one of the functions from the frontend.
 ```

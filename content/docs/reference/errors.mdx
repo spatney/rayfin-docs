@@ -1,6 +1,6 @@
 ---
 title: Errors and troubleshooting
-description: A symptom-to-fix index of the errors Rayfin builders hit most — deployment, schema apply, secrets, static hosting, Fabric auth, and local Docker issues.
+description: A symptom-to-fix index of the errors Rayfin builders hit most — deployment, schema apply, secrets, static hosting, and Fabric auth.
 ---
 
 This page consolidates the troubleshooting sections scattered across the Rayfin guide into
@@ -12,9 +12,8 @@ the matching heading for the full fix.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | "Internal server error" from the data API, after a deploy that reported success | `@text()` field with no `max` produced `NVARCHAR(MAX)` on MSSQL | Add `@text({ max: N })` to every string field, then reapply the schema |
-| `Dialect is required when Data module is enabled` (400 at deploy time) | `services.data.enabled: true` with no `dialect` in `rayfin.yml` | Set `dialect: mssql` or `dialect: postgresql` |
-| `unsupported UUID` error | Another service is already running on the default port with a different database dialect | Stop stale services (`rayfin dev --down`), then retry |
-| `rayfin dev` / `rayfin up` fails to start services | Docker isn't running | Start Docker Desktop (or the Docker daemon), then retry |
+| `Dialect is required when Data module is enabled` (400 at deploy time) | `services.data.enabled: true` with no `dialect` in `rayfin.yml` | Set `dialect: mssql` |
+| `unsupported UUID` error | Another service is already running on the default port with a different database dialect | Stop the conflicting service, then retry |
 | `Failed to acquire authentication token` | Not signed in, or no OS credential storage available | `rayfin login`; on restricted systems set `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` |
 | `rayfin up db apply` refuses to run, warns of data loss | The pending change drops a column/table or alters a type | Review the change; re-run with `--force` only once you accept the loss |
 | A newly added entity isn't readable right after a deploy that reported success | The schema migration step hadn't finished applying, or the client/cache is stale | Run `rayfin up status`; confirm schema apply completed before querying the new entity |
@@ -46,8 +45,7 @@ MSSQL. Rayfin's metadata provider can fail to build a GraphQL schema from that c
 
 **Cause:** `rayfin.yml` has `services.data.enabled: true` but no `dialect` key.
 
-**Fix:** add `dialect: mssql` (Fabric apps support MSSQL only) or `dialect: postgresql`
-(Rayfin Local only) under `services.data`:
+**Fix:** add `dialect: mssql` (Fabric apps support MSSQL only) under `services.data`:
 
 ```yaml title="rayfin/rayfin.yml"
 services:
@@ -58,19 +56,16 @@ services:
 
 ### `unsupported UUID` errors
 
-**Symptom:** commands like `rayfin dev db apply` or `rayfin up db apply` fail with an
-`unsupported UUID` error.
+**Symptom:** `rayfin up db apply` fails with an `unsupported UUID` error.
 
 **Cause:** another service is already listening on the default port, backed by a database
 dialect different from the one your current project expects.
 
-**Fix:** stop stale services — `npx rayfin dev --down` locally — then retry. If the problem
-persists, `npx rayfin dev --purge` for a full reset of containers and volumes.
+**Fix:** stop the conflicting service (or free the port), then retry.
 
 ### Database apply refuses to run (potential data loss)
 
-**Symptom:** `rayfin up db apply` (or `rayfin dev db apply`) stops and warns instead of
-applying the change.
+**Symptom:** `rayfin up db apply` stops and warns instead of applying the change.
 
 **Cause:** the pending schema change would drop a column, drop a table, or alter a column's
 type — all are treated as potentially destructive.
@@ -104,26 +99,6 @@ stale schema.
 **Cause:** your signed-in Fabric session has expired.
 
 **Fix:** `npx rayfin login` to reauthenticate, then retry `npx rayfin up`.
-
-## Local development (Docker)
-
-### Docker is not running
-
-**Symptom:** `rayfin dev` or `rayfin up` fails immediately, unable to reach Docker.
-
-**Cause:** Docker Desktop (or the Docker daemon on Linux) isn't started.
-
-**Fix:** start Docker Desktop, or `sudo systemctl start docker` on Linux, then rerun the
-command.
-
-### `rayfin dev db apply` fails right after starting services
-
-**Symptom:** applying schema locally fails immediately after `rayfin dev` starts.
-
-**Cause:** the WebService and database containers haven't finished their health checks yet.
-
-**Fix:** wait for `npx rayfin dev status` to report all services healthy before running
-`npx rayfin dev db apply`.
 
 ## Sign-in and secrets
 

@@ -32,35 +32,25 @@ reconfiguration, and (for `allowedRedirectUris` and connector entries) after a d
 | Key | Type | Description |
 | --- | --- | --- |
 | `enabled` | boolean | **Required.** Turns the Auth service on or off. |
-| `password.enabled` | boolean | Email/password sign-in. Local development only — deployed Fabric apps don't support it. |
-| `fabric.enabled` | boolean | Fabric SSO (Entra ID). The only auth method available in a deployed Fabric app. |
+| `fabric.enabled` | boolean | Fabric SSO (Entra ID). The only supported authentication method. |
 | `allowedRedirectUris` | string[] | Origins allowed to receive auth redirects. `rayfin up` appends the live hosting URL here automatically after a static deploy. |
 | `expiryInMinutes` | number | Session token lifetime. |
 | `customClaims` | map | Additional claims to include in issued tokens. |
 | `scopes` | string[] | Additional OAuth scopes. |
 | `refreshToken.lifetimeInDays` | number | Refresh token lifetime. |
-| `email.enabled` | boolean | Enables transactional email (verification, password reset). |
-| `email.provider` | string | Email provider identifier. |
-| `email.senderName` | string | Display name on outgoing email. |
-| `email.verificationTokenExpirationHours` | number | Verification link lifetime. |
-| `email.passwordResetTokenExpirationMinutes` | number | Password reset link lifetime. |
-| `email.smtp.*` | object | SMTP connection settings (`host`, `port`, `senderEmail`, `username`, `password`, `useSsl`, `useStartTls`, `webPort`) — used locally with the Rayfin Local MailDev container. |
-| `passwordless.magicLink.enabled` | boolean | Magic-link sign-in. Requires `email.enabled: true`. |
-| `passwordless.magicLink.expiryMinutes` | number | Magic link lifetime. |
-| `passwordless.smsOtp.enabled` | boolean | SMS one-time-passcode sign-in. |
 
 ## `services.data`
 
 | Key | Type | Description |
 | --- | --- | --- |
 | `enabled` | boolean | **Required.** Turns the Data service (Data API Builder) on or off. |
-| `dialect` | `mssql` \| `postgresql` | **Required if `enabled` is `true`.** `postgresql` requires the `postgresql` feature flag — see [Environment variables](/docs/reference/config/environment-variables). Deployed Fabric apps only support `mssql`. |
+| `dialect` | `mssql` | **Required if `enabled` is `true`.** Fabric supports `mssql` only. |
 
 ## `services.storage`
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `enabled` | boolean | Turns the Storage service (Azurite locally, Azure Storage when deployed) on or off. Requires the `storage` feature flag to configure interactively — see [Environment variables](/docs/reference/config/environment-variables). |
+| `enabled` | boolean | Turns the Storage service (Azure Storage) on or off. Requires the `storage` feature flag to configure interactively — see [Environment variables](/docs/reference/config/environment-variables). |
 
 ## `services.staticHosting`
 
@@ -92,9 +82,7 @@ services:
   auth:
     enabled: true
     fabric:
-      enabled: true # Fabric SSO — required for the deployed app
-    password:
-      enabled: true # email/password — local development only
+      enabled: true # Fabric SSO — the only supported auth method
     allowedRedirectUris:
       - http://localhost:5173 # local Vite dev server
       - https://clear-gale-6d8b0ba024-westus.webapp.rayfingwdev.com # appended by `rayfin up` after the first static deploy
@@ -127,8 +115,9 @@ services:
 See [Environment variable interpolation](/docs/reference/config/env-interpolation) for the
 full syntax, type coercion rules, and resolution priority.
 
-```prompt title="Add PostgreSQL support to a project"
-Set RAYFIN_FEATURE_FLAGS=postgresql, then update my rayfin/rayfin.yml so services.data.dialect
-is postgresql instead of mssql. Explain what else I need to check before running
-`npx rayfin up` again with this change.
+```prompt title="Audit required service declarations"
+Read my project's rayfin/rayfin.yml and confirm that both services.auth and services.data
+are declared explicitly, even if disabled, and that services.data.dialect is set to mssql
+whenever services.data.enabled is true. Fix anything missing, then run
+`npx rayfin up --dry-run` to confirm the change is valid before deploying for real.
 ```

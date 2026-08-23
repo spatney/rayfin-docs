@@ -70,7 +70,7 @@ to register your first function.
 ## In this section
 
 - **[Writing a function](/docs/functions/writing-functions)** — project layout,
-  `function_app.ts`, `RayfinContext`, and local development.
+  `function_app.ts`, `RayfinContext`, and generated types.
 - **[Connections](/docs/functions/connections)** — delegated auth to external services like
   SQL, Key Vault, and OneLake.
 - **[Calling functions from your app](/docs/functions/calling-functions)** — the typed
@@ -88,6 +88,6 @@ rayfin/functions/src/function_app.ts using udf.func(name, handler, []). Use
 RayfinContext<AppSchema> if the function needs typed access to my entities via
 ctx.getDataClient().
 
-After adding it, tell me how to run it locally with `npx rayfin dev functions apply` and how
-to call it from the frontend.
+After adding it, deploy it with `npx rayfin up` (or `npx rayfin up functions deploy` to push
+just the functions change) and tell me how to call it from the frontend.
 ```

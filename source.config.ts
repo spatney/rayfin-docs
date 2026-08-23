@@ -1,5 +1,6 @@
 import { defineConfig, defineDocs, frontmatterSchema } from 'fumadocs-mdx/config';
 import { rehypeCodeDefaultOptions } from 'fumadocs-core/mdx-plugins';
+import { rehypeGithubAlerts } from './lib/rehype-github-alerts';
 import type { LanguageRegistration } from 'shiki';
 import { z } from 'zod';
 
@@ -57,5 +58,7 @@ export default defineConfig({
       langs: [promptLanguage],
       addLanguageClass: true,
     },
+    // Appended so it runs after the markdown mirrors have been stringified.
+    rehypePlugins: (plugins) => [...plugins, rehypeGithubAlerts],
   },
 });

@@ -30,14 +30,14 @@ framework-specific `.env.local`.
 
 | Variable | Description | Populated by |
 | --- | --- | --- |
-| `RAYFIN_PUBLIC_API_URL` | Rayfin backend URL (`http://localhost:5168` for local dev). | `rayfin up` |
+| `RAYFIN_PUBLIC_API_URL` | Rayfin backend URL, generated after `rayfin up` deploys to a Fabric app. | `rayfin up` |
 | `RAYFIN_PUBLIC_PUBLISHABLE_KEY` | Public key for Rayfin SDK initialization. | `rayfin up` |
 | `RAYFIN_PUBLIC_ITEM_ID` | Fabric app item ID. Used for Fabric brokered auth. | `rayfin up` |
 | `RAYFIN_PUBLIC_WORKSPACE_ID` | Fabric workspace ID. Used for Fabric brokered auth. | `rayfin up` |
 | `RAYFIN_PUBLIC_TENANT_ID` | Entra ID tenant for workspace disambiguation. | `rayfin up` |
 | `RAYFIN_PUBLIC_PORTAL_URL` | Fabric portal base URL. | `rayfin up` |
 | `RAYFIN_PUBLIC_SERVICE_MODE` | `rayfin` (real backend) or `mock` (local testing). | User-set |
-| `RAYFIN_PUBLIC_FRONTEND_PORT` | Stable per-project frontend dev-server port, so the deployed backend can allow-list a deterministic origin. | `rayfin dev` / `rayfin up` |
+| `RAYFIN_PUBLIC_FRONTEND_PORT` | Stable per-project frontend dev-server port, so the deployed backend can allow-list a deterministic origin. | `rayfin up` |
 
 For Vite, `RAYFIN_PUBLIC_API_URL` becomes `VITE_RAYFIN_API_URL`, `RAYFIN_PUBLIC_PUBLISHABLE_KEY`
 becomes `VITE_RAYFIN_PUBLISHABLE_KEY`, and so on — a custom `RAYFIN_PUBLIC_FOO` becomes
@@ -57,47 +57,10 @@ These configure CLI behavior and are never exposed to the frontend. Set them in
 | `RAYFIN_FABRIC_PORTAL_URL` | Fabric portal base URL used for deep links and `RAYFIN_PUBLIC_PORTAL_URL`. | `https://app.fabric.microsoft.com/` |
 | `RAYFIN_ENV_FILE` | Path to an alternate `.env` file. Equivalent to `--env-file`. | `rayfin/.env` |
 
-## Runtime port variables
-
-Local service ports, written to `rayfin/.env` during port allocation. Each port starts at
-its default and increments until a free one is found, so multiple projects can run side by
-side.
-
-| Variable | Default | Service |
-| --- | --- | --- |
-| `RAYFIN_WEBSERVICE_HTTP_PORT` | 5168 | Rayfin WebService (HTTP) |
-| `RAYFIN_WEBSERVICE_HTTPS_PORT` | 7126 | Rayfin WebService (HTTPS) |
-| `RAYFIN_POSTGRES_PORT` | 5432 | PostgreSQL (admin database) |
-| `RAYFIN_POSTGRES_DATAAPI_PORT` | 5433 | PostgreSQL (Data API backend) |
-| `RAYFIN_SQLSERVER_PORT` | 1433 | SQL Server (Data API backend) |
-| `RAYFIN_MAILDEV_SMTP_PORT` | 1025 | MailDev SMTP |
-| `RAYFIN_MAILDEV_WEB_PORT` | 1080 | MailDev web UI |
-| `RAYFIN_AZURITE_BLOB_PORT` | 10000 | Azurite Blob |
-| `RAYFIN_AZURITE_QUEUE_PORT` | 10001 | Azurite Queue |
-| `RAYFIN_AZURITE_TABLE_PORT` | 10002 | Azurite Table |
-| `RAYFIN_FUNCTIONS_PORT` | 7071 | Azure Functions |
-| `RAYFIN_ASPIRE_UI_PORT` | 18888 | Aspire Dashboard UI |
-| `RAYFIN_ASPIRE_OTLP_PORT` | 4317 | Aspire OTLP (gRPC) |
-
-## Database passwords
-
-Generated on first run and preserved on subsequent runs so existing database volumes keep
-working. Never exposed to the frontend.
-
-| Variable | Default | Service |
-| --- | --- | --- |
-| `RAYFIN_POSTGRES_PASSWORD` | `YourStrong!Passw0rd` | PostgreSQL (admin database) |
-| `RAYFIN_SQLSERVER_PASSWORD` | `YourStrong!Passw0rd` | SQL Server |
-| `RAYFIN_POSTGRES_DATAAPI_PASSWORD` | `YourStrong!Passw0rd` | PostgreSQL (Data API backend) |
-
-> [!WARNING]
-> These defaults are for local development only. Never reuse them for anything internet-
-> reachable.
-
 ## Service configuration flags
 
 Written to `rayfin/.env` based on your `rayfin.yml` settings, and read by the Rayfin
-WebService container:
+WebService:
 
 | Variable | Source (`rayfin.yml`) | Values |
 | --- | --- | --- |
@@ -131,7 +94,7 @@ When the same variable is set in more than one place, Rayfin resolves it in this
 
 ## Variable interpolation in rayfin.yml
 
-`rayfin.yml` supports Docker Compose–style variable interpolation, so you can keep
+`rayfin.yml` supports shell-style variable interpolation, so you can keep
 environment-specific values (connection strings, API keys, URLs) out of the checked-in
 config.
 
@@ -139,12 +102,12 @@ config.
 services:
   data:
     host: ${DB_HOST}
-    port: ${DB_PORT:-5432}
+    port: ${DB_PORT:-1433}
 ```
 
 - `${VAR}` — substitutes the variable. Fails with a clear error if it is unset or empty.
 - `${VAR:-default}` — substitutes the variable, or `default` if it is unset **or** empty
-  (matching Docker Compose semantics — an empty string counts as unset).
+  (an empty string counts as unset).
 
 ```bash title="rayfin/.env"
 DEFINED=value
@@ -161,8 +124,8 @@ config6: ${UNDEFINED}           # → Error! (unset without default)
 ```
 
 When a value is **entirely** a variable reference, Rayfin coerces it to the matching YAML
-type — `port: ${DB_PORT}` with `DB_PORT=5432` in `.env` becomes the number `5432`, not the
-string `"5432"`. Partial interpolation (`http://localhost:${PORT}`) always produces a
+type — `port: ${DB_PORT}` with `DB_PORT=1433` in `.env` becomes the number `1433`, not the
+string `"1433"`. Partial interpolation (`http://localhost:${PORT}`) always produces a
 string.
 
 `.env` values are resolved with the same [priority](#resolution-priority) as everything

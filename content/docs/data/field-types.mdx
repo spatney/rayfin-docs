@@ -15,7 +15,7 @@ accepts, and the patterns that trip people up — especially the MSSQL text leng
 | `@uuid()` | UUID | — | Conventionally the primary key (`id`). Also used for foreign key columns. |
 | `@text()` | string | `max`, `min`, `regex` | **Always set `max` on MSSQL** — see below. |
 | `@int()` | integer | `max`, `min` | Whole numbers. |
-| `@decimal()` | decimal / numeric | `max`, `min`, `precision`, `scale` | Defaults to `DECIMAL(18,2)` (MSSQL) / `NUMERIC(18,2)` (PostgreSQL). |
+| `@decimal()` | decimal / numeric | `max`, `min`, `precision`, `scale` | Defaults to `DECIMAL(18,2)`. |
 | `@boolean()` | boolean | — | True/false. |
 | `@date()` | datetime | — | Accepts a `Date`, an ISO string, or a numeric timestamp on write; serializes as ISO on read. |
 | `@email()` | string | `max`, `min`, `regex` | Text field with email-shaped validation. Same option set as `@text()`. |
@@ -84,8 +84,8 @@ for a missing `max` first.
 
 `precision` is the total number of digits (before and after the decimal point); `scale` is
 the number of digits after it. They must be provided together — if you set one, set the
-other. Omit both to get the dialect default (`DECIMAL(18,2)` on MSSQL, `NUMERIC(18,2)` on
-PostgreSQL). Maximum precision is 28, a limit imposed by the Data API Builder runtime.
+other. Omit both to get the default, `DECIMAL(18,2)`. Maximum precision is 28, a limit
+imposed by the Data API Builder runtime.
 
 ```typescript title="rayfin/data/Product.ts"
 import { entity, authenticated, uuid, decimal } from '@microsoft/rayfin-core';

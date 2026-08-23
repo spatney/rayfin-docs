@@ -17,10 +17,9 @@ an existing directory to initialize in place.
 The project name is a **positional argument**, not a flag. Use a valid directory name, or
 `.` to scaffold into the current directory.
 
-The CLI prompts interactively for a template and, once a template with a Data service is
-selected, a database dialect — unless you skip the prompt with `-t/--template`. See
-[Templates](/docs/reference/cli/templates) for choosing a built-in template, scaffolding
-from a git URL, or authoring your own.
+The CLI prompts interactively for a template — unless you skip the prompt with
+`-t/--template`. See [Templates](/docs/reference/cli/templates) for choosing a built-in
+template, scaffolding from a git URL, or authoring your own.
 
 ## Add Rayfin to an existing project
 
@@ -45,18 +44,17 @@ Without flags to skip them, `rayfin init` (and `npm create`) prompt for:
   appear when their preview feature flag is on (`RAYFIN_FEATURE_FLAGS=storage` or
   `RAYFIN_FEATURE_FLAGS=functions`) — see
   [Environment variables](/docs/reference/config/environment-variables).
-- **Database dialect** — shown when Data is enabled. `mssql` is the only choice unless
-  `RAYFIN_FEATURE_FLAGS=postgresql` is set, which also offers `postgresql`.
-- **Auth methods** — Fabric SSO, email/password, and magic-link are the supported methods;
-  which are offered depends on the services you enabled.
+- **Database dialect** — shown when Data is enabled. `mssql` is the only supported dialect
+  for a Fabric-deployed backend, so the CLI defaults to it automatically without prompting.
+- **Auth methods** — Fabric SSO (Entra ID) is the only supported authentication method.
 - **Static hosting** — enabled by default; the prompt lets you point it at a different
   build output folder or command.
 
 ## Reconfiguring an existing project
 
 Running `rayfin init` again in a project that already has `rayfin/rayfin.yml` re-runs the
-prompts and regenerates the configuration. Use this to enable or disable services, switch
-the database dialect, or toggle static hosting without hand-editing `rayfin.yml`.
+prompts and regenerates the configuration. Use this to enable or disable services, or
+toggle static hosting without hand-editing `rayfin.yml`.
 
 > [!TIP]
 > Reconfiguring **preserves your data model files under `rayfin/data/`**. Only
@@ -71,7 +69,7 @@ the database dialect, or toggle static hosting without hand-editing `rayfin.yml`
 | `--template-name <name>` | Pick one template from a multi-template source non-interactively. Requires `-t/--template` pointing at that source. |
 | `-l, --list-templates` | Print available templates as JSON and exit. |
 | `--services <list>` | Comma-separated services to enable non-interactively, e.g. `auth,data,storage`. |
-| `--auth-methods <list>` | Comma-separated auth methods to enable, e.g. `fabric`. |
+| `--auth-methods <list>` | Comma-separated auth methods to enable. `fabric` (Fabric SSO) is the only supported value. |
 | `--static-hosting` | Scaffold a static frontend. Enabled by default. |
 | `--overwrite` | Overwrite existing configuration files instead of prompting. |
 | `-w, --workspace <name>` | Fabric workspace display name to pre-associate with the project. Mutually exclusive with `--workspace-id`. |

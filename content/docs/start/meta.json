@@ -3,11 +3,9 @@
   "description": "Install Rayfin, scaffold a project, and deploy it.",
   "pages": [
     "index",
-    "how-rayfin-runs",
     "installation",
     "quickstart",
     "project-structure",
-    "local-development",
     "deploy-to-fabric"
   ]
 }

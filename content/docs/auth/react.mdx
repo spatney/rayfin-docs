@@ -1,21 +1,29 @@
 ---
 title: React integration
-description: An auth context, a useAuth hook, and route guarding for React apps built on the Rayfin auth client — covering both local dev and Fabric SSO.
+description: An auth context, a useAuth hook, and route guarding for React apps built on the Rayfin auth client with Fabric SSO.
 ---
 
-Rayfin's auth client is framework-agnostic — `signIn`, `getSession`, and `onSessionChange`
-work the same everywhere. This page wires them into React with a context, a hook, and route
-guarding.
+Rayfin's auth client is framework-agnostic — `getSession` and `onSessionChange` work the
+same everywhere, and Fabric SSO's `ensureSignedInWithFabric` resolves to the same opaque
+session shape. This page wires them into React with a context, a hook, and route guarding.
 
 ## A minimal `useAuth` hook
 
-The smallest useful integration reads the current session once on mount, then subscribes to
-changes:
+The smallest useful integration reads the current session once on mount, subscribes to
+changes, and exposes a `signIn` that wraps `ensureSignedInWithFabric`:
 
 ```typescript title="src/hooks/useAuth.ts"
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
 import { auth } from '../services/rayfinClient';
 import type { OpaqueSession } from '@microsoft/rayfin-auth';
+
+const fabricOptions = {
+  workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+  projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
+  fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
+  returnOrigin: window.location.origin,
+};
 
 export function useAuth() {
   const [session, setSession] = useState<OpaqueSession | null>(null);
@@ -25,23 +33,46 @@ export function useAuth() {
     return auth.onSessionChange(setSession);
   }, []);
 
+  const signIn = useCallback(() => ensureSignedInWithFabric(auth, fabricOptions), []);
+
   return {
     ...session,
     isAuthenticated: session?.isAuthenticated ?? false,
-    signIn: auth.signIn.bind(auth),
+    signIn,
     signOut: auth.signOut.bind(auth),
   };
 }
 ```
 
-This is enough for a single-page app with one sign-in method. Most real apps need two more
-things: a shared provider so every component sees the same session without re-subscribing,
-and a way to swap in Fabric SSO once deployed. The rest of this page builds both.
+This is enough for a single-page app. Most real apps need one more thing: a shared provider
+so every component sees the same session without each one re-subscribing to
+`onSessionChange` itself. The rest of this page builds that.
 
 ## An auth context and provider
 
-Wrap the app in a provider that owns the session state, exposes loading/error state during
-sign-in, and hands the same `signIn` / `signOut` functions to every consumer:
+`src/services/rayfinClient.ts` creates the shared `RayfinClient` and the `FabricAuthOptions`
+the provider needs:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+
+export const client = new RayfinClient({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+});
+
+export const auth = client.auth;
+
+export const fabricOptions = {
+  workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+  projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
+  fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
+  returnOrigin: window.location.origin,
+};
+```
+
+The provider owns the session state, exposes loading/error state during sign-in, and hands
+the same `signIn` / `signOut` functions to every consumer:
 
 ```tsx title="src/hooks/AuthContext.tsx"
 import {
@@ -54,71 +85,63 @@ import {
   type ReactNode,
 } from 'react';
 
-import type { AuthUser, IAuthService } from '../services/IAuthService';
+import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
+import type { OpaqueSession } from '@microsoft/rayfin-auth';
+import { auth, fabricOptions } from '../services/rayfinClient';
 
 interface AuthContextValue {
-  user: AuthUser | null;
+  session: OpaqueSession | null;
   loading: boolean;
   error: string | null;
-  signIn: () => Promise<AuthUser>;
+  signIn: () => Promise<OpaqueSession>;
   signOut: () => Promise<void>;
   isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-interface AuthProviderProps {
-  children: ReactNode;
-  authService: IAuthService;
-}
-
-export function AuthProvider({ children, authService }: AuthProviderProps) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<OpaqueSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    authService
-      .getCurrentUser()
-      .then((current) => {
-        if (!cancelled) setUser(current);
-      })
-      .catch(() => {
-        if (!cancelled) setUser(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [authService]);
+    setSession(auth.getSession());
+    setLoading(false);
+    return auth.onSessionChange(setSession);
+  }, []);
 
   const signIn = useCallback(async () => {
     setError(null);
     setLoading(true);
     try {
-      const signedInUser = await authService.signIn();
-      setUser(signedInUser);
-      return signedInUser;
+      const result = await ensureSignedInWithFabric(auth, fabricOptions);
+      setSession(result);
+      return result;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [authService]);
+  }, []);
 
   const signOut = useCallback(async () => {
-    await authService.signOut();
-    setUser(null);
+    await auth.signOut();
+    setSession(null);
     setError(null);
-  }, [authService]);
+  }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, loading, error, signIn, signOut, isAuthenticated: !!user }),
-    [user, loading, error, signIn, signOut]
+    () => ({
+      session,
+      loading,
+      error,
+      signIn,
+      signOut,
+      isAuthenticated: session?.isAuthenticated ?? false,
+    }),
+    [session, loading, error, signIn, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -133,8 +156,9 @@ export function useAuth(): AuthContextValue {
 }
 ```
 
-The provider takes an `authService` rather than talking to `client.auth` directly — that's
-what makes it possible to swap in a different sign-in method per environment, covered below.
+The provider talks to `client.auth` directly and owns the session state — every component
+that calls `useAuth()` sees the same session without re-subscribing to `onSessionChange`
+itself.
 
 ## Guarding routes
 
@@ -193,178 +217,62 @@ function App() {
 export default App;
 ```
 
-## Supporting both local dev and Fabric SSO
+## Sign-in button and app entry point
 
-`AuthProvider` above depends only on the `IAuthService` interface, not on which sign-in
-method backs it. Define that interface once, then implement it twice — a mock/local
-implementation for `localhost`, and a Fabric implementation for everywhere else — and pick
-between them at startup based on the configured API URL:
+`ensureSignedInWithFabric`'s popup fallback calls `window.open()`, so `signIn` has to run
+from a synchronous user-gesture handler — wire it to a button, not an effect:
 
-```typescript title="src/services/IAuthService.ts"
-export interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-}
+```tsx title="src/components/AuthPage.tsx"
+import { useAuth } from '../hooks/AuthContext';
 
-export interface IAuthService {
-  signIn(): Promise<AuthUser>;
-  signOut(): Promise<void>;
-  getCurrentUser(): Promise<AuthUser | null>;
-}
-```
+export function AuthPage() {
+  const { signIn, loading, error } = useAuth();
 
-```typescript title="src/services/LocalAuthService.ts"
-import { AuthError, type RayfinClient } from '@microsoft/rayfin-client';
-import type { AuthUser, IAuthService } from './IAuthService';
-
-const DEV_EMAIL = 'dev@contoso.com';
-const DEV_PASSWORD = 'LocalDev!Pass123';
-
-/** Local-development auth: signs in with a fixed dev account, creating it on first run. */
-export class LocalAuthService implements IAuthService {
-  constructor(private readonly client: RayfinClient) {}
-
-  async signIn(): Promise<AuthUser> {
-    // See "Handling errors" on the Email and password page for why
-    // INVALID_GRANT specifically is the signal to fall back to sign-up.
-    try {
-      await this.client.auth.signIn({ email: DEV_EMAIL, password: DEV_PASSWORD });
-    } catch (err) {
-      if (!(err instanceof AuthError) || err.code !== 'INVALID_GRANT') throw err;
-      await this.client.auth.signUp({ email: DEV_EMAIL, password: DEV_PASSWORD });
-      await this.client.auth.signIn({ email: DEV_EMAIL, password: DEV_PASSWORD });
-    }
-    const user = await this.getCurrentUser();
-    if (!user) throw new Error('Local sign-in failed to establish a session.');
-    return user;
-  }
-
-  async signOut(): Promise<void> {
-    await this.client.auth.signOut();
-  }
-
-  async getCurrentUser(): Promise<AuthUser | null> {
-    const session = this.client.auth.getSession();
-    if (!session.isAuthenticated || !session.user) return null;
-    const { id, email } = session.user;
-    return { id, email, name: email.split('@')[0] };
-  }
+  return (
+    <div>
+      <button onClick={() => signIn()} disabled={loading}>
+        Sign in with Microsoft Fabric
+      </button>
+      {error && <p role="alert">{error}</p>}
+    </div>
+  );
 }
 ```
 
-```typescript title="src/services/FabricAuthService.ts"
-import {
-  ensureSignedInWithFabric,
-  type FabricAuthOptions,
-} from '@microsoft/rayfin-auth-provider-fabric';
-import type { RayfinClient } from '@microsoft/rayfin-client';
-import type { AuthUser, IAuthService } from './IAuthService';
-
-/** Production auth: wraps Fabric brokered authentication. */
-export class FabricAuthService implements IAuthService {
-  constructor(
-    private readonly client: RayfinClient,
-    private readonly fabricOptions: FabricAuthOptions
-  ) {}
-
-  async signIn(): Promise<AuthUser> {
-    const session = await ensureSignedInWithFabric(this.client.auth, this.fabricOptions);
-    if (!session.isAuthenticated || !session.user) {
-      throw new Error('Fabric authentication completed but no session was established.');
-    }
-    const { id, email } = session.user;
-    return { id, email, name: email.split('@')[0] };
-  }
-
-  async signOut(): Promise<void> {
-    await this.client.auth.signOut();
-  }
-
-  async getCurrentUser(): Promise<AuthUser | null> {
-    const session = this.client.auth.getSession();
-    if (!session.isAuthenticated || !session.user) return null;
-    const { id, email } = session.user;
-    return { id, email, name: email.split('@')[0] };
-  }
-}
-```
-
-```typescript title="src/services/bootstrap.ts"
-import { RayfinClient } from '@microsoft/rayfin-client';
-import { FabricAuthService } from './FabricAuthService';
-import { LocalAuthService } from './LocalAuthService';
-import type { IAuthService } from './IAuthService';
-
-function isLocalBackendUrl(url: string): boolean {
-  try {
-    return new URL(url).hostname === 'localhost';
-  } catch {
-    return false;
-  }
-}
-
-export function bootstrapAuth(): { client: RayfinClient; authService: IAuthService } {
-  const apiUrl = import.meta.env.VITE_RAYFIN_API_URL || 'http://localhost:5168';
-  const localDev = isLocalBackendUrl(apiUrl);
-
-  const client = new RayfinClient({
-    baseUrl: apiUrl,
-    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY ?? 'local-dev-key',
-    authStorage: true,
-  });
-
-  if (localDev) {
-    return { client, authService: new LocalAuthService(client) };
-  }
-
-  return {
-    client,
-    authService: new FabricAuthService(client, {
-      workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
-      projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
-      fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
-      returnOrigin: window.location.origin,
-    }),
-  };
-}
-```
+Wrap the app in `AuthProvider` at the entry point:
 
 ```tsx title="src/main.tsx"
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { AuthProvider } from './hooks/AuthContext';
-import { bootstrapAuth } from './services/bootstrap';
-
-const { authService } = bootstrapAuth();
 
 createRoot(document.getElementById('root')!).render(
-  <AuthProvider authService={authService}>
+  <AuthProvider>
     <App />
   </AuthProvider>
 );
 ```
 
-The app code (`AuthGuard`, pages, components) never checks which mode it's running in — it
-only ever calls `useAuth()`. Whether that resolves to password auth or Fabric SSO is decided
-once, at startup, in `bootstrapAuth()`.
+> [!NOTE]
+> Sign-in only completes when the app is reachable through the Fabric portal — see
+> [Fabric SSO](/docs/auth/fabric-sso#local-frontend-development) for what that means when
+> you're running `npm run dev` locally. Everything else in this pattern — the provider, the
+> guard, `isAuthenticated` — behaves the same regardless of which flow produced the session.
 
 ```prompt title="Add an AuthProvider, useAuth hook, and route guarding"
 In my Rayfin React app (Vite + react-router-dom), add authentication wiring:
 
-- An IAuthService interface with signIn(), signOut(), and getCurrentUser(), plus two
-  implementations: one using client.auth.signIn()/signUp() for local development, and one
-  using ensureSignedInWithFabric() from @microsoft/rayfin-auth-provider-fabric for
-  production.
-- A bootstrapAuth() function that picks the right implementation based on whether
-  VITE_RAYFIN_API_URL points at localhost.
-- An AuthProvider (React context) that wraps the app, tracks the current user via the
-  injected IAuthService, and exposes { user, loading, error, signIn, signOut,
-  isAuthenticated } through a useAuth() hook.
+- An AuthProvider (React context) that wraps the app, calls client.auth.getSession() once
+  on mount, subscribes with client.auth.onSessionChange(...), and exposes { session,
+  loading, error, signIn, signOut, isAuthenticated } through a useAuth() hook.
+- signIn() should call ensureSignedInWithFabric() from
+  @microsoft/rayfin-auth-provider-fabric, built from VITE_FABRIC_WORKSPACE_ID,
+  VITE_FABRIC_ITEM_ID, and VITE_FABRIC_PORTAL_URL, and must be wired to a button's onClick
+  so the popup isn't blocked.
 - An AuthGuard component used in the router that redirects unauthenticated users to /auth
   and authenticated users away from /auth, showing a loading state in between.
 
-Internally, use onSessionChange (not onAuthStateChange, which does not exist) if you need to
-react to session changes directly instead of through getCurrentUser(). Show me the full set
-of files.
+Use onSessionChange, not onAuthStateChange — the latter does not exist on the Rayfin auth
+client. Do not introspect session fields beyond isAuthenticated, isAnonymous, user, role,
+and expiresAt. Show me the full set of files.
 ```

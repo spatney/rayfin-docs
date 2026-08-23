@@ -3,17 +3,17 @@ title: Environment variable interpolation
 description: The ${VAR} and ${VAR:-default} syntax Rayfin supports inside rayfin.yml — usage, .env file location, resolution priority, type coercion, and error handling.
 ---
 
-`rayfin.yml` supports environment variable interpolation using Docker Compose-style
-syntax, so you can keep environment-specific values (connection strings, API keys, URLs)
-out of the committed config file.
+`rayfin.yml` supports environment variable interpolation using `${VAR}` /
+`${VAR:-default}` shell-style syntax, so you can keep environment-specific values
+(connection strings, API keys, URLs) out of the committed config file.
 
 ## Syntax
 
 - `${VAR}` — simple substitution. Fails if the variable is unset or empty.
 - `${VAR:-default}` — substitution with a default if the variable is unset or empty.
 
-Following Docker Compose semantics, `:-` treats both an undefined variable and an empty
-string the same way — both fall through to the default.
+By convention, `:-` treats both an undefined variable and an empty string the same way —
+both fall through to the default.
 
 ```bash
 # .env
@@ -103,21 +103,22 @@ a single variable reference**:
 
 ```yaml title="rayfin.yml"
 services:
+  auth:
+    expiryInMinutes: ${TOKEN_EXPIRY}   # becomes the number 60, not the string "60"
   data:
-    port: ${DB_PORT}      # becomes the number 5432, not the string "5432"
-    enabled: ${ENABLED}   # becomes the boolean true, not the string "true"
+    enabled: ${DATA_ENABLED}           # becomes the boolean true, not the string "true"
 ```
 
 ```bash title="rayfin/.env"
-DB_PORT=5432
-ENABLED=true
+TOKEN_EXPIRY=60
+DATA_ENABLED=true
 ```
 
 Partial interpolation always produces a string, even when the referenced variable looks
 numeric:
 
 ```yaml
-url: http://localhost:${PORT}  # → the string "http://localhost:5432"
+folder: build-${BUILD_NUMBER}  # → the string "build-42"
 ```
 
 ## Security best practices

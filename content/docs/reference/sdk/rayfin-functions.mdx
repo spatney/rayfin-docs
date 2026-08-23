@@ -49,7 +49,7 @@ import type { MyFunctionsSchema } from '../rayfin/functions/src/types';
 import type { AppSchema } from '../rayfin/data/schema';
 
 const client = new RayfinClient<AppSchema, MyFunctionsSchema>({
-  baseUrl: 'http://localhost:5168',
+  baseUrl: 'https://<your-app>-app.rayfin.windows.net/',
   publishableKey: 'pk-commonSampleAppKey',
 });
 ```

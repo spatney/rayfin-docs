@@ -1,13 +1,16 @@
 ---
 title: "@microsoft/rayfin-auth"
-description: The Auth client surface — signUp, signIn, signOut, magic links, and session management — with exact signatures and the OpaqueSession shape.
+description: The Auth client surface — signOut, session management, and the OpaqueSession shape — with exact signatures from the SDK.
 appliesTo: "@microsoft/rayfin-auth >= 1.31"
 ---
 
-`@microsoft/rayfin-auth` implements Rayfin's authentication client: email/password sign-up
-and sign-in, magic-link passwordless sign-in, and session lifecycle management. You
-normally reach it through `client.auth` on a
+`@microsoft/rayfin-auth` implements Rayfin's authentication client: session lifecycle
+management, token refresh, and sign-out. You normally reach it through `client.auth` on a
 [`RayfinClient`](/docs/reference/sdk/rayfin-client) rather than constructing it yourself.
+Signing in happens through
+[`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric),
+which operates on this same `Auth` instance — Fabric SSO (Entra ID) is the only supported
+sign-in method.
 
 ## Installation
 
@@ -34,52 +37,15 @@ Rayfin's own SDK auto-detects Node.js, React Native, and Electron, skipping brow
 APIs (like `localStorage`) when `window` is undefined — the isomorphic design means the
 same `Auth` code runs in any of these environments without crashing.
 
-## Sign-up and sign-in
+## Signing out
 
 | Method | Signature | Description |
 | --- | --- | --- |
-| `signUp` | `(credentials: { email: string; password: string }) => Promise<SignUpResponse>` | Registers a new user. Does **not** sign them in — call `signIn` afterward. |
-| `signIn` | `(credentials: { email: string; password: string }) => Promise<TokenResponse>` | Authenticates with OAuth 2.1 password grant and stores the resulting session internally. |
 | `signOut` | `() => Promise<void>` | Revokes the current access token and clears the local session. |
 | `signOutAll` | `() => Promise<SignOutAllResponse>` | Revokes every active session for the user (all devices). Returns `{ count }`. |
 
 ```typescript
-await auth.signUp({ email: 'user@example.com', password: 'password123' });
-await auth.signIn({ email: 'user@example.com', password: 'password123' });
-// ... later
 await auth.signOut();
-```
-
-> [!NOTE]
-> Email/password auth is **local development only**. Deployed Fabric apps support Fabric
-> SSO (Entra ID) exclusively — see
-> [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric).
-
-## Magic link (passwordless)
-
-| Method | Signature | Description |
-| --- | --- | --- |
-| `sendMagicLink` | `(options: { email: string; redirectUri: string }) => Promise<MagicLinkResult>` | Sends a sign-in email. Generates PKCE parameters and stores the verifier in `localStorage`, keyed by the returned `state`. |
-| `handleMagicLinkCallback` | `(url?: string) => Promise<MagicLinkCallbackResult>` | Exchanges the callback URL's verification code for a session. Defaults to `window.location.href`. |
-| `isMagicLinkCallback` | `(url?: string) => boolean` | Quick check for whether the current URL is a magic-link callback. |
-| `getMagicLinkVerificationCode` | `(url?: string) => string \| null` | Extracts the raw verification code from a callback URL. |
-
-```typescript
-// Sending page
-const { state } = await auth.sendMagicLink({
-  email: 'user@example.com',
-  redirectUri: 'https://myapp.com/auth/callback',
-});
-
-// Callback page
-if (auth.isMagicLinkCallback()) {
-  const result = await auth.handleMagicLinkCallback();
-  if (result.success) {
-    // result.session is an OpaqueSession
-  } else {
-    console.error(result.error, result.errorCode);
-  }
-}
 ```
 
 ## Session management
@@ -130,29 +96,21 @@ interface User {
 }
 ```
 
-## Account management
+## Verifying tokens
 
 | Method | Signature | Description |
 | --- | --- | --- |
-| `verifyEmail` | `(token: string) => Promise<EmailVerificationResponse>` | Completes email verification from a link token. |
-| `resendVerificationEmail` | `(email: string) => Promise<ResendVerificationEmailResponse>` | Requests a new verification email. Always resolves successfully to avoid email enumeration. |
-| `requestPasswordReset` | `(email: string) => Promise<PasswordResetResponse>` | Starts the password-reset flow. Also always resolves successfully. |
-| `completePasswordReset` | `(token: string, newPassword: string) => Promise<PasswordResetResponse>` | Completes a password reset. Invalidates all existing sessions on success. |
-| `getAuthSettings` | `() => Promise<AuthSettingsConfig>` | Public endpoint describing which auth methods (`password`, `magiclink`, `fabric`) are enabled — use it to drive sign-in UI. |
 | `getJwks` | `() => Promise<JwksResponse>` | Public keys for verifying Rayfin-issued JWTs, for services that validate tokens themselves. |
 
 ## Events
 
-`on(event, handler)` subscribes to a specific named event (in addition to the general
-`onSessionChange`), returning an unsubscribe function:
+`on(event, handler)` subscribes to a specific named `AuthEvent` (in addition to the
+general `onSessionChange`), returning an unsubscribe function. Events relevant to session
+lifecycle — independent of how the user signed in — include `'AUTH_LOGIN'`,
+`'AUTH_LOGOUT'`, `'AUTH_REFRESH'`, and `'AUTH_SESSION_EXPIRED'`:
 
 ```typescript
-type AuthEvent =
-  | 'AUTH_SIGNUP' | 'AUTH_LOGIN' | 'AUTH_LOGOUT' | 'AUTH_REFRESH'
-  | 'AUTH_SESSION_EXPIRED'
-  | 'AUTH_EMAIL_VERIFIED' | 'AUTH_VERIFICATION_EMAIL_RESENT'
-  | 'AUTH_PASSWORD_RESET_REQUESTED' | 'AUTH_PASSWORD_RESET_COMPLETED'
-  | 'AUTH_MAGIC_LINK_SENT' | 'AUTH_MAGIC_LINK_ERROR';
+function on(event: AuthEvent, handler: (session: OpaqueSession) => void): () => void;
 
 auth.on('AUTH_SESSION_EXPIRED', () => redirectToLogin());
 ```
@@ -175,16 +133,19 @@ export function useAuth() {
   return {
     session,
     isAuthenticated: session?.isAuthenticated ?? false,
-    signIn: auth.signIn.bind(auth),
     signOut: auth.signOut.bind(auth),
   };
 }
 ```
 
+Wire up sign-in separately with
+[`ensureSignedInWithFabric`](/docs/reference/sdk/rayfin-auth-provider-fabric), which takes
+this same `auth` instance.
+
 ## Configuration and restart behavior
 
 Auth is configured in `rayfin.yml` under `services.auth` (`enabled`, `allowedRedirectUris`,
-`password.enabled`, `email.*` for SMTP, `fabric.enabled`). After changing any of these
-values, restart the backend (`npx rayfin up`) so the updated endpoints are exposed — the
-running server does not pick up `rayfin.yml` changes on its own. See
+`fabric.enabled`). After changing any of these values, restart the backend
+(`npx rayfin up`) so the updated endpoints are exposed — the running server does not pick
+up `rayfin.yml` changes on its own. See
 [Known limitations](/docs/reference/known-limitations).

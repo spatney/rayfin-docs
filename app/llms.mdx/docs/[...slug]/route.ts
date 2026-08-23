@@ -26,7 +26,14 @@ export async function GET(
   const { slug } = await params;
   if (slug.at(-1) !== TERMINAL) notFound();
 
-  const page = source.getPage(slug.slice(0, -1));
+  const rest = slug.slice(0, -1);
+  // The dev-only rewrite in next.config.mjs leaves the `.md` suffix on the final
+  // content segment (`/docs/start.md` -> `start.md/_md`). Static builds never do.
+  if (rest.length > 0) {
+    rest[rest.length - 1] = rest[rest.length - 1].replace(/\.md$/, '');
+  }
+
+  const page = source.getPage(rest);
   if (!page) notFound();
 
   return new Response(await getLLMText(page), {

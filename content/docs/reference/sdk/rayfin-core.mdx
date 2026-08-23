@@ -170,8 +170,7 @@ Fixed-point decimal, for money and other precise numeric values.
 | `precision` | `number` | `18` | Total digits. Maximum `28` (the Data API Builder runtime limit). Must be specified together with `scale`. |
 | `scale` | `number` | `2` | Digits after the decimal point. Must be between `0` and `precision`. |
 
-With neither option set, `@decimal()` defaults to `DECIMAL(18,2)` on MSSQL and
-`NUMERIC(18,2)` on PostgreSQL.
+With neither option set, `@decimal()` defaults to `DECIMAL(18,2)`.
 
 ```typescript
 @decimal() price!: number;                       // DECIMAL(18,2)
@@ -230,12 +229,12 @@ status?: 'todo' | 'in-progress' | 'done';
 
 | Decorator | Logical type | Database mapping |
 | --- | --- | --- |
-| `@uuid()` | UUID | `UNIQUEIDENTIFIER` (MSSQL) / `UUID` (PostgreSQL) |
-| `@text()` | string | `NVARCHAR(n)` / `VARCHAR(n)`, sized from `max` |
-| `@int()` | integer | `INT` / `INTEGER` |
-| `@decimal()` | decimal | `DECIMAL` (MSSQL) / `NUMERIC` (PostgreSQL) |
-| `@boolean()` | boolean | `BIT` / `BOOLEAN` |
-| `@date()` | datetime | `DATETIME2` / `TIMESTAMP` |
+| `@uuid()` | UUID | `UNIQUEIDENTIFIER` |
+| `@text()` | string | `NVARCHAR(n)`, sized from `max` |
+| `@int()` | integer | `INT` |
+| `@decimal()` | decimal | `DECIMAL` |
+| `@boolean()` | boolean | `BIT` |
+| `@date()` | datetime | `DATETIME2` |
 | `@email()` | string | Same as `@text()`, plus an email-format hint |
 | `@set()` | enum | String column with a check constraint |
 

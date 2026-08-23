@@ -1,49 +1,57 @@
 import Link from 'next/link';
+import Image from 'next/image';
+import { CopyCommand, PromptActions } from '@/components/start-actions';
 import { siteConfig } from '@/lib/site.config';
+import logo from '@/public/rayfin-logo.png';
 
-const PATHS = [
-  {
-    href: '/docs/start/quickstart',
-    title: 'Quickstart',
-    body: 'Scaffold a project, run the stack locally, and see data flowing in minutes.',
-  },
-  {
-    href: '/docs/data/modeling',
-    title: 'Model your data',
-    body: 'Decorate a TypeScript class and get a table, a GraphQL API, and a typed client.',
-  },
-  {
-    href: '/docs/deploy',
-    title: 'Deploy to Fabric',
-    body: 'One command builds your app, ships it, and applies pending schema changes.',
-  },
-];
+const CREATE_COMMAND = 'npm create @microsoft/rayfin@latest my-app';
 
-const AGENT_LINKS = [
-  { href: '/llms.txt', label: '/llms.txt' },
-  { href: '/llms-full.txt', label: '/llms-full.txt' },
-  { href: '/docs/ai/rules', label: 'Rules for agents' },
+const GET_STARTED_PROMPT = `Set up a new Rayfin app for me, end to end.
+
+Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Before writing any code, read https://rayfin.dev/llms.txt and https://rayfin.dev/docs/ai/rules.md — every page on that site is available as raw Markdown by appending .md to its URL.
+
+Then do the work yourself rather than printing steps for me:
+1. Scaffold a project with \`npm create @microsoft/rayfin@latest my-app\` and install dependencies.
+2. Sign in with \`npx rayfin login\`.
+3. Deploy the backend with \`npx rayfin up\` and confirm it with \`npx rayfin up status\`.
+4. Start the frontend with \`npm run dev\` and tell me the URL to open.
+
+Then explain what the starter app does and where the data model lives.`;
+
+const STEPS = [
+  { command: 'npx rayfin login', label: 'Sign in to Microsoft Fabric' },
+  { command: 'npx rayfin up', label: 'Deploy the backend' },
+  { command: 'npm run dev', label: 'Run the frontend' },
 ];
 
 export default function HomePage() {
   return (
-    <main className="flex flex-1 flex-col items-center px-6 py-16 sm:py-24">
-      <section className="flex max-w-3xl flex-col items-center text-center">
-        <span className="mb-5 rounded-full border border-fd-border px-3 py-1 text-xs font-medium text-fd-muted-foreground">
-          Backend-as-a-service for TypeScript, on Microsoft Fabric
-        </span>
-        <h1 className="text-balance text-4xl font-bold tracking-tight sm:text-5xl">
-          Model your data once.
-          <br />
-          Get the whole backend.
+    <main className="relative flex flex-1 flex-col items-center overflow-x-hidden px-4 py-16 sm:px-6 sm:py-24">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] bg-[radial-gradient(ellipse_60%_100%_at_50%_0%,theme(colors.teal.500/0.14),transparent)]"
+      />
+
+      <section className="flex w-full max-w-3xl flex-col items-center text-center">
+        <Image
+          src={logo}
+          alt=""
+          aria-hidden
+          width={80}
+          height={80}
+          className="mb-6 size-14 sm:mb-7 sm:size-16"
+          priority
+        />
+        <h1 className="text-balance text-3xl font-bold tracking-tight sm:text-[3.25rem] sm:leading-[1.08]">
+          Agent-first apps for the enterprise
         </h1>
-        <p className="mt-5 max-w-xl text-balance text-fd-muted-foreground">
-          Define entities as decorated TypeScript classes. {siteConfig.name} generates the
-          database schema, REST and GraphQL APIs, type-safe clients, auth, and hosting —
-          locally or as a managed Fabric app.
+        <p className="mt-4 max-w-xl text-balance text-base text-fd-muted-foreground sm:mt-5 sm:text-lg">
+          {siteConfig.name} is a backend platform built for the agentic era. Define your
+          data model in TypeScript and get a database, APIs, type-safe clients, auth, and
+          hosting — managed on Microsoft Fabric.
         </p>
 
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
+        <div className="mt-7 flex flex-wrap justify-center gap-3">
           <Link
             href="/docs/start/quickstart"
             className="rounded-lg bg-fd-primary px-5 py-2.5 text-sm font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
@@ -57,48 +65,70 @@ export default function HomePage() {
             Read the docs
           </Link>
         </div>
-
-        <code className="mt-8 rounded-lg border border-fd-border bg-fd-card px-4 py-2.5 font-mono text-sm text-fd-muted-foreground">
-          npm create @microsoft/rayfin@latest
-        </code>
       </section>
 
-      <section className="mt-20 grid w-full max-w-4xl gap-4 sm:grid-cols-3">
-        {PATHS.map((path) => (
+      <section className="mt-14 grid w-full max-w-5xl items-start gap-4 sm:mt-20 sm:gap-5 lg:grid-cols-2">
+        {/* Path 1 — a person, at a terminal. */}
+        <div className="flex h-full min-w-0 flex-col rounded-2xl border border-fd-border bg-fd-card p-5 sm:p-6">
+          <h2 className="text-base font-semibold">Start in your terminal</h2>
+          <p className="mt-1.5 text-sm text-fd-muted-foreground">
+            Scaffold a project, deploy it, and run the frontend locally against it.
+          </p>
+
+          <div className="mt-5 min-w-0">
+            <CopyCommand command={CREATE_COMMAND} />
+          </div>
+
+          <ol className="mt-4 space-y-3">
+            {STEPS.map((step, i) => (
+              <li key={step.command} className="flex min-w-0 items-start gap-3 text-sm">
+                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-fd-border text-[11px] font-medium text-fd-muted-foreground">
+                  {i + 1}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <code className="break-all font-mono text-[13px] text-fd-foreground">
+                    {step.command}
+                  </code>
+                  <span className="block text-fd-muted-foreground">{step.label}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+
           <Link
-            key={path.href}
-            href={path.href}
-            className="rounded-xl border border-fd-border bg-fd-card p-5 transition-colors hover:bg-fd-accent"
+            href="/docs/start/quickstart"
+            className="mt-auto pt-5 text-sm font-medium text-fd-primary hover:underline"
           >
-            <h2 className="font-semibold">{path.title}</h2>
-            <p className="mt-1.5 text-sm text-fd-muted-foreground">{path.body}</p>
+            Read the quickstart →
           </Link>
-        ))}
-      </section>
+        </div>
 
-      <section className="mt-16 w-full max-w-4xl rounded-2xl border border-fd-border bg-fd-card p-6 sm:p-8">
-        <h2 className="text-xl font-semibold">Built for agents</h2>
-        <p className="mt-2 max-w-2xl text-sm text-fd-muted-foreground">
-          Append <code className="font-mono">.md</code> to any route on this site to get
-          that page as clean Markdown. Point a coding agent at{' '}
-          <code className="font-mono">/llms.txt</code> and it can operate the{' '}
-          {siteConfig.name} SDK and CLI without any other source.
-        </p>
+        {/* Path 2 — an agent. */}
+        <div className="flex h-full min-w-0 flex-col rounded-2xl border border-fd-border bg-fd-card p-5 sm:p-6">
+          <h2 className="text-base font-semibold">Start with an agent</h2>
+          <p className="mt-1.5 text-sm text-fd-muted-foreground">
+            Paste this into Copilot, ChatGPT, or Claude. It builds and deploys your first
+            app for you.
+          </p>
 
-        <pre className="mt-5 overflow-x-auto rounded-lg border border-fd-border bg-fd-secondary/50 p-4 font-mono text-xs leading-relaxed">
-          <code>curl {siteConfig.baseUrl}/docs/data/querying.md</code>
-        </pre>
+          <figure className="mt-5 min-w-0 overflow-hidden rounded-lg border border-fd-border bg-fd-secondary/40">
+            <figcaption className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-fd-border px-3 py-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-fd-muted-foreground">
+                Prompt
+              </span>
+              <PromptActions text={GET_STARTED_PROMPT} />
+            </figcaption>
+            <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed text-fd-muted-foreground">
+              {GET_STARTED_PROMPT}
+            </pre>
+          </figure>
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          {AGENT_LINKS.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="rounded-md border border-fd-border px-3 py-1.5 font-mono text-xs text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
-            >
-              {link.label}
-            </Link>
-          ))}
+          <Link
+            href="/docs/ai"
+            className="mt-auto pt-5 text-sm font-medium text-fd-primary hover:underline"
+          >
+            More on using agents →
+          </Link>
         </div>
       </section>
     </main>

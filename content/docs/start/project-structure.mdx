@@ -42,10 +42,8 @@ services:
     enabled: true
     allowedRedirectUris:
       - http://localhost:5173
-    password:
-      enabled: true
     fabric:
-      enabled: false
+      enabled: true
   data:
     enabled: true
     dialect: mssql
@@ -61,11 +59,11 @@ services:
 
 | Field | Description |
 | --- | --- |
-| `id` | Project slug — used as the Docker Compose project name and the Fabric item identifier. |
+| `id` | Project slug — used as the Fabric item identifier. |
 | `name` | Human-readable project display name. |
 | `version` | Project version (semver). |
-| `services.auth` | Enables sign-in and configures redirect URIs, password auth, and Fabric SSO. See [Auth](/docs/auth). |
-| `services.data` | Enables the data service and its `dialect` (`mssql` or `postgresql`). See [Data](/docs/data). |
+| `services.auth` | Enables sign-in and configures redirect URIs and Fabric SSO. See [Auth](/docs/auth). |
+| `services.data` | Enables the data service and its `dialect` (`mssql`). See [Data](/docs/data). |
 | `services.storage` | Enables blob storage. |
 | `services.staticHosting` | Enables building and hosting your frontend, including the `buildCommand` `rayfin up` runs before packaging it. See [Hosting](/docs/hosting). |
 
@@ -111,10 +109,11 @@ from `schema.ts` is not part of your typed client. See
 ## rayfin/.env
 
 An optional environment file that supplies values to `rayfin.yml` via interpolation, and
-the file `rayfin up` writes generated values into: database passwords, allocated ports, and
-the `RAYFIN_PUBLIC_*` variables your frontend reads. It is gitignored — commit a
-`rayfin/.env.example` instead to document the variables a teammate needs to fill in. See
-[Environment variables](/docs/reference/config/environment-variables) for the full list.
+the file `rayfin up` writes generated deployment values into — the `RAYFIN_PUBLIC_*`
+variables your frontend reads, plus the Fabric item and workspace IDs. It is gitignored —
+commit a `rayfin/.env.example` instead to document the variables a teammate needs to fill
+in. See [Environment variables](/docs/reference/config/environment-variables) for the full
+list.
 
 ## rayfin/.deployments.json
 
@@ -160,10 +159,10 @@ settings. If you are integrating Rayfin into an existing project, check your
 
 ## rayfin/.temp/ (generated)
 
-Generated backend artifacts — the compiled entity output, the Data API Builder
-configuration, and the Docker Compose file `rayfin up` runs locally. If the backend seems
-to be using stale schema or configuration, stop the stack and rerun `npx rayfin up` to
-regenerate this folder.
+Generated backend artifacts — the compiled entity output and the Data API Builder
+configuration used to apply your schema to the deployed Fabric backend. If the backend
+seems to be using stale schema or configuration, rerun `npx rayfin up` to regenerate this
+folder and reapply it.
 
 ## Frontend wiring
 
@@ -223,5 +222,5 @@ vite` directly) to regenerate it.
 ## Next
 
 - [Quickstart](/docs/start/quickstart) — scaffold a project with this layout.
-- [Local development](/docs/start/local-development) — run and iterate on the backend.
+- [Deploy to Fabric](/docs/start/deploy-to-fabric) — deploy and iterate on the backend.
 - [Modeling entities](/docs/data/modeling) — the full entity and decorator reference.

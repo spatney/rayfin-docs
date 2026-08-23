@@ -1,6 +1,6 @@
 ---
 title: Rayfin
-description: Rayfin is a TypeScript backend platform — model your data once and get a database, APIs, type-safe clients, auth, and hosting, locally or as a managed Fabric app.
+description: Rayfin is a TypeScript backend platform — model your data once and get a database, APIs, type-safe clients, auth, and hosting, managed on Microsoft Fabric.
 ---
 
 Rayfin is a backend platform for TypeScript developers. You define your data model as
@@ -31,19 +31,14 @@ npx rayfin up
 > Rayfin supports TypeScript as the only language for data models, client code, and
 > application logic.
 
-## Two ways to run
+## How it runs
 
-| | **Rayfin Local** | **Fabric app** |
-| --- | --- | --- |
-| What it is | Self-hosted backend stack | Managed service on Microsoft Fabric |
-| Authentication | Entra ID, email and password | Fabric SSO (Entra ID) only |
-| Database | MSSQL, PostgreSQL | MSSQL only |
-| Infrastructure | You host it (Docker, VMs, any cloud) | Fabric manages hosting, scaling, networking |
+Rayfin apps are deployed and managed on Microsoft Fabric. Fabric hosts the MSSQL database,
+the API layer in front of it, and your built frontend as static content. Sign-in is Fabric
+SSO (Entra ID).
 
-Both modes share the same SDK, CLI, and data-modeling workflow. Start locally, then deploy
-to Fabric when you want a managed service — or stay self-hosted.
-
-See [How Rayfin runs](/docs/start/how-rayfin-runs) for the full comparison.
+You develop against it directly: `rayfin up` deploys the backend, and your frontend runs
+locally on your usual dev server while it talks to that deployment.
 
 ## Start here
 

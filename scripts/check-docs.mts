@@ -17,6 +17,24 @@ const ALLOWED_COMPONENTS = new Set(['Tabs', 'Tab', 'Cards', 'Card', 'Steps', 'St
 
 const MAX_DESCRIPTION = 200;
 
+/**
+ * Terms that are out of documented scope (see "Product scope" in AGENTS.md).
+ * Rayfin documents one way to run — as a managed Fabric app — and one auth method,
+ * Fabric SSO. This gate stops local/Docker and password-auth content creeping back in.
+ */
+const OUT_OF_SCOPE: { pattern: RegExp; reason: string }[] = [
+  { pattern: /\brayfin\s+dev\b/i, reason: 'the `rayfin dev` local stack is out of scope' },
+  { pattern: /\bdocker\b/i, reason: 'Docker / local containers are out of scope' },
+  { pattern: /\bdocker-local-dev\b/i, reason: 'the docker-local-dev feature flag is out of scope' },
+  { pattern: /\bazurite\b/i, reason: 'Azurite (local storage emulator) is out of scope' },
+  { pattern: /\bmaildev\b/i, reason: 'MailDev (local mail catcher) is out of scope' },
+  { pattern: /\bpostgres(ql)?\b/i, reason: 'Fabric supports mssql only' },
+  { pattern: /\bRayfin Local\b/i, reason: 'Rayfin Local is out of scope — Rayfin runs as a Fabric app' },
+  { pattern: /\bsendMagicLink\b|\bhandleMagicLinkCallback\b/, reason: 'magic-link auth is out of scope' },
+  { pattern: /\bsignUp\b/, reason: 'password sign-up is out of scope — Fabric SSO only' },
+  { pattern: /email[ /-]?(and[ -])?password auth/i, reason: 'email/password auth is out of scope' },
+];
+
 type Problem = { file: string; line?: number; message: string };
 
 const problems: Problem[] = [];
@@ -52,6 +70,7 @@ async function main() {
     checkCodeFences(rel, content);
     checkComponents(rel, content);
     checkLinks(rel, content, routes);
+    checkScope(rel, raw);
   }
 
   report(files.length);
@@ -179,6 +198,29 @@ function stripCode(content: string): string {
   return content
     .replace(/^(\s*)(`{3,}|~{3,})[\s\S]*?\n\1\2\s*$/gm, '')
     .replace(/`[^`\n]*`/g, '');
+}
+
+/**
+ * Scope gate. Scans the raw file including code fences, because an out-of-scope
+ * command in a shell block is exactly what a reader would copy and run.
+ * `npm run dev` and `localhost:5173` are in scope — that is local *frontend*
+ * development against a deployed Fabric backend.
+ */
+function checkScope(file: string, raw: string) {
+  const lines = raw.split('\n');
+
+  lines.forEach((line, index) => {
+    for (const { pattern, reason } of OUT_OF_SCOPE) {
+      if (!pattern.test(line)) continue;
+      problems.push({
+        file,
+        line: index + 1,
+        message: `out of scope: ${reason} (matched ${pattern}). See "Product scope" in AGENTS.md.`,
+      });
+      // One report per line is enough to send someone to the right place.
+      break;
+    }
+  });
 }
 
 async function collectMdx(dir: string): Promise<string[]> {

@@ -43,15 +43,6 @@ list that can exceed one page. See
 [Pagination](/docs/reference/sdk/rayfin-data#pagination) and
 [Errors and troubleshooting](/docs/reference/errors).
 
-### Date comparisons don't work against PostgreSQL
-
-`gt`, `lt`, `gte`, and `lte` filters on `@date()` fields are silently unreliable when the
-backing database is PostgreSQL ([DAB issue #3094](https://github.com/Azure/data-api-builder/issues/3094)).
-
-**Workaround:** avoid range comparisons on date fields against a PostgreSQL-backed project;
-filter and sort in application code instead, or use MSSQL if date range queries are
-required server-side.
-
 ### Total record counts are unsupported
 
 There is no way to request a total row count independent of a page
@@ -163,18 +154,18 @@ form you used. See
 
 ### Run `rayfin up` before `rayfin up db apply`
 
-`rayfin up db apply` (or `rayfin dev db apply` locally) expects the backend services it's
-applying schema to already be running and healthy.
+`rayfin up db apply` expects the backend services it's applying schema to already be
+running and healthy.
 
-**Workaround:** run `npx rayfin up` (or `npx rayfin dev`) first and wait for services to
-report healthy, then run the `db apply` subcommand.
+**Workaround:** run `npx rayfin up` first and wait for services to report healthy, then
+run the `db apply` subcommand.
 
 ### `unsupported UUID` errors
 
 This usually means another service is already running on the default port, backed by a
 different database dialect than your current project expects.
 
-**Workaround:** stop stale services (`npx rayfin dev --down` locally) and retry. See
+**Workaround:** stop the conflicting service (or free the port) and retry. See
 [Errors and troubleshooting](/docs/reference/errors).
 
 ### `dialect` is required when the Data module is enabled
@@ -182,9 +173,8 @@ different database dialect than your current project expects.
 Setting `services.data.enabled: true` in `rayfin.yml` without a `dialect` fails at deploy
 time with `Dialect is required when Data module is enabled`.
 
-**Workaround:** always pair `data.enabled: true` with `dialect: mssql` or
-`dialect: postgresql` (Fabric apps support `mssql` only). See
-[Errors and troubleshooting](/docs/reference/errors).
+**Workaround:** always pair `data.enabled: true` with `dialect: mssql` — the only dialect
+Fabric apps support. See [Errors and troubleshooting](/docs/reference/errors).
 
 ### `@text()` without `max` breaks GraphQL schema generation on MSSQL
 

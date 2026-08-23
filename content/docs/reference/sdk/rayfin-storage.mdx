@@ -23,8 +23,7 @@ npm install @microsoft/rayfin-storage
 ```
 
 Storage is also gated behind a CLI feature flag in current builds — set
-`RAYFIN_FEATURE_FLAGS=storage` to expose storage prompts in `rayfin init` and the
-`rayfin dev storage *` command group.
+`RAYFIN_FEATURE_FLAGS=storage` to expose storage prompts in `rayfin init`.
 
 ## What is verifiable today
 
@@ -50,9 +49,8 @@ export class FileModel {
   otherwise private.
 
 `@blob()` is what the Rayfin CLI reads to generate storage configuration when you run
-`rayfin up` or `rayfin dev storage apply`. It does not, by itself, give you a client to
-upload or download files — that surface belongs to `@microsoft/rayfin-storage` and is out
-of scope for this page.
+`rayfin up`. It does not, by itself, give you a client to upload or download files — that
+surface belongs to `@microsoft/rayfin-storage` and is out of scope for this page.
 
 ## What this page deliberately omits
 

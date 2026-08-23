@@ -14,6 +14,8 @@ with a live deploy to a Fabric app.
   delete.
 - A React page and row component wired to that module with optimistic updates.
 - A deployed Fabric app serving the built frontend against the live backend.
+- A local dev loop for iterating on the frontend with `npm run dev` against that deployed
+  backend.
 
 ```prompt title="Build a todo app with Rayfin"
 Scaffold a new Rayfin project called "todo-app" with `npm create @microsoft/rayfin@latest
@@ -26,7 +28,8 @@ getTodos, createTodo, updateTodo, and deleteTodo functions that call client.data
 (select/orderBy/execute, create, update, delete), setting user_id from the signed-in
 user's session on create. Build a React page that lists todos, adds new ones, and
 toggles/edits/deletes existing ones, calling those service functions. Then run `npx rayfin
-login` and `npx rayfin up` to deploy, and `npx rayfin up status` to confirm it's live.
+login` and `npx rayfin up` to deploy, and `npx rayfin up status` to confirm it's live. Once
+deployed, run `npm run dev` to iterate on the frontend locally against that backend.
 ```
 
 ## 1. Scaffold a project
@@ -106,8 +109,8 @@ Add every new entity to this map — both the `schema` array the CLI reads, and 
 
 ## 4. Configure rayfin.yml
 
-Enable the services this app needs: data (MSSQL), auth (Fabric SSO for the deployed app,
-email/password for local development), and static hosting for the built frontend.
+Enable the services this app needs: data (MSSQL), auth (Fabric SSO), and static hosting for
+the built frontend.
 
 ```yaml title="rayfin/rayfin.yml"
 id: todo-app
@@ -117,8 +120,6 @@ services:
   auth:
     enabled: true
     fabric:
-      enabled: true
-    password:
       enabled: true
     allowedRedirectUris:
       - http://localhost:5173
@@ -185,7 +186,7 @@ export function getRayfinClient(): RayfinClient<TodoAppSchema> {
   return client;
 }
 
-/** True when the app was bootstrapped against a localhost backend. */
+/** True when the app was bootstrapped against a localhost API URL. */
 export function isLocalBackend(): boolean {
   return localDev;
 }
@@ -768,6 +769,23 @@ npx rayfin up status
 uploads the React frontend, and prints the live hosting URL. See
 [Deploying with rayfin up](/docs/deploy/rayfin-up) for the full workflow, flags, and what
 gets written to `rayfin/.deployments.json`.
+
+## 10. Iterate on the frontend locally
+
+With the backend deployed, serve the frontend locally instead of rebuilding and uploading
+it on every change:
+
+```bash
+npm run dev
+```
+
+The scaffolded `predev` script regenerates `.env.local` from the values `rayfin up` wrote to
+`rayfin/.env`, so Vite serves the frontend at `http://localhost:5173` against the backend
+you just deployed. For a subsequent backend change — a new field on `Todo`, for example —
+redeploy with `npx rayfin up --exclude-services staticHosting` so the schema and runtime
+settings update without rebuilding the static bundle Vite is already serving locally. See
+[Static content hosting](/docs/hosting#skip-static-deployment-during-local-dev) for the full
+explanation.
 
 ## Next steps
 
