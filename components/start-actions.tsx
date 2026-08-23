@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { AGENT_LINKS } from '@/lib/agent-links';
 
 const BUTTON =
-  'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground';
+  'inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground';
 
 /** Copy / open-in-assistant controls for a prompt whose text is known up front. */
 export function PromptActions({ text }: { text: string }) {
@@ -17,10 +17,15 @@ export function PromptActions({ text }: { text: string }) {
   }
 
   return (
-    <span className="flex items-center gap-0.5">
-      <button type="button" onClick={copy} className={BUTTON}>
+    <span className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={copy}
+        className="inline-flex items-center rounded-md border border-fd-border bg-fd-secondary/60 px-2.5 py-1 text-xs font-medium text-fd-foreground transition-colors hover:border-teal-500/40"
+      >
         {copied ? 'Copied' : 'Copy'}
       </button>
+      <span aria-hidden className="mx-0.5 h-4 w-px bg-fd-border" />
       {AGENT_LINKS.map((agent) => (
         <a
           key={agent.id}
@@ -51,7 +56,7 @@ export function CopyCommand({ command }: { command: string }) {
       type="button"
       onClick={copy}
       aria-label={`Copy: ${command}`}
-      className="group flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-fd-border bg-fd-secondary/40 px-3.5 py-2.5 text-left transition-colors hover:border-fd-primary/40"
+      className="group flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-fd-border bg-fd-card/60 px-3.5 py-2.5 text-left backdrop-blur transition-colors hover:border-teal-500/40"
     >
       <code className="min-w-0 truncate font-mono text-[13px] text-fd-foreground">
         <span className="select-none text-fd-muted-foreground">$ </span>

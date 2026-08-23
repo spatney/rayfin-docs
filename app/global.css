@@ -6,4 +6,78 @@
 
 :root {
   --rayfin-accent: oklch(0.62 0.19 258);
+  --rayfin-grid-size: 56px;
+  --rayfin-spark: oklch(0.777 0.152 181.912 / 0.55);
+  --rayfin-arc: oklch(0.777 0.152 181.912 / 0.16);
+}
+
+/*
+ * Hero backdrop: a static grid with a teal "charge" grid layered on top. The charge
+ * layer breathes, and a soft arc sweeps down it, so the grid reads as energised rather
+ * than decorative. Both are purely presentational and disabled under reduced motion.
+ */
+@keyframes rayfin-charge {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes rayfin-arc {
+  0% {
+    transform: translateY(-140px);
+    opacity: 0;
+  }
+  20%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(560px);
+    opacity: 0;
+  }
+}
+
+.rayfin-grid,
+.rayfin-grid-charge {
+  background-size: var(--rayfin-grid-size) var(--rayfin-grid-size);
+}
+
+.rayfin-grid {
+  background-image:
+    linear-gradient(to right, var(--color-fd-border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-fd-border) 1px, transparent 1px);
+}
+
+.rayfin-grid-charge {
+  background-image:
+    linear-gradient(to right, var(--rayfin-spark) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rayfin-spark) 1px, transparent 1px);
+  -webkit-mask-image: radial-gradient(ellipse 38% 55% at 50% 14%, #000, transparent 70%);
+  mask-image: radial-gradient(ellipse 38% 55% at 50% 14%, #000, transparent 70%);
+  animation: rayfin-charge 7s ease-in-out infinite;
+}
+
+.rayfin-arc {
+  background-image: linear-gradient(
+    to bottom,
+    transparent,
+    var(--rayfin-arc),
+    transparent
+  );
+  animation: rayfin-arc 11s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rayfin-grid-charge {
+    animation: none;
+    opacity: 0.35;
+  }
+
+  .rayfin-arc {
+    display: none;
+  }
 }

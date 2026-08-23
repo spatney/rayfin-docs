@@ -18,31 +18,49 @@ Then do the work yourself rather than printing steps for me:
 
 Then explain what the starter app does and where the data model lives.`;
 
-const STEPS = [
-  { command: 'npx rayfin login', label: 'Sign in to Microsoft Fabric' },
-  { command: 'npx rayfin up', label: 'Deploy the backend' },
-  { command: 'npm run dev', label: 'Run the frontend' },
+const CAPABILITIES = [
+  { href: '/docs/data', label: 'Data' },
+  { href: '/docs/auth', label: 'Auth' },
+  { href: '/docs/functions', label: 'Functions' },
+  { href: '/docs/storage', label: 'Storage' },
+  { href: '/docs/hosting', label: 'Hosting' },
 ];
 
 export default function HomePage() {
   return (
     <main className="relative flex flex-1 flex-col items-center overflow-x-hidden px-4 py-16 sm:px-6 sm:py-24">
+      {/* Background: an energised grid under a soft teal bloom. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] bg-[radial-gradient(ellipse_60%_100%_at_50%_0%,theme(colors.teal.500/0.14),transparent)]"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-20 h-[560px] overflow-hidden [mask-image:radial-gradient(ellipse_50%_55%_at_50%_0%,black,transparent)]"
+      >
+        <div className="rayfin-grid absolute inset-0 opacity-70" />
+        <div className="rayfin-grid-charge absolute inset-0" />
+        <div className="rayfin-arc absolute inset-x-0 top-0 h-32" />
+      </div>
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[460px] bg-[radial-gradient(ellipse_55%_100%_at_50%_0%,theme(colors.teal.500/0.16),transparent)]"
       />
 
       <section className="flex w-full max-w-3xl flex-col items-center text-center">
-        <Image
-          src={logo}
-          alt=""
-          aria-hidden
-          width={80}
-          height={80}
-          className="mb-6 size-14 sm:mb-7 sm:size-16"
-          priority
-        />
-        <h1 className="text-balance text-3xl font-bold tracking-tight sm:text-[3.25rem] sm:leading-[1.08]">
+        <div className="relative mb-6 sm:mb-7">
+          <div
+            aria-hidden
+            className="absolute inset-0 -z-10 scale-[1.8] rounded-full bg-teal-400/20 blur-2xl"
+          />
+          <Image
+            src={logo}
+            alt=""
+            aria-hidden
+            width={80}
+            height={80}
+            className="size-14 sm:size-16"
+            priority
+          />
+        </div>
+
+        <h1 className="bg-gradient-to-b from-fd-foreground to-fd-foreground/70 bg-clip-text text-balance text-3xl font-bold tracking-tight text-transparent sm:text-[3.25rem] sm:leading-[1.08]">
           Agent-first apps for the enterprise
         </h1>
         <p className="mt-4 max-w-xl text-balance text-base text-fd-muted-foreground sm:mt-5 sm:text-lg">
@@ -51,84 +69,81 @@ export default function HomePage() {
           storage, and hosting built in.
         </p>
 
-        <div className="mt-7 flex flex-wrap justify-center gap-3">
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link
             href="/docs/start/quickstart"
-            className="rounded-lg bg-fd-primary px-5 py-2.5 text-sm font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
+            className="group inline-flex items-center gap-1.5 rounded-lg bg-fd-primary px-5 py-2.5 text-sm font-medium text-fd-primary-foreground shadow-sm transition-opacity hover:opacity-90"
           >
             Get started
+            <span className="transition-transform group-hover:translate-x-0.5">→</span>
           </Link>
           <Link
             href="/docs"
-            className="rounded-lg border border-fd-border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-fd-accent"
+            className="rounded-lg border border-fd-border bg-fd-card/60 px-5 py-2.5 text-sm font-medium backdrop-blur transition-colors hover:bg-fd-accent"
           >
             Read the docs
           </Link>
         </div>
       </section>
 
-      <section className="mt-14 grid w-full max-w-5xl items-start gap-4 sm:mt-20 sm:gap-5 lg:grid-cols-2">
-        {/* Path 1 — a person, at a terminal. */}
-        <div className="flex h-full min-w-0 flex-col rounded-2xl border border-fd-border bg-fd-card p-5 sm:p-6">
-          <h2 className="text-base font-semibold">Start in your terminal</h2>
-          <p className="mt-1.5 text-sm text-fd-muted-foreground">
-            Scaffold a project, deploy it, and run the frontend locally against it.
-          </p>
+      {/* The one starting point: hand the prompt to an agent. */}
+      <section className="mt-14 w-full max-w-3xl sm:mt-20">
+        <div className="group relative overflow-hidden rounded-2xl border border-fd-border bg-fd-card/60 backdrop-blur-sm">
+          <div
+            aria-hidden
+            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-teal-400/50 to-transparent"
+          />
 
-          <div className="mt-5 min-w-0">
-            <CopyCommand command={CREATE_COMMAND} />
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-fd-border px-4 py-2.5">
+            <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-fd-muted-foreground">
+              <span aria-hidden className="size-1.5 rounded-full bg-teal-400/80" />
+              Start with an agent
+            </span>
+            <PromptActions text={GET_STARTED_PROMPT} />
           </div>
 
-          <ol className="mt-4 space-y-3">
-            {STEPS.map((step, i) => (
-              <li key={step.command} className="flex min-w-0 items-start gap-3 text-sm">
-                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-fd-border text-[11px] font-medium text-fd-muted-foreground">
-                  {i + 1}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <code className="break-all font-mono text-[13px] text-fd-foreground">
-                    {step.command}
-                  </code>
-                  <span className="block text-fd-muted-foreground">{step.label}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-
-          <Link
-            href="/docs/start/quickstart"
-            className="mt-auto pt-5 text-sm font-medium text-fd-primary hover:underline"
-          >
-            Read the quickstart →
-          </Link>
-        </div>
-
-        {/* Path 2 — an agent. */}
-        <div className="flex h-full min-w-0 flex-col rounded-2xl border border-fd-border bg-fd-card p-5 sm:p-6">
-          <h2 className="text-base font-semibold">Start with an agent</h2>
-          <p className="mt-1.5 text-sm text-fd-muted-foreground">
-            Paste this into Copilot, ChatGPT, or Claude. It builds and deploys your first
-            app for you.
-          </p>
-
-          <figure className="mt-5 min-w-0 overflow-hidden rounded-lg border border-fd-border bg-fd-secondary/40">
-            <figcaption className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-fd-border px-3 py-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-fd-muted-foreground">
-                Prompt
-              </span>
-              <PromptActions text={GET_STARTED_PROMPT} />
-            </figcaption>
-            <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-relaxed text-fd-muted-foreground">
+          <div className="relative">
+            <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words px-4 py-4 pb-10 font-mono text-[12.5px] leading-relaxed text-fd-muted-foreground [mask-image:linear-gradient(to_bottom,black_calc(100%_-_2.5rem),transparent)] [scrollbar-width:none] sm:px-5 [&::-webkit-scrollbar]:hidden">
               {GET_STARTED_PROMPT}
             </pre>
-          </figure>
+          </div>
+        </div>
 
+        <p className="mt-4 text-center text-sm text-fd-muted-foreground">
+          Paste it into Copilot, ChatGPT, or Claude — it scaffolds the project, deploys the
+          backend, and explains what it built.
+        </p>
+      </section>
+
+      {/* Secondary path, for people who would rather type it themselves. */}
+      <section className="mt-12 w-full max-w-3xl sm:mt-14">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span className="shrink-0 text-sm text-fd-muted-foreground">
+            Prefer your terminal?
+          </span>
+          <div className="min-w-0 flex-1 sm:max-w-md">
+            <CopyCommand command={CREATE_COMMAND} />
+          </div>
           <Link
             href="/docs/start/quickstart"
-            className="mt-auto pt-5 text-sm font-medium text-fd-primary hover:underline"
+            className="shrink-0 text-sm font-medium text-fd-primary hover:underline"
           >
-            Read the quickstart →
+            Quickstart →
           </Link>
+        </div>
+      </section>
+
+      <section className="mt-16 w-full max-w-3xl border-t border-fd-border pt-8 sm:mt-20">
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {CAPABILITIES.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="rounded-full border border-fd-border px-3.5 py-1.5 text-sm text-fd-muted-foreground transition-colors hover:border-teal-500/40 hover:text-fd-foreground"
+            >
+              {item.label}
+            </Link>
+          ))}
         </div>
       </section>
     </main>
