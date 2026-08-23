@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { siteConfig } from '@/lib/site.config';
+import { Analytics } from '@/components/analytics';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -38,6 +39,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         >
           {children}
         </RootProvider>
+        <Analytics />
       </body>
     </html>
   );

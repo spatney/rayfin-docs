@@ -11,6 +11,7 @@
     "start": "npx serve out",
     "emit:agent": "tsx scripts/emit-agent-assets.mts",
     "verify:agent": "tsx scripts/verify-agent-assets.mts",
+    "analytics": "tsx scripts/analytics.mts",
     "check:docs": "tsx scripts/check-docs.mts",
     "import:guide": "tsx scripts/import-guide.mts",
     "typecheck": "tsc --noEmit",

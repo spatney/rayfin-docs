@@ -44,6 +44,9 @@ jobs:
         run: npm run build
         env:
           NEXT_PUBLIC_SITE_URL: ${{ vars.SITE_URL || 'https://rayfin.ai' }}
+          # Optional. Unset means no analytics script is emitted at all, which is
+          # what forks and preview builds should do.
+          NEXT_PUBLIC_CLARITY_PROJECT_ID: ${{ vars.CLARITY_PROJECT_ID }}
 
       # After the build, which generates next-env.d.ts and .next/types — those
       # provide the PageProps/LayoutProps/RouteContext globals and the image

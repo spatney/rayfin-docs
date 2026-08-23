@@ -78,6 +78,37 @@ to `trailingSlash: true`.
 MIME types for `.md` and `.txt`, CORS headers, and the 404 override are emitted into
 `out/staticwebapp.config.json` at build time.
 
+## Analytics
+
+Traffic here splits into two audiences that need different instrumentation:
+
+| Audience | What they fetch | How it's measured |
+| --- | --- | --- |
+| People | HTML pages | Microsoft Clarity (client-side script) |
+| Agents | `.md` mirrors, `llms.txt`, `AGENTS.md` | Azure `SiteHits` metric |
+
+**Agents never run JavaScript** — they fetch static text — so a client-side script cannot
+see them. That is why totals come from Azure rather than from Clarity.
+
+```bash
+npm run analytics              # last 7 days
+npm run analytics -- --days 30
+```
+
+This reads the Static Web App's `SiteHits`, `BytesSent` and `SiteErrors` metrics, which
+count *every* request including the markdown mirrors. It needs the Azure CLI and `az login`.
+
+> [!NOTE]
+> Azure Static Web Apps exposes no per-request logs on the Free tier — its
+> diagnostic-settings category list is empty — so traffic cannot be broken down by path or
+> user agent from Azure alone. Compare the totals against Clarity's pageviews to estimate
+> the human share. A true per-path breakdown would require fronting the site with a proxy
+> that logs requests.
+
+Clarity is opt-in: set the `CLARITY_PROJECT_ID` repository variable and the workflow passes
+it through as `NEXT_PUBLIC_CLARITY_PROJECT_ID`. With it unset — forks, preview builds, local
+development — no analytics script is emitted at all.
+
 ## Layout
 
 ```text
