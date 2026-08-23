@@ -4,7 +4,7 @@ description: rayfin docs search, get, list, discover, and catalog show — query
 ---
 
 `rayfin docs` queries the same documentation corpus and search index as the
-[Rayfin MCP server](/docs/ai/mcp-server), as a CLI surface for offline use, scripting, and
+[Rayfin MCP server](#mcp-server), as a CLI surface for offline use, scripting, and
 agents without MCP access. Run it from your project root so it resolves documentation from
 *that project's* installed packages.
 
@@ -125,11 +125,38 @@ ships as a version of `@microsoft/rayfin-docs`; upgrade that package to pick up 
 
 ## When to use the CLI versus MCP
 
-Prefer the [MCP server](/docs/ai/mcp-server) when it's connected — it exposes the same
+Prefer the [MCP server](#mcp-server) when it's connected — it exposes the same
 corpus as structured tool calls without shelling out. Use `rayfin docs` when MCP isn't
 available, or when scripting: every subcommand supports `--json` (and `--lean` for a
 smaller LLM-oriented payload), and non-zero exit codes distinguish failures from empty
 results.
+
+## MCP server
+
+`@microsoft/rayfin-mcp` serves the same version-locked corpus over the Model Context
+Protocol. `rayfin init ai-files install` writes it into your project's `.mcp.json`:
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "rayfin": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/rayfin-mcp", "start"]
+    }
+  }
+}
+```
+
+Run your agent from the project root so the server resolves that project's
+`node_modules`.
+
+| Tool | Equivalent CLI command |
+| --- | --- |
+| `search_docs(query, module)` | [`docs search`](#docs-search) |
+| `get_doc(symbol)` | [`docs get`](#docs-get) |
+| `list_docs()` | [`docs list`](#docs-list) |
+| `discover_packages(query)` | [`docs discover`](#docs-discover) |
 
 ```prompt title="Look up known limitations before modeling data"
 Run `npx rayfin docs search 'known limitations' --module guide` from my Rayfin project

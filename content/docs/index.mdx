@@ -1,11 +1,12 @@
 ---
 title: Rayfin
-description: Rayfin is a TypeScript backend platform — model your data once and get a database, APIs, type-safe clients, auth, and hosting, managed on Microsoft Fabric.
+description: Define your data model in TypeScript. Rayfin generates the database and type-safe APIs, then runs them on Microsoft Fabric — with auth, functions, storage, and hosting built in.
 ---
 
 Rayfin is a backend platform for TypeScript developers. You define your data model as
 decorated TypeScript classes, and Rayfin generates the database schema, REST and GraphQL
-APIs, type-safe clients, authentication, and static hosting for your frontend.
+APIs, and type-safe clients — then runs them on Microsoft Fabric with authentication,
+functions, blob storage, and static hosting built in.
 
 ```typescript title="rayfin/data/Todo.ts"
 import { entity, uuid, text, boolean, authenticated } from '@microsoft/rayfin-core';
@@ -56,12 +57,13 @@ Markdown mirror — append `.md` to any URL — and the whole corpus is availabl
 [`/llms-full.txt`](/llms-full.txt).
 
 ```prompt title="Point your agent at Rayfin"
-Read https://rayfin.ai/llms.txt and then https://rayfin.ai/docs/ai/rules.md so you know how
+Read https://rayfin.ai/llms.txt and then https://rayfin.ai/docs/reference/agent-rules.md so you know how
 to work with the Rayfin SDK and CLI. Every page on that site is available as raw Markdown by
 appending .md to its URL. Then help me build a Rayfin app.
 ```
 
-See [Build with AI](/docs/ai) for the full agent surface.
+See [Rules for coding agents](/docs/reference/agent-rules) for the constraints an agent
+needs before it writes Rayfin code.
 
 ## Reference
 

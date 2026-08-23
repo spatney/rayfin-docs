@@ -1,6 +1,6 @@
 ---
 title: Reference overview
-description: Landing page for the complete Rayfin reference — CLI commands, configuration schema, SDK packages, known limitations, deprecations, and troubleshooting.
+description: Landing page for the complete Rayfin reference — CLI commands, configuration schema, SDK packages, rules for coding agents, known limitations, deprecations, and troubleshooting.
 ---
 
 This section is exhaustive, precise detail rather than task-first guidance — reach for it
@@ -16,6 +16,8 @@ starting point.
   environment variable the CLI and runtime read or write.
 - **[SDK](/docs/reference/sdk)** — API reference for every `@microsoft/rayfin-*` package:
   decorators, client construction, the query API, and auth.
+- **[Rules for coding agents](/docs/reference/agent-rules)** — the condensed do/don't list
+  for generating Rayfin code that works.
 - **[Known limitations](/docs/reference/known-limitations)** — current constraints in the
   data client, DAB, relationships, auth, and schema apply, each with a workaround.
 - **[Deprecations](/docs/reference/deprecations)** — how to silence deprecation warnings in
@@ -44,8 +46,8 @@ Every package that ships as part of Rayfin, from `catalog.json`:
 | [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage) | SDK | Type-safe blob storage client for Rayfin storage backends. |
 | [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric) | SDK | Microsoft Fabric token provider for Rayfin auth flows. |
 | [`@microsoft/rayfin-cli`](/docs/reference/cli) | Tool | Command-line interface: scaffolding, configuration, deployment, and the `rayfin docs` command group for offline-friendly agent grounding. |
-| [`@microsoft/rayfin-mcp`](/docs/ai/mcp-server) | Tool | Model Context Protocol server exposing Rayfin docs as `list_docs`, `search_docs`, `get_doc`, and `discover_packages` tools. |
-| [`@microsoft/rayfin-docs`](/docs/ai/mcp-server#how-package-docs-are-discovered) | Tool | Docs indexing/discovery library powering the CLI and MCP server. Merges installed package docs via the `rayfinDocs` `package.json` convention. |
+| [`@microsoft/rayfin-mcp`](/docs/reference/cli/docs#mcp-server) | Tool | Model Context Protocol server exposing Rayfin docs as `list_docs`, `search_docs`, `get_doc`, and `discover_packages` tools. |
+| [`@microsoft/rayfin-docs`](/docs/reference/cli/docs#how-docs-are-discovered) | Tool | Docs indexing/discovery library powering the CLI and MCP server. Merges installed package docs via the `rayfinDocs` `package.json` convention. |
 | `@microsoft/rayfin-guide` | Guide | Cross-cutting builder guides — getting started, auth overview, data permissions, CLI commands. |
 | `@microsoft/rayfin-host-docs` | Host | Host service reference docs for Rayfin .NET hosting components (WebService, Auth, Storage, DataApi, Function). |
 | [`@microsoft/create-rayfin`](/docs/start/quickstart) | Tool | App scaffolding tool for bootstrapping new Rayfin projects via `npm create rayfin@latest`. |

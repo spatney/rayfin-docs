@@ -5,6 +5,7 @@
  * page and its `.md` mirror equivalent, and keep /llms.txt useful.
  */
 import { readdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
@@ -73,7 +74,30 @@ async function main() {
     checkScope(rel, raw);
   }
 
+  await checkGeneratedCopy();
+
   report(files.length);
+}
+
+/**
+ * Prose that ships to readers does not only live in content/docs — it is also
+ * embedded in the files that generate llms.txt, AGENTS.md and the landing page.
+ * Those escaped an earlier scope purge because the lint only walked MDX.
+ */
+async function checkGeneratedCopy() {
+  const sources = [
+    'app/llms.txt/route.ts',
+    'app/llms-full.txt/route.ts',
+    'app/(home)/page.tsx',
+    'lib/site.config.ts',
+    'scripts/emit-agent-assets.mts',
+  ];
+
+  for (const rel of sources) {
+    const full = path.join(ROOT, rel);
+    if (!existsSync(full)) continue;
+    checkScope(rel, await readFile(full, 'utf8'));
+  }
 }
 
 function checkFrontmatter(file: string, data: Record<string, unknown>) {

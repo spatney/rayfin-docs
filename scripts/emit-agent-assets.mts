@@ -148,10 +148,10 @@ async function writeAgentsFile(pages: Emitted[]) {
   const content = `# Rayfin — instructions for coding agents
 
 You are reading the machine-readable entry point for the official Rayfin documentation.
-Rayfin is a TypeScript backend-as-a-service: you define entities as decorated TypeScript
-classes and Rayfin generates the database schema, REST and GraphQL APIs, type-safe
-clients, auth, and static hosting. It runs locally on Docker or as a managed Fabric app
-on Microsoft Fabric.
+Rayfin is a TypeScript backend platform: you define entities as decorated TypeScript
+classes and Rayfin generates the database schema, REST and GraphQL APIs, and type-safe
+clients, then runs them on Microsoft Fabric with auth, functions, blob storage, and static
+hosting built in.
 
 ## How to read these docs
 
@@ -159,11 +159,11 @@ on Microsoft Fabric.
   \`${SITE_URL}/docs/data/querying\` -> \`${SITE_URL}/docs/data/querying.md\`
 - [\`/llms.txt\`](${SITE_URL}/llms.txt) — index of every page with descriptions.
 - [\`/llms-full.txt\`](${SITE_URL}/llms-full.txt) — the entire documentation set in one file.
-- [\`/docs/ai/rules\`](${SITE_URL}/docs/ai/rules) — the condensed do/don't list. **Read this before generating Rayfin code.**
+- [\`/docs/reference/agent-rules\`](${SITE_URL}/docs/reference/agent-rules) — the condensed do/don't list. **Read this before generating Rayfin code.**
 
 ## Before you write any Rayfin code
 
-Read [\`${SITE_URL}/docs/ai/rules.md\`](${SITE_URL}/docs/ai/rules.md) and
+Read [\`${SITE_URL}/docs/reference/agent-rules.md\`](${SITE_URL}/docs/reference/agent-rules.md) and
 [\`${SITE_URL}/docs/reference/known-limitations.md\`](${SITE_URL}/docs/reference/known-limitations.md).
 Rayfin has platform constraints (text length caps on MSSQL, no many-to-many, foreign key
 naming rules) that silently break deployments if ignored.

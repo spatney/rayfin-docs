@@ -9,7 +9,7 @@ export const siteConfig = {
   name: 'Rayfin',
   tagline: 'Agent-first apps for the enterprise.',
   description:
-    'Rayfin is a backend platform built for the agentic era. Define your data model in TypeScript and get a database, APIs, type-safe clients, auth, and hosting — deployed and managed on Microsoft Fabric.',
+    'Define your data model in TypeScript. Rayfin generates the database and type-safe APIs, then runs them on Microsoft Fabric — with auth, functions, storage, and hosting built in.',
   baseUrl: (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://rayfin.ai').replace(/\/$/, ''),
   repo: 'https://github.com/spatney/rayfin-docs',
 

@@ -8,7 +8,7 @@ const CREATE_COMMAND = 'npm create @microsoft/rayfin@latest my-app';
 
 const GET_STARTED_PROMPT = `Set up a new Rayfin app for me, end to end.
 
-Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Before writing any code, read https://rayfin.ai/llms.txt and https://rayfin.ai/docs/ai/rules.md — every page on that site is available as raw Markdown by appending .md to its URL.
+Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Before writing any code, read https://rayfin.ai/llms.txt and https://rayfin.ai/docs/reference/agent-rules.md — every page on that site is available as raw Markdown by appending .md to its URL.
 
 Then do the work yourself rather than printing steps for me:
 1. Scaffold a project with \`npm create @microsoft/rayfin@latest my-app\` and install dependencies.
@@ -46,9 +46,9 @@ export default function HomePage() {
           Agent-first apps for the enterprise
         </h1>
         <p className="mt-4 max-w-xl text-balance text-base text-fd-muted-foreground sm:mt-5 sm:text-lg">
-          {siteConfig.name} is a backend platform built for the agentic era. Define your
-          data model in TypeScript and get a database, APIs, type-safe clients, auth, and
-          hosting — managed on Microsoft Fabric.
+          Define your data model in TypeScript. {siteConfig.name} generates the database
+          and type-safe APIs, then runs them on Microsoft Fabric — with auth, functions,
+          storage, and hosting built in.
         </p>
 
         <div className="mt-7 flex flex-wrap justify-center gap-3">
@@ -124,10 +124,10 @@ export default function HomePage() {
           </figure>
 
           <Link
-            href="/docs/ai"
+            href="/docs/start/quickstart"
             className="mt-auto pt-5 text-sm font-medium text-fd-primary hover:underline"
           >
-            More on using agents →
+            Read the quickstart →
           </Link>
         </div>
       </section>

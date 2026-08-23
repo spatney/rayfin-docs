@@ -1,5 +1,0 @@
-{
-  "title": "Build with AI",
-  "description": "Get a coding agent producing correct Rayfin code.",
-  "pages": ["index", "rules", "agent-files", "mcp-server", "prompts"]
-}
