@@ -49,9 +49,11 @@ description: Read records with the type-safe GraphQL client — filters, orderin
   `// ...`. Agents copy what they see.
 - **Always label fences** with a language. Add `title="rayfin/data/Todo.ts"` when the
   snippet belongs in a specific file — agents use it to decide where to write.
-- **Be explicit about mode.** Rayfin runs locally (Docker) or as a managed Fabric app.
-  When behaviour differs, say which mode you mean. Email/password auth is local-only;
-  Fabric SSO only works inside the Fabric portal.
+- **Be explicit about where code runs.** Rayfin runs one way: as a managed Fabric app, so
+  the backend is always deployed. Fabric SSO's popup flow works from any origin listed in
+  `allowedRedirectUris` — including a local Vite dev server at `http://localhost:5173`;
+  only the embedded (iframe) flow requires the app itself to be loaded inside the Fabric
+  portal. Say which flow you mean.
 - **Link with absolute site paths**: `/docs/data/permissions`. Never relative `./x.md`.
 - **No marketing.** No "simply", "just", "easy", "powerful".
 

@@ -7,10 +7,12 @@ Fabric SSO lets users sign in to a deployed Rayfin app with the Microsoft Entra 
 they already used to open the Fabric portal. There's no separate login form — the user
 authenticates once in Fabric and the app inherits that session.
 
-> [!WARNING]
-> Fabric SSO only works inside the Fabric portal. It cannot be exercised from a bare
-> `localhost` dev server — see [Local frontend development](#local-frontend-development)
-> below for what that means in practice.
+> [!NOTE]
+> Fabric SSO requires a *backend* deployed to Fabric — not a frontend deployed to Fabric.
+> The popup flow signs users in from any origin listed in `allowedRedirectUris`, including
+> a local Vite dev server at `http://localhost:5173`. Only the embedded flow needs the app
+> to be running inside the Fabric portal. See
+> [Local frontend development](#local-frontend-development).
 
 The SDK supports two flows:
 
@@ -49,21 +51,31 @@ No popup, redirect, or user click is needed.
 
 ## Local frontend development
 
-Both flows above require Fabric to recognize the app — the popup flow's return trip and
-the embedded flow's `postMessage` handoff are unrelated to standalone `localhost`
-development. Neither flow completes from a bare Vite dev server.
+The popup flow works from `localhost`. What Fabric SSO needs is a deployed **backend** —
+the frontend calling it can be served by Vite:
 
-The normal local development loop (`rayfin up --exclude-services staticHosting` plus `npm
-run dev`) still works for everything that doesn't require an authenticated session — UI,
-data queries against `@anonymous()` entities, and any page that isn't gated on sign-in. To
-exercise the sign-in flow itself, deploy the static frontend too and open the app through
-Fabric:
+1. Deploy the backend, skipping the static frontend:
 
-```bash
-npx rayfin up
-```
+   ```bash
+   npx rayfin up --exclude-services staticHosting
+   ```
 
-Then open the printed hosting URL, or open the app from the Fabric portal directly.
+2. Confirm your dev origin is in `allowedRedirectUris` — `http://localhost:5173` is the
+   default.
+3. Start Vite and sign in from the button that calls `ensureSignedInWithFabric()`:
+
+   ```bash
+   npm run dev
+   ```
+
+The popup opens the Fabric portal, the user authenticates there, and the handoff code is
+posted back to `returnOrigin` — your `localhost` origin. Sessions, claims, and row-level
+security behave exactly as they do in the deployed app.
+
+The embedded flow is the exception. It needs the Fabric shell to load your app in an
+iframe, so it only runs once `npx rayfin up` has deployed the static frontend and you open
+the app from the Fabric portal. `ensureSignedInWithFabric()` falls back to the popup when
+the app isn't embedded, so the same call covers both cases.
 
 ## Enable Fabric SSO
 
@@ -364,7 +376,7 @@ dynamic import — it needs to capture the ?fabricEmbedded=true URL flag on firs
 Use onSessionChange to react to session changes — onAuthStateChange does not exist. Gate UI
 on isAuthenticated or the presence of a user property rather than introspecting the session.
 
-Remind me that Fabric SSO only works inside the Fabric portal, so signing in has to be
-tested by deploying the static frontend and opening the app through Fabric — not from the
-local Vite dev server. Tell me the exact commands to do that.
+Make sure my dev origin is in services.auth.allowedRedirectUris so I can test the popup flow
+from my local Vite server — it only needs the backend deployed to Fabric, not the frontend.
+Tell me the exact commands to deploy the backend and start the dev server.
 ```

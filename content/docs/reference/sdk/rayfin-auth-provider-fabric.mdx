@@ -1,6 +1,6 @@
 ---
 title: "@microsoft/rayfin-auth-provider-fabric"
-description: Fabric brokered authentication for Rayfin apps — ensureSignedInWithFabric, the embedded and popup flows, and why it only works inside the Fabric portal.
+description: Fabric brokered authentication for Rayfin apps — ensureSignedInWithFabric, the embedded and popup flows, and the origins each one works from.
 appliesTo: "@microsoft/rayfin-auth-provider-fabric >= 1.31"
 ---
 
@@ -22,13 +22,16 @@ npm install @microsoft/rayfin-auth-provider-fabric @microsoft/rayfin-auth @micro
 
 ## Where this works
 
-Fabric brokered auth only works when your app is reachable from — or embedded inside — the
-Fabric portal:
+Both flows need a Rayfin backend deployed to Fabric. They differ in where your frontend has
+to be running:
 
-- **Popup flow** — your app opens the Fabric portal in a new tab; the user signs in with
-  their Entra identity there, and the tab closes automatically once the handoff completes.
-- **Embedded flow** — your app runs inside a Fabric iframe (`?fabricEmbedded=true`) and
-  authenticates silently via `postMessage`, with no popup or user click.
+- **Popup flow** — works from any origin listed in `allowedRedirectUris`, including a local
+  Vite dev server at `http://localhost:5173`. Your app opens the Fabric portal in a new tab;
+  the user signs in with their Entra identity there, and the tab closes automatically once
+  the handoff code is posted back to `returnOrigin`.
+- **Embedded flow** — requires your app to be loaded inside a Fabric iframe
+  (`?fabricEmbedded=true`), where it authenticates silently via `postMessage` with no popup
+  or user click.
 
 ## `FabricAuthOptions`
 

@@ -26,10 +26,12 @@ Rayfin apps sign users in with the Microsoft Entra identity they already used to
 Fabric portal. There's no separate login form, sign-up step, or password to manage — the
 user authenticates once in Fabric and the app inherits that session.
 
-> [!WARNING]
-> Fabric SSO only works inside the Fabric portal. It cannot be exercised from a bare
-> `localhost` dev server — see [Fabric SSO](/docs/auth/fabric-sso) for what that means for
-> local frontend development.
+> [!NOTE]
+> Sign-in works from a local dev server as well as from the deployed app. The popup flow
+> returns its handoff code to any origin listed in `allowedRedirectUris`, including
+> `http://localhost:5173` — what it requires is a *backend* deployed to Fabric. Only the
+> embedded (iframe) flow needs the app itself to be running inside the Fabric portal. See
+> [Fabric SSO](/docs/auth/fabric-sso) for both flows.
 
 ## Configuring auth
 

@@ -254,10 +254,11 @@ createRoot(document.getElementById('root')!).render(
 ```
 
 > [!NOTE]
-> Sign-in only completes when the app is reachable through the Fabric portal — see
-> [Fabric SSO](/docs/auth/fabric-sso#local-frontend-development) for what that means when
-> you're running `npm run dev` locally. Everything else in this pattern — the provider, the
-> guard, `isAuthenticated` — behaves the same regardless of which flow produced the session.
+> Sign-in completes from a local Vite dev server as long as your origin is in
+> `allowedRedirectUris` and the backend is deployed — see
+> [Local frontend development](/docs/auth/fabric-sso#local-frontend-development). Everything
+> else in this pattern — the provider, the guard, `isAuthenticated` — behaves the same
+> regardless of which flow produced the session.
 
 ```prompt title="Add an AuthProvider, useAuth hook, and route guarding"
 In my Rayfin React app (Vite + react-router-dom), add authentication wiring:
