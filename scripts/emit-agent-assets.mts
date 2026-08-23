@@ -24,7 +24,7 @@ const MIRROR_ROOT = path.join(OUT, 'llms.mdx', 'docs');
 /** Must match TERMINAL in app/llms.mdx/docs/[...slug]/route.ts. */
 const TERMINAL = '_md';
 
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://purple-grass-01682270f.7.azurestaticapps.net').replace(
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://rayfin.ai').replace(
   /\/$/,
   '',
 );

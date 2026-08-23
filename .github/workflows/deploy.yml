@@ -43,7 +43,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          NEXT_PUBLIC_SITE_URL: ${{ vars.SITE_URL || 'https://purple-grass-01682270f.7.azurestaticapps.net' }}
+          NEXT_PUBLIC_SITE_URL: ${{ vars.SITE_URL || 'https://rayfin.ai' }}
 
       # After the build, which generates next-env.d.ts and .next/types — those
       # provide the PageProps/LayoutProps/RouteContext globals and the image
