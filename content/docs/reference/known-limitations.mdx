@@ -8,6 +8,18 @@ area. Each entry names the limitation and the workaround to use instead — if y
 agent generating Rayfin code, check the relevant section here before you write entities,
 queries, or permission decorators.
 
+## Service availability
+
+### Functions and storage are experimental
+
+`services.functions` and `services.storage` are experimental services. They are not
+available in every Fabric region or tenant, and the `@microsoft/rayfin-functions` and
+`@microsoft/rayfin-storage` packages may change substantially between releases.
+
+**Workaround:** deploy a minimal app with the service enabled and confirm `npx rayfin up`
+succeeds in your target workspace before you design around it. Keep data access in
+[`client.data.<Entity>`](/docs/data/querying) where a function is not strictly required.
+
 ## Data client
 
 ### `count()` is not available

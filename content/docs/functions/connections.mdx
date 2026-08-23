@@ -9,6 +9,10 @@ so your function accesses resources **as the calling user**, not as a shared ser
 identity. You declare a connection on the function, and the runtime hands you a scoped token
 at invocation time — you never manage a long-lived credential yourself.
 
+> [!WARNING]
+> Functions are experimental and are not available in every Fabric region or tenant. See
+> [Functions](/docs/functions) before you depend on them.
+
 ## The connection pattern
 
 Declare a connection in the third argument to `udf.func()`, and read the token inside the

@@ -117,6 +117,10 @@ object as the first argument instead, followed by the allowed values:
 
 ## `@blob()` storage folders
 
+> [!WARNING]
+> Storage is experimental and is not available in every Fabric region or tenant. See
+> [Storage](/docs/storage) before you depend on it.
+
 `@blob()` is a **class-level** decorator, structurally different from the field
 decorators above — it marks a class as a storage folder configuration for
 `@microsoft/rayfin-storage`, the same way `@entity()` marks a class as a database table.

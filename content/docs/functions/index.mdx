@@ -7,8 +7,10 @@ Rayfin functions are server-side TypeScript user-defined functions (UDFs) that r
 Fabric runtime and are invocable from your frontend through `RayfinClient` with full type
 safety, the same way `client.data.<Entity>` is typed.
 
-> [!NOTE]
-> `@microsoft/rayfin-functions` is an experimental package and may change substantially.
+> [!WARNING]
+> Functions are experimental and are not available in every Fabric region or tenant.
+> `@microsoft/rayfin-functions` may change substantially between releases. Confirm the
+> service deploys in your own workspace before you design an app around it.
 
 ## When to use functions
 
