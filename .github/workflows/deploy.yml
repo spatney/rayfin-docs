@@ -37,9 +37,6 @@ jobs:
       - name: Lint content
         run: npm run check:docs
 
-      - name: Typecheck
-        run: npm run typecheck
-
       # Builds the static export and emits the agent surface: .md mirrors,
       # llms.txt, llms-full.txt, AGENTS.md, sitemap.xml, robots.txt and the
       # per-host header config.
@@ -47,6 +44,12 @@ jobs:
         run: npm run build
         env:
           NEXT_PUBLIC_SITE_URL: ${{ vars.SITE_URL || 'https://purple-grass-01682270f.7.azurestaticapps.net' }}
+
+      # After the build, which generates next-env.d.ts and .next/types — those
+      # provide the PageProps/LayoutProps/RouteContext globals and the image
+      # module declarations, and neither exists on a fresh clone.
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Verify agent surface
         run: npm run verify:agent
