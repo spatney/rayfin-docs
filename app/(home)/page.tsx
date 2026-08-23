@@ -75,12 +75,12 @@ export default function HomePage() {
         />
 
         <h1 className="text-balance text-3xl font-bold tracking-tight text-fd-foreground sm:text-[3.25rem] sm:leading-[1.08]">
-          Agent-first apps for the enterprise
+          Ship like a startup. Deploy in your tenant.
         </h1>
         <p className="mt-4 max-w-xl text-balance text-base text-fd-muted-foreground sm:text-lg">
-          Define your data model in TypeScript. {siteConfig.name} generates the database
-          and type-safe APIs, then runs them on Microsoft Fabric — with auth, functions,
-          storage, and hosting built in.
+          {siteConfig.name} is the app platform for Microsoft Fabric: a database, type-safe
+          APIs, Entra ID auth, functions, storage, and hosting — defined in TypeScript,
+          running inside your organization&rsquo;s boundary.
         </p>
 
         <div className="mt-7 flex flex-wrap justify-center gap-3">
