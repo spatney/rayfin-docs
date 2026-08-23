@@ -20,17 +20,16 @@ Then do the work yourself rather than printing steps for me:
 Then explain what the starter app does and where the data model lives.`;
 
 /**
- * Pulses ride real grid lines. The grid is anchored to the horizontal centre with a 56px
- * cell, so vertical lines land on `calc(50% - 28px + k * 56px)` and horizontal lines on
- * multiples of 56px from the top.
+ * Charges routed along the grid. Coordinates are local to a 1120px-wide centred track:
+ * the grid is anchored to the horizontal centre with a 56px cell, which puts vertical
+ * lines on `x = 28 + 56k` and horizontal lines on `y = 56n` inside that track.
  */
-const GRID_PULSES = [
-  { axis: 'v', at: 'calc(50% - 252px)', dur: '7s', delay: '0s' },
-  { axis: 'v', at: 'calc(50% - 84px)', dur: '9s', delay: '2.4s' },
-  { axis: 'v', at: 'calc(50% + 84px)', dur: '8s', delay: '4.1s' },
-  { axis: 'v', at: 'calc(50% + 252px)', dur: '10s', delay: '1.2s' },
-  { axis: 'h', at: '112px', dur: '11s', delay: '3.2s' },
-  { axis: 'h', at: '280px', dur: '13s', delay: '6.5s' },
+const GRID_ROUTES = [
+  { d: 'M 308 -80 L 308 168 L 476 168 L 476 640', dur: '9s', delay: '0s' },
+  { d: 'M 812 -80 L 812 280 L 644 280 L 644 640', dur: '11s', delay: '2.5s' },
+  { d: 'M 140 -80 L 140 112 L 420 112 L 420 392 L 700 392 L 700 640', dur: '15s', delay: '5s' },
+  { d: 'M 980 -80 L 980 224 L 868 224 L 868 640', dur: '10s', delay: '7.5s' },
+  { d: 'M 588 -80 L 588 336 L 252 336 L 252 640', dur: '13s', delay: '3.8s' },
 ] as const;
 
 export default function HomePage() {
@@ -43,20 +42,21 @@ export default function HomePage() {
       >
         <div className="rayfin-grid absolute inset-0 opacity-70" />
         <div className="rayfin-grid-charge absolute inset-0" />
-        {GRID_PULSES.map((pulse, i) => (
-          <span
-            key={i}
-            className={`rayfin-pulse ${pulse.axis === 'v' ? 'rayfin-pulse-v' : 'rayfin-pulse-h'}`}
-            style={
-              {
-                [pulse.axis === 'v' ? 'left' : 'top']: pulse.at,
-                [pulse.axis === 'v' ? 'top' : 'left']: 0,
-                '--rayfin-dur': pulse.dur,
-                '--rayfin-delay': pulse.delay,
-              } as CSSProperties
-            }
-          />
-        ))}
+        <div className="absolute left-1/2 top-0 h-[560px] w-[1120px] -translate-x-1/2">
+          {GRID_ROUTES.map((route) => (
+            <span
+              key={route.d}
+              className="rayfin-flow"
+              style={
+                {
+                  offsetPath: `path('${route.d}')`,
+                  '--rayfin-dur': route.dur,
+                  '--rayfin-delay': route.delay,
+                } as CSSProperties
+              }
+            />
+          ))}
+        </div>
       </div>
       <div
         aria-hidden

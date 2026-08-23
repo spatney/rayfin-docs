@@ -26,32 +26,17 @@
   }
 }
 
-@keyframes rayfin-pulse-v {
+@keyframes rayfin-flow {
   0% {
-    transform: translateY(-160px);
+    offset-distance: 0%;
     opacity: 0;
   }
-  12%,
-  72% {
+  8%,
+  88% {
     opacity: 1;
   }
   100% {
-    transform: translateY(600px);
-    opacity: 0;
-  }
-}
-
-@keyframes rayfin-pulse-h {
-  0% {
-    transform: translateX(-200px);
-    opacity: 0;
-  }
-  12%,
-  72% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(70vw);
+    offset-distance: 100%;
     opacity: 0;
   }
 }
@@ -77,24 +62,38 @@
   animation: rayfin-charge 7s ease-in-out infinite;
 }
 
-.rayfin-pulse {
-  position: absolute;
-  filter: blur(0.5px);
-  opacity: 0;
+/*
+ * A charge routed along the grid. offset-rotate keeps the comet pointing down its own
+ * path, so it visibly turns each corner, and offset-anchor puts the bright head -- not
+ * the centre of the tail -- on the line. Hidden where motion paths are unsupported.
+ */
+.rayfin-flow {
+  display: none;
 }
 
-.rayfin-pulse-v {
-  width: 2px;
-  height: 130px;
-  background-image: linear-gradient(to bottom, transparent, var(--rayfin-pulse), transparent);
-  animation: rayfin-pulse-v var(--rayfin-dur) linear var(--rayfin-delay) infinite;
-}
-
-.rayfin-pulse-h {
-  width: 150px;
-  height: 2px;
-  background-image: linear-gradient(to right, transparent, var(--rayfin-pulse), transparent);
-  animation: rayfin-pulse-h var(--rayfin-dur) linear var(--rayfin-delay) infinite;
+@supports (offset-path: path('M 0 0 L 1 1')) {
+  .rayfin-flow {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 54px;
+    height: 2px;
+    border-radius: 1px;
+    background-image: linear-gradient(
+      to right,
+      transparent 0%,
+      oklch(0.86 0.15 182 / 0.1) 45%,
+      oklch(0.86 0.15 182 / 0.5) 80%,
+      var(--rayfin-pulse) 100%
+    );
+    filter: drop-shadow(0 0 5px oklch(0.86 0.15 182 / 0.45));
+    offset-rotate: auto;
+    offset-anchor: 100% 50%;
+    offset-distance: 0%;
+    opacity: 0;
+    animation: rayfin-flow var(--rayfin-dur) linear var(--rayfin-delay) infinite;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -103,7 +102,7 @@
     opacity: 0.35;
   }
 
-  .rayfin-pulse {
+  .rayfin-flow {
     display: none;
   }
 }
