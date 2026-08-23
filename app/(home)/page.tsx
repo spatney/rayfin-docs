@@ -8,7 +8,7 @@ const CREATE_COMMAND = 'npm create @microsoft/rayfin@latest my-app';
 
 const GET_STARTED_PROMPT = `Set up a new Rayfin app for me, end to end.
 
-Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Before writing any code, read https://rayfin.dev/llms.txt and https://rayfin.dev/docs/ai/rules.md — every page on that site is available as raw Markdown by appending .md to its URL.
+Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Before writing any code, read https://purple-grass-01682270f.7.azurestaticapps.net/llms.txt and https://purple-grass-01682270f.7.azurestaticapps.net/docs/ai/rules.md — every page on that site is available as raw Markdown by appending .md to its URL.
 
 Then do the work yourself rather than printing steps for me:
 1. Scaffold a project with \`npm create @microsoft/rayfin@latest my-app\` and install dependencies.

@@ -52,7 +52,9 @@ async function collectDocsHtmlRoutes(): Promise<string[]> {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         await walk(full, [...segments, entry.name]);
-      } else if (entry.name.endsWith('.html')) {
+      } else if (entry.name.endsWith('.html') && entry.name !== 'index.html') {
+        // index.html files are the extensionless-route copies emitted by
+        // emit-agent-assets; the canonical page is the sibling <name>.html.
         routes.push(`/docs/${[...segments, entry.name.replace(/\.html$/, '')].join('/')}`);
       }
     }

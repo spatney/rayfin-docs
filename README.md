@@ -1,6 +1,6 @@
 # Rayfin docs
 
-The official documentation site for [Rayfin](https://rayfin.dev) — Microsoft's TypeScript
+The official documentation site for [Rayfin](https://purple-grass-01682270f.7.azurestaticapps.net) — Microsoft's TypeScript
 backend-as-a-service, managed on Microsoft Fabric.
 
 It is built to be read by coding agents as well as by people. Every page has a raw
@@ -18,7 +18,7 @@ copy-pasteable prompts instead of only prose instructions.
 | `/sitemap.xml` | Every HTML page and every Markdown mirror |
 
 ```bash
-curl https://rayfin.dev/docs/data/querying.md
+curl https://purple-grass-01682270f.7.azurestaticapps.net/docs/data/querying.md
 ```
 
 ## Develop

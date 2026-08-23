@@ -24,7 +24,7 @@ const MIRROR_ROOT = path.join(OUT, 'llms.mdx', 'docs');
 /** Must match TERMINAL in app/llms.mdx/docs/[...slug]/route.ts. */
 const TERMINAL = '_md';
 
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://rayfin.dev').replace(
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://purple-grass-01682270f.7.azurestaticapps.net').replace(
   /\/$/,
   '',
 );
@@ -47,6 +47,8 @@ async function main() {
   // The mirror tree is an implementation detail; only the .md files ship.
   await rm(path.join(OUT, 'llms.mdx'), { recursive: true, force: true });
 
+  const indexCopies = await emitDirectoryIndexes();
+
   await writeAgentsFile(emitted);
   await writeSitemap(emitted);
   await writeRobots();
@@ -54,7 +56,44 @@ async function main() {
   await writeFile(path.join(OUT, '.nojekyll'), '');
 
   console.log(`[agent-assets] ${emitted.length} markdown mirrors emitted`);
+  console.log(`[agent-assets] ${indexCopies} directory index copies for extensionless routes`);
   console.log('[agent-assets] wrote AGENTS.md, sitemap.xml, robots.txt, host configs');
+}
+
+/**
+ * Mirror `foo.html` to `foo/index.html`.
+ *
+ * Azure Static Web Apps does not map an extensionless request to `<path>.html`; it only
+ * serves a directory's `index.html`. Emitting both shapes keeps clean, trailing-slash-free
+ * URLs working there without switching the whole export to `trailingSlash: true`, which
+ * would change where every other artifact lands.
+ */
+async function emitDirectoryIndexes(): Promise<number> {
+  let count = 0;
+
+  async function walk(dir: string) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (entry.name === '_next') continue;
+        await walk(full);
+        continue;
+      }
+
+      if (!entry.name.endsWith('.html') || entry.name === 'index.html') continue;
+
+      const target = path.join(dir, entry.name.replace(/\.html$/, ''), 'index.html');
+      if (existsSync(target)) continue;
+
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, await readFile(full, 'utf8'), 'utf8');
+      count++;
+    }
+  }
+
+  await walk(OUT);
+  return count;
 }
 
 /** Recursively walk the mirror tree, writing each entry to its `.md` location. */
@@ -195,11 +234,11 @@ async function writeHostConfigs() {
         routes: [
           { route: '/api/search', headers: { 'content-type': 'application/json' } },
         ],
-        navigationFallback: {
-          rewrite: '/404.html',
-          // Markdown mirrors and machine-readable assets are real files at any depth;
-          // never let a fallback swallow them.
-          exclude: ['/*.{md,txt,xml,json}', '/**/*.{md,txt,xml,json}', '/_next/*'],
+        // No navigationFallback: this is a static site, not an SPA. Extensionless
+        // routes resolve through the emitted directory indexes, and anything genuinely
+        // missing should return a real 404 rather than a 200 with the 404 page.
+        responseOverrides: {
+          '404': { rewrite: '/404.html' },
         },
       },
       null,
