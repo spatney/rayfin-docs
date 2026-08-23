@@ -7,9 +7,9 @@
  */
 export const siteConfig = {
   name: 'Rayfin',
-  tagline: 'Ship like a startup. Deploy in your tenant.',
+  tagline: 'Build like a startup. Deploy like an enterprise.',
   description:
-    "Rayfin is the app platform for Microsoft Fabric: a database, type-safe APIs, Entra ID auth, functions, storage, and hosting — defined in TypeScript, running inside your organization's boundary.",
+    "Define your backend in TypeScript: database, type-safe APIs, Entra ID auth, functions, storage, and hosting. Rayfin deploys it to Microsoft Fabric — inside your organization's boundary.",
   baseUrl: (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://rayfin.ai').replace(/\/$/, ''),
   repo: 'https://github.com/spatney/rayfin-docs',
 
