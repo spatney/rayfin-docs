@@ -8,13 +8,13 @@
   --rayfin-accent: oklch(0.62 0.19 258);
   --rayfin-grid-size: 56px;
   --rayfin-spark: oklch(0.777 0.152 181.912 / 0.55);
-  --rayfin-arc: oklch(0.777 0.152 181.912 / 0.16);
+  --rayfin-pulse: oklch(0.86 0.15 182 / 0.9);
 }
 
 /*
- * Hero backdrop: a static grid with a teal "charge" grid layered on top. The charge
- * layer breathes, and a soft arc sweeps down it, so the grid reads as energised rather
- * than decorative. Both are purely presentational and disabled under reduced motion.
+ * Hero backdrop: a static grid with a teal "charge" grid layered on top, plus discrete
+ * pulses that travel along the grid lines like current through a trace. Both grids are
+ * anchored to the horizontal centre so the pulses can be placed on real lines.
  */
 @keyframes rayfin-charge {
   0%,
@@ -26,17 +26,32 @@
   }
 }
 
-@keyframes rayfin-arc {
+@keyframes rayfin-pulse-v {
   0% {
-    transform: translateY(-140px);
+    transform: translateY(-160px);
     opacity: 0;
   }
-  20%,
-  80% {
+  12%,
+  72% {
     opacity: 1;
   }
   100% {
-    transform: translateY(560px);
+    transform: translateY(600px);
+    opacity: 0;
+  }
+}
+
+@keyframes rayfin-pulse-h {
+  0% {
+    transform: translateX(-200px);
+    opacity: 0;
+  }
+  12%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(70vw);
     opacity: 0;
   }
 }
@@ -44,6 +59,7 @@
 .rayfin-grid,
 .rayfin-grid-charge {
   background-size: var(--rayfin-grid-size) var(--rayfin-grid-size);
+  background-position: 50% 0;
 }
 
 .rayfin-grid {
@@ -61,14 +77,24 @@
   animation: rayfin-charge 7s ease-in-out infinite;
 }
 
-.rayfin-arc {
-  background-image: linear-gradient(
-    to bottom,
-    transparent,
-    var(--rayfin-arc),
-    transparent
-  );
-  animation: rayfin-arc 11s linear infinite;
+.rayfin-pulse {
+  position: absolute;
+  filter: blur(0.5px);
+  opacity: 0;
+}
+
+.rayfin-pulse-v {
+  width: 2px;
+  height: 130px;
+  background-image: linear-gradient(to bottom, transparent, var(--rayfin-pulse), transparent);
+  animation: rayfin-pulse-v var(--rayfin-dur) linear var(--rayfin-delay) infinite;
+}
+
+.rayfin-pulse-h {
+  width: 150px;
+  height: 2px;
+  background-image: linear-gradient(to right, transparent, var(--rayfin-pulse), transparent);
+  animation: rayfin-pulse-h var(--rayfin-dur) linear var(--rayfin-delay) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -77,7 +103,7 @@
     opacity: 0.35;
   }
 
-  .rayfin-arc {
+  .rayfin-pulse {
     display: none;
   }
 }
