@@ -12,10 +12,19 @@ copy-pasteable prompts instead of only prose instructions.
 | Route | What it is |
 | --- | --- |
 | `<any-docs-route>.md` | That page as raw Markdown with YAML frontmatter |
-| `/llms.txt` | Index of every page with descriptions |
+| `/llms.txt` | Index of every page with descriptions, and the size of every bulk download |
 | `/llms-full.txt` | The entire documentation set in one file |
+| `/llms-full/<section>.txt` | One section of the corpus, for a cheaper fetch |
 | `/AGENTS.md` | Operating brief for agents, at the site root |
-| `/sitemap.xml` | Every HTML page and every Markdown mirror |
+| `/sitemap.xml` | Every canonical HTML page, with `<lastmod>` |
+
+Every mirror carries `sdk_version`, `cli_version` and `last_updated` in its frontmatter, so
+an agent can tell which SDK release a snippet was written against. `last_updated` and
+`<lastmod>` both come from git commit dates, which is why CI checks out full history.
+
+The Markdown mirrors and the bulk downloads are served with `X-Robots-Tag: noindex` and
+kept out of the sitemap: they reproduce the HTML pages verbatim, and should never compete
+with the canonical page in a search index. They stay fully fetchable.
 
 ```bash
 curl https://rayfin.ai/docs/data/querying.md
@@ -116,7 +125,9 @@ app/                       Next.js App Router
   docs/[[...slug]]/        rendered docs pages
   llms.txt/                /llms.txt route handler
   llms-full.txt/           /llms-full.txt route handler
+  llms-full/[section]/     per-section bulk downloads
   llms.mdx/docs/[...slug]/ raw markdown mirrors (remapped at build time)
+  og/[...slug]/            1200x630 social cards, one per docs page
   api/search/              static search index
 content/docs/              the documentation itself — source of truth
 components/                PromptCard, PageActions, MDX wiring

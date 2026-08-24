@@ -1,5 +1,6 @@
 import { source } from '@/lib/source';
 import { siteConfig, absoluteUrl } from '@/lib/site.config';
+import { lastModified } from '@/lib/last-modified';
 
 type Page = ReturnType<typeof source.getPages>[number];
 
@@ -7,7 +8,10 @@ type Page = ReturnType<typeof source.getPages>[number];
  * Render a docs page as standalone Markdown for agent consumption.
  *
  * The frontmatter block is the contract agents rely on: it identifies the page,
- * its canonical HTML URL, the SDK version it documents, and where it came from.
+ * its canonical HTML URL, the SDK and CLI versions it documents, when it was last
+ * changed, and where it came from. The version and date stamps matter because an
+ * agent that mixes API shapes across SDK releases produces code that does not
+ * compile — it needs to know exactly which release a snippet was written against.
  */
 export async function getLLMText(page: Page): Promise<string> {
   const processed = await page.data.getText('processed');
@@ -22,6 +26,8 @@ export async function getLLMText(page: Page): Promise<string> {
     `section: ${section}`,
     `product: Rayfin`,
     `sdk_version: ${siteConfig.sdkVersion}`,
+    `cli_version: ${siteConfig.cliVersion}`,
+    `last_updated: ${lastModified(page.path)}`,
     `source: ${page.path}`,
     '---',
   ].join('\n');

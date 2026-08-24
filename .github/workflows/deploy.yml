@@ -26,7 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Static Web Apps needs full history for PR preview environments.
+          # Static Web Apps needs full history for PR preview environments, and the
+          # build reads git commit dates to stamp `last_updated` on every markdown
+          # mirror and `<lastmod>` on every sitemap entry. A shallow clone would
+          # collapse those to the date of the single fetched commit.
+          fetch-depth: 0
           submodules: false
           lfs: false
 

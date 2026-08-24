@@ -11,6 +11,7 @@ import type { Metadata } from 'next';
 import { getMDXComponents } from '@/components/mdx';
 import { PageFeedback } from '@/components/page-feedback';
 import { absoluteUrl, siteConfig } from '@/lib/site.config';
+import { ogImagePath } from '@/app/og/[...slug]/route';
 
 export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const params = await props.params;
@@ -50,9 +51,13 @@ export async function generateMetadata(
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  const title = page.data.title ?? siteConfig.name;
+  const description = page.data.description ?? siteConfig.description;
+  const image = absoluteUrl(ogImagePath(page.slugs));
+
   return {
-    title: page.data.title,
-    description: page.data.description ?? siteConfig.description,
+    title,
+    description,
     alternates: {
       canonical: absoluteUrl(page.url),
       types: {
@@ -60,10 +65,17 @@ export async function generateMetadata(
       },
     },
     openGraph: {
-      title: page.data.title,
-      description: page.data.description ?? siteConfig.description,
+      title,
+      description,
       url: absoluteUrl(page.url),
       type: 'article',
+      images: [{ url: image, width: 1200, height: 630, alt: title }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: [image],
     },
   };
 }

@@ -13,7 +13,20 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'out');
 
-const REQUIRED_FRONTMATTER = ['title', 'description', 'url', 'markdown_url', 'sdk_version'];
+const REQUIRED_FRONTMATTER = [
+  'title',
+  'description',
+  'url',
+  'markdown_url',
+  'sdk_version',
+  'cli_version',
+  'last_updated',
+];
+
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://rayfin.ai').replace(
+  /\/$/,
+  '',
+);
 
 const errors: string[] = [];
 
@@ -27,7 +40,9 @@ async function main() {
 
   await checkMirrors(htmlRoutes);
   await checkRootAssets();
+  await checkBundles();
   await checkLlmsCoverage(htmlRoutes);
+  await checkSitemap(htmlRoutes);
 
   if (errors.length > 0) {
     for (const e of errors) console.error(`error  ${e}`);
@@ -37,7 +52,8 @@ async function main() {
   }
 
   console.log(`[verify-agent] ${htmlRoutes.length} docs pages, all mirrors valid`);
-  console.log('[verify-agent] llms.txt, llms-full.txt, AGENTS.md, sitemap.xml, robots.txt present');
+  console.log('[verify-agent] llms.txt, llms-full.txt, section bundles, AGENTS.md, sitemap.xml, robots.txt present');
+  console.log('[verify-agent] sitemap locations match canonical URLs');
 }
 
 /** Every rendered docs page, as a site route: /docs, /docs/data/querying, ... */
@@ -97,6 +113,13 @@ async function checkMirrors(routes: string[]) {
       errors.push(`${route}.md has an empty description`);
     }
 
+    // A stamp that is not a real date is worse than none: agents use it to decide
+    // whether a snippet still matches the shipped SDK.
+    const stamp = frontmatter.match(/^last_updated:\s*(.+)$/m)?.[1]?.trim();
+    if (stamp && Number.isNaN(Date.parse(stamp))) {
+      errors.push(`${route}.md has an unparseable last_updated: ${stamp}`);
+    }
+
     const content = body.slice(end + 4).trim();
     if (content.length < 80) {
       errors.push(`${route}.md body is only ${content.length} chars — likely an empty page`);
@@ -131,6 +154,50 @@ async function checkRootAssets() {
   }
 }
 
+/**
+ * Section bundles must exist, carry a `.txt` extension, and partition the corpus:
+ * a section with no bundle is a section an agent can only reach by downloading
+ * everything.
+ */
+async function checkBundles() {
+  const dir = path.join(OUT, 'llms-full');
+
+  if (!existsSync(dir)) {
+    errors.push('missing out/llms-full/ section bundles');
+    return;
+  }
+
+  const entries = await readdir(dir, { withFileTypes: true });
+  const bundles = new Set(
+    entries.filter((e) => e.isFile() && e.name.endsWith('.txt')).map((e) => e.name),
+  );
+
+  for (const entry of entries) {
+    if (entry.isFile() && !entry.name.endsWith('.txt')) {
+      errors.push(`out/llms-full/${entry.name} was not renamed to .txt`);
+    }
+  }
+
+  // Sections are the first path segment of every mirror below /docs. Next's own
+  // build artifacts (`_next`, `__next.*`) share the tree and are not sections.
+  const sections = new Set<string>(['docs']);
+  async function walk(dir: string, depth: number) {
+    if (!existsSync(dir)) return;
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+      if (depth === 0) sections.add(entry.name);
+      await walk(path.join(dir, entry.name), depth + 1);
+    }
+  }
+  await walk(path.join(OUT, 'docs'), 0);
+
+  for (const section of sections) {
+    if (!bundles.has(`${section}.txt`)) {
+      errors.push(`no bulk download at /llms-full/${section}.txt for section ${section}`);
+    }
+  }
+}
+
 async function checkLlmsCoverage(routes: string[]) {
   const index = path.join(OUT, 'llms.txt');
   if (!existsSync(index)) return;
@@ -140,6 +207,47 @@ async function checkLlmsCoverage(routes: string[]) {
     if (!body.includes(`(${route})`)) {
       errors.push(`llms.txt does not list ${route}`);
     }
+  }
+
+  if (!body.includes('## Bulk downloads')) {
+    errors.push('llms.txt does not advertise the bulk downloads with their sizes');
+  }
+}
+
+/**
+ * The sitemap must agree with the canonical URL of every page it lists.
+ *
+ * A trailing slash here contradicts `trailingSlash: false` and the `<link rel="canonical">`
+ * in each page's head, which makes a crawler resolve a conflict on every URL. Markdown
+ * mirrors must stay out entirely — they duplicate the HTML.
+ */
+async function checkSitemap(routes: string[]) {
+  const file = path.join(OUT, 'sitemap.xml');
+  if (!existsSync(file)) return;
+
+  const body = await readFile(file, 'utf8');
+  const locs = [...body.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+
+  for (const loc of locs) {
+    if (loc !== `${SITE_URL}/` && loc.endsWith('/')) {
+      errors.push(`sitemap ${loc} has a trailing slash but canonical URLs do not`);
+    }
+    if (loc.endsWith('.md') && loc !== `${SITE_URL}/AGENTS.md`) {
+      errors.push(`sitemap lists the markdown mirror ${loc}, which duplicates the HTML page`);
+    }
+  }
+
+  const listed = new Set(locs);
+  for (const route of routes) {
+    if (!listed.has(`${SITE_URL}${route}`)) {
+      errors.push(`sitemap does not list ${route}`);
+    }
+  }
+
+  const urls = [...body.matchAll(/<url>[\s\S]*?<\/url>/g)];
+  const missingLastmod = urls.filter((u) => !u[0].includes('<lastmod>')).length;
+  if (missingLastmod > 0) {
+    errors.push(`${missingLastmod} sitemap entries have no <lastmod>`);
   }
 }
 

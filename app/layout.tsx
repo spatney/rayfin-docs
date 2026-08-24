@@ -15,9 +15,15 @@ export const metadata: Metadata = {
     template: `%s | ${siteConfig.name}`,
   },
   description: siteConfig.description,
+  applicationName: siteConfig.name,
   openGraph: {
     siteName: siteConfig.name,
     type: 'website',
+  },
+  // The opengraph-image routes emit 1200x630 cards, which only render at full
+  // width if the card type is upgraded from the default `summary`.
+  twitter: {
+    card: 'summary_large_image',
   },
 };
 
