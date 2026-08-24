@@ -86,9 +86,15 @@ export function PromptCard({
         </span>
       </figcaption>
 
+      {/*
+        `children` is Shiki's <code>, not a <pre> — the <pre> is this component. A bare
+        <code> inherits `white-space: normal`, which collapses the fence's line breaks
+        into one run-on paragraph, so the whitespace has to be restored here. Prompts are
+        prose rather than code, so they wrap instead of scrolling sideways.
+      */}
       <div
         ref={bodyRef}
-        className="overflow-x-auto px-4 py-3 font-mono text-[13px] leading-relaxed text-fd-foreground [&_pre]:!bg-transparent [&_pre]:!p-0 [&_span]:!text-fd-foreground [&_code]:!bg-transparent"
+        className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-[13px] leading-relaxed text-fd-foreground [&_code]:!bg-transparent [&_span]:!text-fd-foreground"
       >
         {children}
       </div>
