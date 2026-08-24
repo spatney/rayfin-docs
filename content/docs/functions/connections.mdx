@@ -10,8 +10,8 @@ identity. You declare a connection on the function, and the runtime hands you a 
 at invocation time — you never manage a long-lived credential yourself.
 
 > [!WARNING]
-> Functions are experimental and are not available in every Fabric region or tenant. See
-> [Functions](/docs/functions) before you depend on them.
+> Functions and delegated authentication are experimental and are not available in every
+> Fabric region or tenant. See [Functions](/docs/functions) before you depend on them.
 
 ## The connection pattern
 
@@ -51,10 +51,18 @@ export class ContextTokenCredential implements TokenCredential {
 | --- | --- | --- |
 | `Storage` | OneLake (DFS), Azure Blob/Table/Queue | The file URL from Lakehouse properties, or a storage account URL |
 | `Sql` | Fabric Lakehouse/Warehouse/SQL DB/Mirrored DB, Azure SQL | The SQL analytics endpoint or connection string from the Fabric portal |
+| `Fabric` | Fabric platform APIs | The workspace and item IDs the function should act on |
 | `KeyVault` | Azure Key Vault | The vault URL, e.g. `https://my-vault.vault.azure.net/` |
 | `CosmosDB` | Azure Cosmos DB | The account endpoint plus database/container names |
 | `EventGrid` | Azure Event Grid | The topic endpoint |
-| `PowerBI` | Power BI APIs | Scopes are still to be determined — check with your platform team |
+| `AzureAI` | Azure AI Foundry | The project endpoint URL and the model deployment name |
+| `Kusto` | Azure Data Explorer (Kusto) | The cluster URI and database name |
+| `ADO` | Azure DevOps | The organization and project names |
+| `WorkIQ` | WorkIQ | The service endpoint |
+
+`AzureAI`, `Kusto`, `ADO`, and `WorkIQ` are audiences the Fabric host does not yet resolve
+natively, so the SDK supplies the OBO scope for them. They work the same way from your
+code — declare the connection and call `ctx.getToken()`.
 
 ## SQL connections
 

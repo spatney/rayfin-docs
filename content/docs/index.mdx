@@ -52,35 +52,59 @@ Rayfin runs one way: as a managed **Fabric app** on Microsoft Fabric.
 
 ```mermaid
 flowchart TB
-  Dev[Developer] -->|rayfin up| CLI[Rayfin CLI]
-  CLI -->|deploy| Fabric
+  Dev(["Developer"]) -->|"rayfin up"| CLI["Rayfin CLI"]
+  CLI ==>|"deploy"| Fabric
+  User(["End user"]) ==> Static
 
-  subgraph Fabric[Microsoft Fabric]
-    direction LR
-    StaticApp[Static Content]
-    WebService[WebService]
-    DataApi[Data API Builder]
-    Functions[Functions]
-    Storage[(Blob Storage)]
-    MSSQL[(MSSQL)]
+  subgraph Fabric["Microsoft Fabric — inside your tenant"]
+    Static["Static content"]
+    Web["WebService"]
+    DataApi["Data API Builder"]
+    Fn["Functions"]
+    Blob[("Blob storage")]
+    MSSQL[("MSSQL")]
   end
 
-  User[End User] --> StaticApp
-  StaticApp --> WebService
-  WebService --> DataApi
-  WebService --> Functions
-  WebService --> Storage
-  DataApi --> MSSQL
-  Functions --> MSSQL
-  WebService -->|Fabric SSO| EntraID[Entra ID]
+  subgraph Outside["Outside the app"]
+    Entra["Microsoft Entra ID"]
+    MSRes["Microsoft resources<br/>Fabric · Azure AI<br/>Key Vault · Cosmos DB<br/>Kusto · Azure DevOps"]
+    AnyApi["Any HTTPS API"]
+    Entra ~~~ MSRes ~~~ AnyApi
+  end
+
+  Static ==> Web
+  Web ==> DataApi ==> MSSQL
+  Web ==> Fn
+  Fn ==> MSSQL
+  Web ==> Blob
+  Web -.->|"Fabric SSO"| Entra
+  Fn -.->|"delegated token"| MSRes
+  Fn -.->|"secrets"| AnyApi
+
+  class Dev,User actor
+  class CLI,Static,Web,DataApi service
+  class MSSQL store
+  class Fn,Blob experimental
+  class Entra,MSRes,AnyApi external
 ```
 
 `rayfin up` packages your project and provisions it as a Fabric app: Fabric hosts the
 MSSQL database, a WebService and Data API Builder layer in front of it, your built frontend
 as static content, and sign-in through Fabric SSO (Entra ID) — the only auth provider
-available once the app is deployed. [Functions](/docs/functions) and
-[blob storage](/docs/storage) are optional services you enable in `rayfin.yml`; both are
-experimental and are not available in every Fabric region or tenant.
+available once the app is deployed.
+
+[Functions](/docs/functions) and [blob storage](/docs/storage) are optional services you
+enable in `rayfin.yml`. Functions are also how the app reaches anything outside itself. They
+call any HTTPS API using secrets from `rayfin secret set`, and they reach Microsoft
+resources — Fabric, Azure AI, Key Vault, Cosmos DB, Event Grid, Kusto, Azure DevOps —
+through [delegated authentication](/docs/functions/connections): the runtime exchanges the
+caller's identity for a resource-scoped token, so the function acts **as the signed-in
+user** rather than as a shared service identity.
+
+> [!WARNING]
+> Functions, blob storage, and delegated authentication are experimental and are not
+> available in every Fabric region or tenant. Confirm availability in your tenant before
+> you depend on them.
 
 During development, a local Vite server takes the place of the *Static Content* node above:
 `npx rayfin up --exclude-services staticHosting` deploys everything else to Fabric, and
