@@ -5,8 +5,11 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { siteConfig } from '@/lib/site.config';
 import { Analytics } from '@/components/analytics';
+import { OG_HOME_PATH } from '@/app/og.png/route';
 
 const inter = Inter({ subsets: ['latin'] });
+
+const ogAlt = `${siteConfig.name} — ${siteConfig.tagline}`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.baseUrl),
@@ -19,11 +22,13 @@ export const metadata: Metadata = {
   openGraph: {
     siteName: siteConfig.name,
     type: 'website',
+    images: [{ url: OG_HOME_PATH, width: 1200, height: 630, alt: ogAlt }],
   },
-  // The opengraph-image routes emit 1200x630 cards, which only render at full
-  // width if the card type is upgraded from the default `summary`.
+  // The og routes emit 1200x630 cards, which only render at full width if the card
+  // type is upgraded from the default `summary`.
   twitter: {
     card: 'summary_large_image',
+    images: [{ url: OG_HOME_PATH, alt: ogAlt }],
   },
 };
 

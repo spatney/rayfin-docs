@@ -345,10 +345,6 @@ async function writeHostConfigs() {
         globalHeaders: { 'access-control-allow-origin': '*' },
         routes: [
           { route: '/api/search', headers: { 'content-type': 'application/json' } },
-          // Next emits the root opengraph-image metadata route without a file
-          // extension, so there is nothing for MIME mapping to key off. Social
-          // scrapers reject a card served as application/octet-stream.
-          { route: '/opengraph-image', headers: { 'content-type': 'image/png' } },
           ...DUPLICATE_PATTERNS.map((route) => ({
             route,
             headers: { 'x-robots-tag': noindex },
@@ -391,9 +387,6 @@ async function writeHostConfigs() {
 
 /api/search
   Content-Type: application/json; charset=utf-8
-
-/opengraph-image
-  Content-Type: image/png
 
 ${DUPLICATE_PATTERNS.map((p) => `${p}\n  X-Robots-Tag: ${noindex}`).join('\n\n')}
 `,
