@@ -13,19 +13,39 @@ Every Fabric app exposes a single Rayfin endpoint backed by a set of child servi
 
 ```mermaid
 flowchart TD
-  AppBackend[Fabric App] --> Auth[Authentication]
-  AppBackend --> StaticHosting[Static Content]
-  AppBackend --> WebService[Rayfin WebService]
-  WebService --> DataApi[Data API / GraphQL]
-  WebService --> Functions[Functions]
-  WebService --> Storage[(Blob Storage)]
-  DataApi --> Database[(SQL Database)]
-  Functions --> Database
+  App["Fabric app"] --> Auth["Auth"]
+  App ==> Static["Static content"]
+  App ==> Web["WebService"]
+  Web ==> DataApi["Data API Builder"]
+  Web ==> Fn["Functions"]
+  Web ==> Blob[("Blob storage")]
+  DataApi ==> MSSQL[("MSSQL")]
+  Fn ==> MSSQL
+  Auth -.->|"Fabric SSO"| Entra["Microsoft Entra ID"]
+
+  class App,Auth,Static,Web,DataApi service
+  class MSSQL store
+  class Fn,Blob experimental
+  class Entra external
 ```
 
-Data, authentication, and static hosting are the core services. [Functions](/docs/functions)
-and [blob storage](/docs/storage) are optional — enable them in `rayfin.yml` when you need
-them.
+Each node maps to a key under `services` in
+[`rayfin.yml`](/docs/reference/config/rayfin-yml):
+
+| Service | `rayfin.yml` key | What it provides |
+| --- | --- | --- |
+| Auth | `services.auth` | Session issuing and validation. Sign-in itself is delegated to Microsoft Entra ID through [Fabric SSO](/docs/auth/fabric-sso) — the identity provider lives outside the app. |
+| Data API Builder | `services.data` | The [GraphQL data API](/docs/data) over the app's MSSQL database. `dialect` is `mssql`. |
+| Static content | `services.staticHosting` | Your built frontend, served from the app's origin. See [Static hosting](/docs/hosting). |
+| Functions | `services.functions` | Server-side [TypeScript functions](/docs/functions). Experimental. |
+| Blob storage | `services.storage` | [File and blob storage](/docs/storage). Experimental. |
+
+Auth, data, and static hosting are the core services. Functions and blob storage are
+optional — enable them in `rayfin.yml` when you need them.
+
+> [!WARNING]
+> Functions and blob storage are experimental and are not available in every Fabric region
+> or tenant. Confirm availability in your tenant before you depend on them.
 
 A Fabric app lives inside a Fabric workspace. A workspace can hold multiple Fabric apps —
 for example, one per environment or one per project.
