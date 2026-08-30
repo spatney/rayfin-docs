@@ -1,0 +1,547 @@
+---
+title: Generating entity files
+description: Generate Category A connector entity files from metadata.json, including keys, relationships, permissions, aggregate schema, and apply steps.
+---
+
+Generate entity files after `npx rayfin connector add` creates a Category A connector. The
+command writes `rayfin/connectors/<name>/metadata.json` and a placeholder
+`rayfin/connectors/<name>/schema.ts`, then stops. It does not emit per-table `.ts` entity
+files.
+
+Category A means the connector types listed on [Connectors](/docs/connectors):
+`fabric-sqlanalytics`, `fabric-warehouse`, and `fabric-sqldatabase`. For the usage surface
+after generation, see [Fabric SQL sources](/docs/connectors/sql-sources).
+
+## Follow the generation workflow
+
+### 1. Read `metadata.json`
+
+Open `rayfin/connectors/<name>/metadata.json`. Treat it as the only source of truth for
+physical columns, primary keys, foreign keys, and server-generated column markers.
+
+### 2. Pick the tables in scope
+
+For a full connector surface, use every table under `schemas[].tables[]`. For a subset,
+filter those arrays by `tableName` before writing files. Do not generate a file for a table
+outside the requested scope.
+
+### 3. Write one entity file per table
+
+Write `rayfin/connectors/<name>/<EntityName>.ts` for each selected table. Follow the entity
+contract on this page for naming, imports, fields, primary keys, generated columns,
+relationships, and permissions.
+
+### 4. Replace the placeholder aggregate
+
+Overwrite `rayfin/connectors/<name>/schema.ts` with the aggregate schema. It must export the
+entity types, the connector schema type, and the `connectorConfig` value.
+
+### 5. Surface every warning
+
+Report missing PK metadata, missing FK metadata, skipped relationships, unknown SQL types,
+and server-generated columns. Do not drop warnings silently.
+
+When the source schema changes, refresh the connector metadata before regenerating. When
+only entity code changes, apply the generated DAB config again with
+`npx rayfin up connector apply` or `npx rayfin up connector apply --name <name>`. This apply
+step requires a prior `npx rayfin up` so the Fabric app exists.
+
+## Read the `metadata.json` shape
+
+`metadata.json` has this shape. Field names here are the serialized metadata keys.
+
+```typescript
+interface SchemaMetadata {
+  source: string;
+  connector: string;
+  connectionString: string;
+  discoveredAt: string;
+  schemas: SchemaEntry[];
+}
+
+interface SchemaEntry {
+  schemaName: string;
+  tables: TableEntry[];
+}
+
+interface TableEntry {
+  tableName: string;
+  columns: ColumnEntry[];
+  foreignKeys?: ForeignKeyEntry[];
+  primaryKeyColumns?: string[];
+}
+
+interface ColumnEntry {
+  columnName: string;
+  dataType: string;
+  isNullable: boolean;
+  maxLength?: number;
+  precision?: number;
+  scale?: number;
+  datePrecision?: number;
+  identity?: { seed: string; increment: string };
+  default?: string;
+  computed?: string;
+  serverManaged?: 'rowversion' | 'temporalRowStart' | 'temporalRowEnd';
+}
+
+interface ForeignKeyEntry {
+  constraintName: string;
+  columnName: string;
+  referencedTableSchema: string;
+  referencedTableName: string;
+  referencedColumnName: string;
+}
+```
+
+`primaryKeyColumns` is in database `ORDINAL_POSITION` order. Preserve that order in
+`Source({ primaryKey })` and by-key examples.
+
+Multiple `foreignKeys` rows that share a `constraintName` form one composite foreign key.
+Generate one relationship for the group, not one relationship per column.
+
+Absence means unknown or not exposed. It is never permission to synthesize a key or
+relationship. Fabric SQL Database generally exposes PK/FK and server-generation metadata.
+Warehouse and Lakehouse may omit catalog metadata, and Lakehouse commonly omits PK/FK
+constraints entirely.
+
+## Name entity files consistently
+
+Derive the initial class name from the table name: `pascalCase(table.tableName)`. The file
+name is `<ClassName>.ts`, and each file contains one entity class.
+
+Pluralization is allowed when it is idempotent. Pluralizing `Order` to `Orders` is fine if
+that is the desired GraphQL type, but an already plural source table such as `Orders`,
+`Categories`, or `sales_line_items` must not become double-pluralized. Use the same final
+name everywhere: the class, file, `@entity()` name when supplied, `TSchema` key, re-export,
+and `client.connectors.<name>.<Entity>` path.
+
+GraphQL type names are global across every connector in the app. Before finalizing a name,
+scan other `rayfin/connectors/*/` directories and the entities already generated for this
+connector. If a name collides, prefix it with the PascalCased source database name from
+`metadata.json` `source`. If that still collides, prefix it with the PascalCased connector
+name from `rayfin.yml`. Disambiguate only colliding names; never prefix every entity. Report
+each rename to the user.
+
+## Declare primary keys from metadata
+
+When `table.primaryKeyColumns` is present and non-empty, resolve each SQL column name
+against `table.columns` before converting it to the TypeScript property name. Declare
+exactly those property names in `Source({ primaryKey })`, preserving metadata order.
+
+```typescript title="rayfin/connectors/sales/OrderItem.ts"
+import { entity, int, uuid, Source } from '@microsoft/rayfin-core/experimental';
+
+@entity()
+export class OrderItem extends Source({
+  schema: 'dbo',
+  table: 'OrderItem',
+  primaryKey: ['orderId', 'productId'],
+}) {
+  @uuid({ column: 'OrderID' })
+  orderId!: string;
+
+  @uuid({ column: 'ProductID' })
+  productId!: string;
+
+  @int()
+  quantity!: number;
+}
+```
+
+A primary-key column must exist and be non-nullable. If metadata names a missing or nullable
+key column, stop generation for that table and report the inconsistency. Do not choose a
+replacement column, do not rename the PK to `id`, and do not infer uniqueness from sampled
+values.
+
+When `primaryKeyColumns` is absent or empty, emit `primaryKey: []`. The entity is keyless
+and exposes no `findByKey`, `update`, or `delete`. Lakehouse SQL endpoints commonly fall
+into this case. The builder may manually add a logical key later when they know the source
+contract, but an agent must not add one without explicit input.
+
+## Map SQL column types to decorators
+
+Look up `column.dataType` case-insensitively.
+
+| SQL type family | Decorator | TypeScript type |
+| --- | --- | --- |
+| `int`, `bigint`, `smallint`, `tinyint` | `@int()` | `number` |
+| `decimal`, `numeric`, `money`, `smallmoney`, `float`, `real` | `@decimal({ precision, scale })` | `number` |
+| `bit` | `@boolean()` | `boolean` |
+| `date`, `datetime`, `datetime2`, `smalldatetime`, `datetimeoffset`, `time` | `@date()` | `Date` |
+| `uniqueidentifier` | `@uuid()` | `string` |
+| `varchar`, `nvarchar`, `char`, `nchar`, `text`, `ntext` | `@text()` | `string` |
+| Anything else, such as `geography`, `hierarchyid`, `xml`, or vector types | `@text()` | `string` |
+
+For the fallback case, emit a warning such as:
+
+```text
+Unknown SQL type geography for Location.Shape; falling back to @text().
+```
+
+If the entity class name equals a field's TypeScript type, qualify the field type with
+`globalThis`. For example, a table named `Date` with a `datetime2` column uses
+`globalThis.Date` for that field annotation so the type does not resolve to the class.
+
+## Mark server-generated columns
+
+A column is server-generated when it has any of these metadata markers:
+
+- `identity` for an `IDENTITY(seed, increment)` column.
+- `default` for a `DEFAULT` expression.
+- `computed` for a computed column declared with `AS (...)`.
+- `serverManaged` for rowversion or temporal-period columns.
+
+Wrap the TypeScript type in `AutoGenerated<T>` when any marker is present. The decorator
+and its `column:` option do not change, and there is no decorator option for this metadata.
+Do not invent one.
+
+`AutoGenerated<T>` makes the column optional on create and update input, and reads it back
+as plain `T`. Most generated values still cannot be written: `IDENTITY`, computed,
+rowversion, and temporal values are rejected by the source if supplied. A plain `DEFAULT`
+column may be omitted for the default or supplied to override it.
+
+Surface a one-line note for each server-generated column, such as:
+
+```text
+Column 'Order.OrderID' is server-generated (identity); the source will populate it, so omit it on create().
+```
+
+A server-generated key still follows the normal primary-key rules. Being generated does not
+make a nullable key valid and does not remove the key from `Source({ primaryKey })`.
+
+## Build field decorator options
+
+Generate each column property as `camelCase(column.columnName)`. Nullable columns use `?:`;
+non-nullable columns use `!:`.
+
+Build the decorator option object in this order, omitting keys that do not apply:
+
+1. `optional: true` when `column.isNullable` is true.
+2. `column: '<columnName>'` when the SQL column name differs from the TypeScript property
+   name. Escape embedded single quotes.
+3. `max: <maxLength>` for `@text()` when `maxLength > 0`.
+4. `precision: <p>, scale: <s>` for `@decimal()` when both values are present.
+
+Do not emit integer `min` or `max` from SQL precision; those options are value bounds, not
+storage capacity. If the option object is empty, write `@text()`, not `@text({})`.
+
+## Generate relationships only from foreign keys
+
+Generate forward `@one` and reverse `@many` relationships from FK metadata only. Do not infer
+relationships from matching column names, star-schema patterns, or sampled values.
+
+Group each table's `foreignKeys` by `constraintName` before generating relationships. A
+group is one FK relationship, including composite FKs. Preserve the row order inside the
+group.
+
+For each forward `@one` on the referencing table:
+
+- Every FK row in the group must reference the same schema and table. If not, report the
+  inconsistent metadata and skip that constraint.
+- `fieldName = camelCase(singularize(referencedTableName))`.
+- If more than one constraint would produce the same field name, derive a stable
+  disambiguated name from `constraintName`.
+- `sourceFields = group.map(fk => camelCase(fk.columnName))`.
+- `targetFields = group.map(fk => camelCase(fk.referencedColumnName))`.
+- If any source column is nullable, mark the relationship optional with `{ optional: true }`
+  and `?:`.
+
+```typescript
+@one(() => Customer, { sourceFields: ['customerId'], targetFields: ['customerId'] })
+customer!: Customer;
+
+@one(() => SalesRep, {
+  optional: true,
+  sourceFields: ['salesRepId'],
+  targetFields: ['salesRepId'],
+})
+salesRep?: SalesRep;
+```
+
+Self-referencing FKs follow the same rules and must be optional. Use the current class in
+the resolver and add no sibling import. The entity and DAB relationship generate, but the
+client cannot select a dotted path across a self-relationship.
+
+If the referenced table is missing from metadata, skip the relationship and warn. In subset
+mode, also skip a relationship whose target table exists in metadata but is outside the
+selected set. Never import a sibling file you did not write.
+
+Build reverse `@many` relationships from an index of grouped FKs across all selected tables.
+Every grouped FK from another table to the current table becomes one reverse relationship:
+
+- `fieldName = camelCase(pluralize(otherTable.tableName))`.
+- `sourceFields = group.map(fk => camelCase(fk.referencedColumnName))`.
+- `targetFields = group.map(fk => camelCase(fk.columnName))`.
+- In subset mode, emit `@many` only when the referencing table is also selected.
+
+```typescript
+@many(() => OrderItem, { sourceFields: ['productId'], targetFields: ['productId'] })
+orderItems!: OrderItem[];
+```
+
+Use the simplified naming rules from the generator. `singularize`: `ies` becomes `y` when
+length is greater than three; `xes`, `ses`, `ches`, and `shes` drop `es`; a non-`s` word
+ending in `s` drops the final `s`; everything else is unchanged. `pluralize` is idempotent:
+if the name already ends in `s`, `es`, or `ies`, leave it unchanged; otherwise a non-vowel
+`y` becomes `ies`, `x`, `z`, `ch`, and `sh` add `es`, and other names add `s`.
+
+## Report missing metadata
+
+When `primaryKeyColumns` is absent or empty, warn:
+
+```text
+No PK metadata available for <tableName>; generated as a keyless entity.
+```
+
+When `foreignKeys` is absent or empty and no reverse FK points at the table, warn:
+
+```text
+No FK metadata available for <tableName>; relationships omitted.
+```
+
+For Lakehouse, these warnings describe a known metadata limitation. Keep the generated
+entity keyless and relationship-free unless the builder explicitly supplies logical keys or
+relationships.
+
+## Build imports deterministically
+
+Each entity file imports from `@microsoft/rayfin-core/experimental`.
+
+- Always include `entity` and `Source`.
+- Then append used field and relationship decorators in this order: `boolean`, `date`,
+  `decimal`, `int`, `text`, `uuid`, `one`, `many`.
+- If any column is server-generated, add `import type { AutoGenerated } from
+  '@microsoft/rayfin-core/experimental';`.
+- Import each non-self relationship target as a sibling value import, alphabetized:
+  `import { Category } from './Category.js';`.
+- In subset mode, only surviving relationships contribute imports.
+
+## Use the canonical entity pattern
+
+```typescript title="rayfin/connectors/inventory/Product.ts"
+import {
+  entity,
+  date,
+  int,
+  many,
+  one,
+  text,
+  uuid,
+  Source,
+} from '@microsoft/rayfin-core/experimental';
+import type { AutoGenerated } from '@microsoft/rayfin-core/experimental';
+import { Category } from './Category.js';
+import { OrderItem } from './OrderItem.js';
+
+@entity()
+export class Product extends Source({
+  schema: 'dbo',
+  table: 'Product',
+  primaryKey: ['productId'],
+}) {
+  @uuid({ column: 'ProductID' })
+  productId!: string;
+
+  @text()
+  name!: string;
+
+  @int()
+  stock!: number;
+
+  @date({ column: 'CreatedUtc' })
+  createdUtc!: AutoGenerated<Date>;
+
+  @one(() => Category, { sourceFields: ['categoryId'], targetFields: ['categoryId'] })
+  category!: Category;
+
+  @many(() => OrderItem, { sourceFields: ['productId'], targetFields: ['productId'] })
+  orderItems!: OrderItem[];
+}
+```
+
+## Scope `@role()` to connector operations
+
+Add `@role()` to connector entities the same way you secure Rayfin data entities. Legal
+actions are `'read'`, `'create'`, `'update'`, `'delete'`, and `'*'`. The actions on every
+entity must be a subset of the connector's YAML `operations:`. The settings validator does
+not catch a mismatch today; DAB fails when `rayfin up connector apply` runs.
+
+Narrow YAML first, mirror the same connector-wide list into `connectorConfig.operations`,
+then add entity decorators that grant only the actions that entity needs. Stack multiple
+`@role()` decorators when different roles need different actions.
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: inventory
+    type: fabric-warehouse
+    version: '1'
+    operations: ['read', 'update']
+```
+
+```typescript title="rayfin/connectors/inventory/Order.ts"
+import { role } from '@microsoft/rayfin-core';
+import { entity, decimal, text, uuid, Source } from '@microsoft/rayfin-core/experimental';
+
+@role('authenticated', ['read', 'update'])
+@entity()
+export class Order extends Source({ schema: 'dbo', table: 'Order', primaryKey: ['orderId'] }) {
+  @uuid({ column: 'OrderID' })
+  orderId!: string;
+
+  @text()
+  customerEmail!: string;
+
+  @decimal({ precision: 18, scale: 2 })
+  total!: number;
+}
+```
+
+## Write row-level policies with the typed DSL
+
+Policies use the shared typed `claims` and `item` DSL. Never write raw SQL or DAB policy
+strings in connector entities. The available claims are `claims.sub`, `claims.email`, and
+`claims.role`; item fields are addressed as `item.<columnName>` using the entity property
+name. Use `.eq(...)`, `.and(...)`, and `.or(...)` to combine conditions. `RoleDeclarationOptions`
+also accepts `include` and `exclude` field lists.
+
+Inspect `metadata.json` for ownership columns such as `owner_id`, `user_id`, `tenant_id`,
+or `created_by`. If one is present, ask whether rows should be scoped per signed-in user.
+See [Permissions and row-level security](/docs/data/permissions) for the full shared policy
+DSL.
+
+```typescript title="rayfin/connectors/inventory/Document.ts"
+import { role } from '@microsoft/rayfin-core';
+import { entity, text, uuid, Source } from '@microsoft/rayfin-core/experimental';
+
+@role('authenticated', ['read', 'update'], {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+  exclude: ['internalNotes'],
+})
+@entity()
+export class Document extends Source({ schema: 'dbo', table: 'Document', primaryKey: ['id'] }) {
+  @uuid()
+  id!: string;
+
+  @text({ max: 128 })
+  owner_id!: string;
+
+  @text({ max: 200 })
+  title!: string;
+
+  @text({ optional: true, max: 4000 })
+  internalNotes?: string;
+}
+```
+
+## Export the aggregate schema
+
+The aggregate `rayfin/connectors/<name>/schema.ts` must export three things:
+
+1. Entity re-exports as types, using `export type { Entity }`.
+2. The `<Name>Schema` type, where `<Name>` is the PascalCase connector name plus `Schema`.
+3. The `connectorConfig` value declared with `as const satisfies ConnectorConfig`.
+
+`GraphQLBackedConnector<TSchema, typeof connectorConfig>` is the published Category A
+marker. Do not invent per-type names such as `FabricWarehouse` or `FabricSqlAnalytics`; they
+are not exported markers.
+
+Use `as const satisfies ConnectorConfig`, not a `: ConnectorConfig` annotation, so the
+`connector` and `operations` literals survive. The marker reads those literals to expose the
+right methods and dialect-specific return types.
+
+```typescript title="rayfin/connectors/inventory/schema.ts"
+import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
+import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
+
+import type { Customer } from './Customer.js';
+import type { Order } from './Order.js';
+import type { OrderItem } from './OrderItem.js';
+
+export type { Customer } from './Customer.js';
+export type { Order } from './Order.js';
+export type { OrderItem } from './OrderItem.js';
+
+export const connectorConfig = {
+  connector: 'fabric-warehouse',
+  operations: ['read', 'update'],
+  entities: {
+    Customer: ['customerId', 'email', 'displayName'],
+    Order: ['orderId', 'customerId', 'customerEmail', 'total', 'placedUtc'],
+    OrderItem: ['orderId', 'productId', 'quantity', 'unitPrice'],
+  },
+} as const satisfies ConnectorConfig;
+
+export type InventorySchema = GraphQLBackedConnector<
+  {
+    Customer: typeof Customer;
+    Order: typeof Order;
+    OrderItem: typeof OrderItem;
+  },
+  typeof connectorConfig
+>;
+```
+
+The `entities` map is keyed exactly like `TSchema`. List scalar entity property names, not
+database column names; if a field declares `graphqlName`, list that GraphQL field name.
+Leave relationship fields out.
+
+> [!WARNING]
+> In `schema.ts`, use `import type` and `export type` for entity classes. A value import or
+> value re-export ships decorated classes to the browser bundle, and the deployed page can
+> render blank even when type-checking and build commands pass.
+
+## Avoid Category A anti-patterns
+
+- Never leave the placeholder `schema.ts` as bare re-exports; app code needs both
+  `<Name>Schema` and `connectorConfig`.
+- Never import or re-export entity classes as values in `schema.ts`; use `import type` and
+  `export type`.
+- Populate `connectorConfig.entities` with property-name arrays, not entity classes.
+  Omitting it makes no-selection reads throw `SELECTION_REQUIRED`; using classes brings
+  decorated classes into the browser bundle.
+- In subset mode, list only generated entities in `TSchema`.
+- Keep `connectorConfig.operations` identical to YAML `operations:`, and keep every entity
+  `@role()` action a subset of that connector-wide list.
+- Never widen a decorator to match the full connector operation list when the entity should
+  be narrower.
+- Use the typed policy DSL; never raw SQL or DAB policy strings.
+- Never double-pluralize entity or relationship names.
+- Disambiguate duplicate GraphQL type names only when they collide; never blanket-prefix.
+- Treat `metadata.json` as the only source of truth for keys and relationships.
+- Never synthesize a primary key or infer a relationship from column names, sampled values,
+  or naming conventions.
+- When the user asks for one entity, filter `metadata.json` and generate that subset; do not
+  regenerate every table.
+- Never edit `metadata.json` or `dab-config.json` by hand; both are regenerated artifacts.
+
+## Troubleshoot generation and apply failures
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `rayfin up connector apply` fails on a role action | An entity `@role()` includes an action that is not in YAML `operations:` | Narrow the decorator or YAML so the entity action set is a subset. |
+| `rayfin up connector apply` fails with duplicate or redefined GraphQL type | Two connectors generated the same entity name | Prefix the colliding entity with the source database name, or connector name if needed, and update the class, file, `@entity()` name, `TSchema` key, re-export, and access path. |
+| `rayfin connector add` writes YAML but no entity files | Expected; the CLI writes metadata and a placeholder only | Generate entity files from `metadata.json`. If metadata is missing, schema discovery failed. |
+| `Property '<name>' does not exist on connectors` | The connector key in `AppConnectorsSchema` differs from the `connectors` option or YAML name | Use the `rayfin.yml` connector `name` in all three places. |
+| A CRUD method is missing from autocomplete | Expected; `<Name>Schema` narrows methods to `operations:` and removes by-key methods from keyless entities | Check YAML, `connectorConfig.operations`, and `Source({ primaryKey })`. |
+| `ConnectorsRayfinClient` import fails | It was imported from the stable client entry | Import it from `@microsoft/rayfin-client/experimental`. |
+| `Cannot find module '@microsoft/rayfin-connector-fabric-graphql'` | Connector packages were not installed | Run the pinned install command printed by `connector add`, or reconstruct it from `npx rayfin connector types --json`. |
+| Deployed page is blank with a syntax error, though build and deploy passed | `schema.ts` imported or re-exported decorated entity classes as values | Change entity imports and re-exports to `import type` and `export type`, and keep `connectorConfig.entities` as arrays. |
+| A read throws `SELECTION_REQUIRED` | `connectorConfig.entities` is missing and no explicit selection was passed | Add scalar property names to `entities`, or pass an explicit selection. |
+| A read returns null or errors for a field that exists in the source | `entities` lists database column names rather than entity property names | Use the names declared on the generated class, such as `productId`, not `ProductID`. |
+
+```prompt title="Generate Category A connector entities"
+In my Rayfin project, generate entity files for the existing Category A connector named
+inventory. Read rayfin/connectors/inventory/metadata.json first. Ask me which tables are in
+scope if I have not already named them; otherwise filter schemas[].tables[] by tableName.
+For each selected table, write rayfin/connectors/inventory/<EntityName>.ts using Source({
+schema, table, primaryKey }) from @microsoft/rayfin-core/experimental, with primary keys,
+SQL type mappings, AutoGenerated server-generated columns, and relationships derived only
+from metadata. Add @role() decorators whose actions are a subset of the connector YAML
+operations, and ask whether ownership columns such as owner_id, user_id, tenant_id, or
+created_by should become row-level policies. Then overwrite rayfin/connectors/inventory/schema.ts
+with type-only entity imports and exports, an InventorySchema type using GraphQLBackedConnector,
+and connectorConfig declared as const satisfies ConnectorConfig with operations and an
+entities map of scalar property names. Surface every warning, then run npx rayfin up
+connector apply --name inventory after a prior npx rayfin up exists.
+```

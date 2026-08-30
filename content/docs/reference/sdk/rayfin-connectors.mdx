@@ -1,0 +1,255 @@
+---
+title: "@microsoft/rayfin-connectors"
+description: Connector runtime APIs for mounting typed Fabric SQL, semantic model, and KQL Database connectors on the Rayfin client.
+appliesTo: "@microsoft/rayfin-connectors — experimental"
+---
+
+`@microsoft/rayfin-connectors` is the runtime kernel behind
+`client.connectors`. It creates the typed connector proxy, chooses the transport for each
+connector category, and defines the shared operation, error, host, and middleware types.
+See the [Connectors guide](/docs/connectors) for concepts and setup flow.
+
+> [!WARNING]
+> Connectors are in private preview. This API may change between releases.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-connectors@1.36.0-alpha
+```
+
+`@microsoft/rayfin-client` depends on this package, so it usually arrives transitively.
+Declare it directly when application code imports its types or helpers, because strict
+resolvers such as pnpm treat undeclared transitive imports as phantom dependencies.
+
+## `createConnectorsApi`
+
+`createConnectorsApi` builds the proxy mounted as `client.connectors`:
+
+```typescript
+function createConnectorsApi<TSchema extends ConnectorsSchema = ConnectorsSchema>(
+  apiClient: ApiClient,
+  configs: Record<keyof TSchema & string, ConnectorConfig>,
+  runtime?: ConnectorsRuntime,
+  host?: HostEnvironment,
+): TypedConnectorsApi<TSchema>;
+```
+
+The dispatcher reads `configs[name].connector` when a connector is first accessed. The
+Category A types `fabric-sqlanalytics`, `fabric-warehouse`, and `fabric-sqldatabase` get a
+`GraphQLConnectorClient`, so the surface is `client.connectors.<name>.<Entity>`. All other
+connector types get a `SemanticConnectorClient`, so the surface is
+`client.connectors.<name>.<operation>(input, options?)`. Accessing a missing connector
+configuration throws `ConnectorsError` with code `UNKNOWN_CONNECTOR`.
+
+## `ConnectorsRayfinClient`
+
+Most applications reach `createConnectorsApi` through `ConnectorsRayfinClient`, exported
+from `@microsoft/rayfin-client/experimental`. It is not exported from the stable
+`@microsoft/rayfin-client` entry.
+
+```typescript
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client/experimental';
+
+const client = new ConnectorsRayfinClient<
+  AppSchema,
+  AppFunctionsSchema,
+  AppConnectorsSchema
+>(
+  {
+    baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+    connectors: {
+      salesDb: salesDbConnectorConfig,
+      salesModel: salesModelConnectorConfig,
+    },
+  },
+  {
+    salesModel: fabricSemanticModel(),
+  },
+);
+```
+
+Its constructor is:
+
+```typescript
+class ConnectorsRayfinClient<
+  TSchema extends EntitySchema = Record<string, any>,
+  TFunctionsSchema extends FunctionsSchema = FunctionsSchema,
+  TConnectorsSchema extends ConnectorsSchema = ConnectorsSchema,
+> extends RayfinClient<TSchema, TFunctionsSchema> {
+  readonly connectors: TypedConnectorsApi<TConnectorsSchema>;
+  constructor(
+    config: ConnectorsRayfinClientConfig<TConnectorsSchema>,
+    connectorsRuntime?: ConnectorsRuntime,
+  );
+}
+
+interface ConnectorsRayfinClientConfig<
+  TConnectorsSchema extends ConnectorsSchema = ConnectorsSchema,
+> extends RayfinClientConfig {
+  connectors: Record<keyof TConnectorsSchema & string, ConnectorConfig>;
+  host?: HostEnvironment;
+}
+```
+
+`connectors` is required and exhaustive for the connector schema. `host` is optional; when
+it is absent the connector layer calls `detectHost()`.
+
+## Schema and operation types
+
+The package exports the shared type vocabulary consumed by connector marker packages:
+
+```typescript
+type ConnectorsSchema = Record<string, ConnectorMarker>;
+
+interface ConnectorMarker<TClient = unknown> {
+  readonly __client?: TClient;
+}
+
+interface ConnectorConfig {
+  connector: ConnectorType;
+  operations?: readonly CrudOperation[];
+  entities?: Record<string, EntityClass | readonly string[]>;
+}
+
+interface OperationDef<TInput = unknown, TOutput = unknown> {
+  readonly __input?: TInput;
+  readonly __output?: TOutput;
+}
+
+type OperationCatalog = Record<string, OperationDef<unknown, unknown>>;
+type TypedConnectorClient<TCatalog extends OperationCatalog> = {
+  [K in keyof TCatalog & string]: (input: unknown, options?: InvokeOptions) => Promise<unknown>;
+};
+type TypedConnectorsApi<TSchema extends ConnectorsSchema> = {
+  [K in keyof TSchema & string]: unknown;
+};
+
+interface InvokeOptions {
+  headers?: Record<string, string>;
+}
+```
+
+`ConnectorType` is the connector type union shared with the CLI, and `CrudOperation` is the
+Category A verb union. `ConnectorConfig.operations` gates Category A CRUD methods at
+runtime; `ConnectorConfig.entities` supplies default selections and relationship metadata
+for entity connectors.
+
+## Host detection
+
+```typescript
+interface HostEnvironment {
+  type: 'embedded' | 'standalone' | 'cli';
+}
+
+function detectHost(): HostEnvironment;
+```
+
+`detectHost()` returns `'cli'` when there is no browser DOM and `'standalone'` in browsers.
+It never auto-detects `'embedded'`; a host package must assert that environment by passing
+an explicit `host`.
+
+## Category A entity clients
+
+`ConnectorEntityClient` is the entity surface behind Category A connectors. It supports the
+read chain `select`, `where`, `orderBy`, and `first`, terminal reads
+`findMany`, `findFirst`, and `findByKey`, mutations `create`, `update`, and `delete`, and
+the aggregation entry points `groupBy` and `aggregate`. See
+[Fabric SQL sources](/docs/connectors/sql-sources) for usage patterns and
+[Aggregations](/docs/data/aggregations) for aggregation shapes.
+
+CRUD operations map to client methods through `METHODS_FOR_CRUD_OPERATION`:
+
+| CRUD operation | Methods |
+| --- | --- |
+| `read` | `select`, `where`, `orderBy`, `first`, `groupBy`, `aggregate`, `findMany`, `findFirst`, `findByKey` |
+| `create` | `create` |
+| `update` | `update` |
+| `delete` | `delete` |
+
+`MutationResult<TDialect, TRecord>` returns the row for connectors that support
+read-after-write. Fabric Warehouse mutations instead return `DbOperationResult`:
+
+```typescript
+interface DbOperationResult {
+  readonly result: string;
+}
+```
+
+Warehouse uses this `{ result: string }` shape because that dialect does not read the
+mutated row back after the operation.
+
+## Errors
+
+Connector failures use a shared result contract:
+
+```typescript
+type ConnectorErrorCategory = 'network' | 'api' | 'query' | 'overflow' | 'unknown';
+
+interface ConnectorError {
+  message: string;
+  code?: string;
+  category?: ConnectorErrorCategory;
+  details?: string;
+  recoveryHint?: string;
+}
+
+interface ConnectorErrorResult {
+  status: 'error';
+  error: ConnectorError;
+}
+
+function isConnectorError(value: unknown): value is ConnectorErrorResult;
+
+class ConnectorsError extends SdkError {
+  name: 'ConnectorsError';
+  constructor(message: string, code?: string);
+}
+```
+
+`isConnectorError` narrows normalized operation results that satisfy the shared failed
+shape. `ConnectorsError` is thrown by SDK-side routing and validation failures, such as an
+unknown connector or a gated CRUD method.
+
+## Runtime middleware
+
+Connector-specific packages add behavior with `ConnectorRuntime`:
+
+```typescript
+type ConnectorsRuntime = Record<string, ConnectorRuntime>;
+
+interface ConnectorRuntime {
+  operations?: Record<string, OperationRuntime>;
+}
+
+interface OperationRuntime {
+  decodeBinary?: (data: ArrayBuffer) => unknown;
+  invoke?: (ctx: InvokeContext, next: InvokeNext) => Promise<unknown>;
+}
+
+interface InvokeContext {
+  readonly connectorName: string;
+  readonly operation: string;
+  readonly input?: unknown;
+  readonly options?: InvokeOptions;
+  readonly host: HostEnvironment;
+  readonly connectorConfig?: ConnectorConfig;
+  readonly http?: InvokeHttpClient;
+}
+
+type InvokeNext = (ctx: InvokeContext) => Promise<unknown>;
+
+interface InvokeHttpClient {
+  fetch(input: Request | string | URL, init?: RequestInit): Promise<Response>;
+}
+```
+
+`invoke` can handle a call itself or call `next(ctx)` to use the default transport.
+`decodeBinary` runs only for binary payloads returned through the operation proxy.
+
+> [!NOTE]
+> `client.connectors.<name>.invoke('op', input)` is a raw escape hatch. It uses the
+> default standalone transport and bypasses middleware and `decodeBinary`. For decoded
+> output, call the named operation method such as
+> `client.connectors.salesModel.executeQuery(input)`.

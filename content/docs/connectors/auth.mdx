@@ -1,0 +1,108 @@
+---
+title: Connector authentication
+description: Configure connector auth.type values, validation rules, and caller identity for delegated and application connector access.
+---
+
+Choose connector authentication in `rayfin/rayfin.yml` before you deploy a connector. The
+auth block controls whether runtime queries use the signed-in user's identity or the app's
+identity.
+
+For the conceptual overview across auth, functions, connectors, and data policies, see
+[Delegated access](/docs/auth/delegated-access). For the sibling function surface, see
+[Function connections](/docs/functions/connections).
+
+> [!WARNING]
+> Connectors are in private preview. Confirm the feature is available in your tenant before
+> you design an app around it.
+
+## Declare `auth.type`
+
+Each connector entry has an `auth:` block:
+
+```yaml
+auth:
+  type: delegated
+```
+
+In context, the entry looks like this:
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: warehouse
+    type: fabric-warehouse
+    config:
+      workspaceId: <workspace-id>
+      itemId: <warehouse-item-id>
+    auth:
+      type: delegated
+    operations:
+      - name: read
+      - name: create
+      - name: update
+      - name: delete
+```
+
+`npx rayfin connector add ...` writes `auth.type: delegated` by default. The value is
+lowercase: `delegated` or `application`. Other values, including uppercase variants, fail
+validation.
+
+## Use an allowed value for the connector type
+
+`rayfin up` validates that `auth.type` is known and allowed for the connector type before
+deployment starts.
+
+| Type | Allowed auth |
+| --- | --- |
+| `fabric-sqlanalytics` | `delegated`, `application` |
+| `fabric-warehouse` | `delegated`, `application` |
+| `fabric-sqldatabase` | `delegated`, `application` |
+| `fabric-semanticmodel` | `delegated` only |
+| `kusto` | `delegated` only |
+
+Category B connectors are delegated-only. `auth.type: application` on
+`fabric-semanticmodel` or `kusto` is rejected by `rayfin up` before deployment.
+
+## Run queries as the signed-in user
+
+Use `auth.type: delegated` when each connector query should run as the signed-in user. The
+runtime uses on-behalf-of token exchange, so the user needs their own permission on the
+Fabric workspace and item. Rayfin does not grant source access on the user's behalf.
+
+Delegated auth is what makes row-level policies meaningful for Category A connector
+entities. The `claims` object in an `@role()` policy represents the real caller, so a policy
+can compare `claims.sub` or `claims.email` to fields on the connector entity. See the
+[policy DSL](/docs/data/permissions) and
+[connector entity generation](/docs/connectors/entity-generation).
+
+## Run queries as the app
+
+Use `auth.type: application` only when a Category A connector should run as the app identity
+instead of the caller. It is available for `fabric-sqlanalytics`, `fabric-warehouse`, and
+`fabric-sqldatabase`.
+
+Because the caller's identity is no longer in play, row-level policies keyed on `claims` no
+longer distinguish users. Do not choose application auth for per-user access control.
+
+## Separate discovery permissions from runtime auth
+
+Schema discovery during `npx rayfin connector add ...` runs under the developer's identity.
+For Fabric SQL sources, that developer needs SQL endpoint permissions on the source so the
+CLI can inspect tables and columns.
+
+Runtime auth is separate. After deployment, connector queries use the configured
+`auth.type`: the signed-in user for `delegated`, or the app identity for `application`.
+
+```prompt title="Configure connector authentication"
+In my Rayfin project, review the connectors block in rayfin/rayfin.yml and set the correct
+auth.type for each connector.
+
+Use auth.type: delegated when queries should run as the signed-in user and the user has
+permission on the target Fabric workspace and item. Use auth.type: application only for
+fabric-sqlanalytics, fabric-warehouse, or fabric-sqldatabase when the connector should run
+as the app identity. Do not set application auth on fabric-semanticmodel or kusto because
+rayfin up rejects that combination.
+
+If the connector is Category A and uses @role() policies on generated entities, explain how
+the chosen auth type affects claims-based row-level security. Then run npx rayfin up far
+enough to catch connector validation errors and report the result.
+```

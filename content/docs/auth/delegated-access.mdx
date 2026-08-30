@@ -1,0 +1,71 @@
+---
+title: Delegated access
+description: Understand how Fabric SSO, function connections, connectors, and entity permissions use the signed-in user's identity.
+---
+
+Use delegated access when server-side Rayfin code needs to reach a Microsoft resource
+without a long-lived credential. Rayfin starts from the [Fabric SSO](/docs/auth/fabric-sso)
+session, exchanges the signed-in user's identity for a resource-scoped token, and runs the
+server-side call **as the caller** rather than as a shared service account.
+
+Everything on this page builds on Fabric SSO. The user signs in once, Rayfin manages the
+session, and delegated surfaces use that caller identity when they reach functions,
+connectors, or Rayfin-owned data.
+
+> [!WARNING]
+> Function connections and connectors are preview features. Confirm they are available in
+> your tenant before you design a production workflow around them.
+
+## Choose the delegated surface
+
+| Surface | You declare | You get | Runs as |
+| --- | --- | --- | --- |
+| [Function connections](/docs/functions/connections) | `udf.connection({ audienceType })` | `ctx.getToken(AudienceType.X)` | The signed-in user |
+| [Connectors](/docs/connectors/auth) | `auth.type` in `rayfin.yml` | A typed client on `client.connectors.<name>` | The signed-in user (`delegated`) or the app (`application`) |
+| [Your own data](/docs/data/permissions) | `@role()` / `@authenticated()` policies | `client.data.<Entity>` | The signed-in user |
+
+## Call Microsoft resources from functions
+
+Use a [function connection](/docs/functions/connections) when custom server-side code needs
+to call a Microsoft resource. You declare `udf.connection({ audienceType })` on the
+function, then read the scoped token inside the handler with
+`ctx.getToken(AudienceType.X)`.
+
+The function still runs inside your deployed Fabric app. The token identifies the signed-in
+user, so the target resource decides whether that user can read or write.
+
+## Query existing Fabric sources
+
+Use a [connector](/docs/connectors/auth) when you want to query an existing Fabric data
+source through `client.connectors.<name>`. Category A connectors expose typed entities for
+Fabric SQL sources. Category B connectors expose DAX or KQL query operations.
+
+Connector auth is explicit in `rayfin.yml`. `auth.type: delegated` runs every query as the
+signed-in user. `auth.type: application` runs as the app identity and is available only for
+the Category A Fabric SQL connector types.
+
+## Secure data Rayfin owns
+
+Use [entity permissions](/docs/data/permissions) when the data lives in Rayfin-managed
+entities. `@role()` and `@authenticated()` policies compare the signed-in user's claims to
+fields on each row, so `client.data.<Entity>` returns only rows the policy allows.
+
+## Grant access at the source
+
+Delegated auth passes the user's identity through; it does not grant access by itself. The
+signed-in user must already have permission on the target Fabric workspace and item. If the
+user lacks that permission, the source rejects the request with an authorization failure.
+
+```prompt title="Choose a delegated-auth surface"
+In my Rayfin project, help me decide which delegated-auth surface to use for a Microsoft
+resource integration.
+
+Start from Fabric SSO as the identity source. If I need custom server-side code to call a
+Microsoft resource, use a function connection with udf.connection({ audienceType }) and
+ctx.getToken(AudienceType.X). If I need to query an existing Fabric source through typed
+entities or DAX/KQL, use a connector and set auth.type in rayfin/rayfin.yml. If the data is
+owned by my Rayfin app, use @role() or @authenticated() policies on rayfin/data entities.
+
+Explain which signed-in user or app identity each call runs as, what permissions the caller
+needs on the target Fabric item, and which Rayfin files I should edit.
+```

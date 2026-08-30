@@ -9,22 +9,8 @@ a query string by hand.
 
 ## Set up the client
 
-Construct one `RayfinClient` and reuse it across your app. Type it with your
-`AppSchema` so every entity access is fully typed.
-
-```typescript title="src/services/rayfinClient.ts"
-import { RayfinClient } from '@microsoft/rayfin-client';
-import type { AppSchema } from '../../rayfin/data/schema';
-
-export const rayfinClient = new RayfinClient<AppSchema>({
-  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
-  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY ?? '',
-});
-```
-
-`VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` are generated into `.env.local` by
-`rayfin up` — see [Schema changes](/docs/data/migrations) for the apply workflow that
-produces them.
+Every example below uses the shared `rayfinClient` — see
+[Set up the client](/docs/data#set-up-the-client) for how to construct it once and reuse it.
 
 ## The query chain
 
@@ -219,10 +205,30 @@ async function fetchAllNotes() {
 > `PagedResult` also exposes a `totalCount` field, but Data API Builder does not populate
 > it on paginated queries — do not rely on it.
 
-## There is no `count()`
+## Counting records
 
-Counting matching records is not implemented on the fluent client. Select the minimal
-fields you need and use `results.length`:
+There is no `count()` on the fluent query chain. What exists is
+[aggregation](/docs/data/aggregations) — `count` is one of five operations available through
+`groupBy()` and `aggregate()`:
+
+```typescript
+const [totals] = await rayfinClient.data.Order
+  .where({ status: { eq: 'open' } })
+  .aggregate({ open: { count: 'amount' } })
+  .execute();
+
+totals.aggregations.open; // number
+```
+
+> [!IMPORTANT]
+> `count` aggregates **numeric values**, not rows. Data API Builder types every
+> aggregation's field argument as the entity's numeric fields, so you can only count a
+> numeric column — and the number it returns is the count of rows where that column is
+> non-null.
+
+That makes `count` a true row count only when you point it at a non-nullable numeric column.
+For an entity that has none — a `Todo` with a `uuid` id and `text` title, say — fall back to
+counting client-side:
 
 ```typescript
 const openTodos = await rayfinClient.data.Todo.select(['id'])

@@ -1,0 +1,188 @@
+---
+title: "@microsoft/rayfin-connector-fabric-semanticmodel"
+description: Marker, runtime, direct execution, URL parsing, Arrow decoding, and normalized result APIs for Fabric semantic model connectors.
+appliesTo: "@microsoft/rayfin-connector-fabric-semanticmodel — experimental"
+---
+
+`@microsoft/rayfin-connector-fabric-semanticmodel` provides the type marker and runtime
+helpers for `fabric-semanticmodel` connectors. Use it with
+`ConnectorsRayfinClient` from `@microsoft/rayfin-client/experimental`. See
+[Semantic models](/docs/connectors/semantic-models) for guide-level usage.
+
+> [!WARNING]
+> Connectors are in private preview. This API may change between releases.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-connector-fabric-semanticmodel@1.36.0-alpha
+```
+
+## Marker and operation catalog
+
+`FabricSemanticModel<TOps>` is the connector marker. It defaults to the full operation
+union, currently only `executeQuery`.
+
+```typescript
+import type { OperationDef } from '@microsoft/rayfin-connectors';
+import type {
+  ExecuteQueryInput,
+  FabricSemanticModel,
+  SemanticModelQueryResult,
+} from '@microsoft/rayfin-connector-fabric-semanticmodel';
+
+interface FabricSemanticModelOperationCatalog {
+  executeQuery: OperationDef<ExecuteQueryInput, SemanticModelQueryResult>;
+}
+
+type AppConnectorsSchema = {
+  salesModel: FabricSemanticModel<'executeQuery'>;
+};
+```
+
+The `executeQuery` output is the normalized `SemanticModelQueryResult` union. The runtime
+folds the wire envelope inside its `invoke` middleware before the caller receives it.
+
+## Query input
+
+```typescript
+interface ExecuteQueryInput {
+  query: string;
+  resultSetRowCountLimit?: number;
+}
+```
+
+`query` is the DAX text. `resultSetRowCountLimit` is optional and has no default limit in
+the input shape; when present on a runtime-processed call, it overrides the runtime option
+for that call.
+
+## Normalized result
+
+```typescript
+type SemanticModelQueryResult =
+  | {
+      status: 'success';
+      table: QueryTable;
+      requestId: string;
+    }
+  | {
+      status: 'error';
+      error: QueryError;
+      requestId: string;
+    };
+
+interface QueryTable {
+  columns: QueryColumn[];
+  rows: unknown[][];
+}
+
+interface QueryColumn {
+  name: string;
+  dataType: string;
+}
+
+interface QueryError {
+  category: 'api' | 'query' | 'network' | 'overflow' | 'unknown';
+  message: string;
+  code?: string;
+  details?: string;
+  recoveryHint?: string;
+}
+
+function toQueryResult(
+  response: FabricSemanticModelTabularResponse | SemanticModelQueryResult,
+): SemanticModelQueryResult;
+```
+
+`toQueryResult` accepts the raw tabular envelope or an already-normalized result. It returns
+success rows as column-aligned arrays and gives failures a category and message.
+
+## Runtime options
+
+`fabricSemanticModel(options?)` returns the `ConnectorRuntime` registered under the same
+connector name passed to `ConnectorsRayfinClient`.
+
+```typescript
+function fabricSemanticModel(options?: FabricSemanticModelOptions): ConnectorRuntime;
+
+interface FabricSemanticModelOptions {
+  target?: FabricSemanticModelTarget | (() => FabricSemanticModelTarget | undefined);
+  baseUrl?: string;
+  endpoints?: FabricEndpoints;
+  getToken?: () => string | undefined | Promise<string | undefined>;
+  sessionId?: string;
+  culture?: string;
+  schemaOnly?: boolean;
+  queryTimeout?: number;
+  resultSetRowCountLimit?: number;
+}
+```
+
+`target`, `baseUrl`, `endpoints`, `getToken`, and `sessionId` are used by the direct CLI
+path. `culture`, `schemaOnly`, `queryTimeout`, and `resultSetRowCountLimit` become DAX
+query options.
+
+## URLs and endpoints
+
+`parseFabricUrl(url)` parses a portal URL into `{ workspaceId, itemId, itemType }`.
+`parseSemanticModelUrl(url)` does the same and rejects URLs that do not address a semantic
+model.
+
+```text
+https://app.fabric.microsoft.com/groups/{workspaceId}/semanticmodels/{itemId}
+https://app.powerbi.com/groups/{workspaceId}/modeling/{itemId}
+https://app.powerbi.com/onelake/details/{workspaceId}/dataset/{itemId}
+```
+
+Endpoint helpers are exported for runtime configuration:
+
+```typescript
+const DEFAULT_ENDPOINTS: FabricEndpoints;
+const DEFAULT_POWER_BI_BASE_URL: string;
+function derivePowerBiBaseUrl(endpoints?: FabricEndpoints): string;
+```
+
+`DEFAULT_ENDPOINTS.fabricApi` is `https://api.fabric.microsoft.com/v1`.
+`DEFAULT_POWER_BI_BASE_URL` is `https://api.powerbi.com/v1.0/myorg`.
+
+## Direct execution helpers
+
+```typescript
+function executeDaxDirect(
+  http: InvokeHttpClient,
+  target: FabricSemanticModelTarget,
+  query: string,
+  options?: FabricSemanticModelRuntimeOptions,
+): Promise<FabricSemanticModelTabularResponse>;
+
+function resolveTarget(
+  target: FabricSemanticModelRuntimeOptions['target'],
+): FabricSemanticModelTarget | undefined;
+
+function resolveBaseUrl(
+  options: Pick<FabricSemanticModelRuntimeOptions, 'baseUrl' | 'endpoints'>,
+): string;
+
+function toNetworkErrorResponse(
+  err: unknown,
+  requestId: string,
+): FabricSemanticModelTabularResponse;
+```
+
+`executeDaxDirect` never throws. Non-2xx responses, network failures, and parse failures all
+become a response with `status: 'Failed'`.
+
+## Arrow decoding
+
+```typescript
+function parseArrowStream(
+  bytes: ArrayBuffer | Uint8Array,
+  requestId?: string,
+): FabricSemanticModelTabularResponse;
+
+class ArrowOverflowError extends Error {}
+```
+
+`parseArrowStream` decodes Apache Arrow IPC streams into the tabular envelope. It maps DAX
+error tables to `queryError`, represents unsafe numeric coercions as table errors, and
+preserves column metadata when the stream provides it.

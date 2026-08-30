@@ -1,5 +1,5 @@
 {
   "title": "Recipes",
   "description": "End-to-end walkthroughs for common application patterns.",
-  "pages": ["index", "todo-app", "testing"]
+  "pages": ["todo-app", "testing"]
 }

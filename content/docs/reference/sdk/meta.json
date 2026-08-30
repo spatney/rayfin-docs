@@ -2,7 +2,6 @@
   "title": "SDK",
   "description": "API reference for every @microsoft/rayfin-* package.",
   "pages": [
-    "index",
     "rayfin-core",
     "rayfin-client",
     "rayfin-data",
@@ -10,6 +9,10 @@
     "rayfin-auth-provider-fabric",
     "rayfin-functions",
     "rayfin-storage",
+    "rayfin-connectors",
+    "rayfin-connector-fabric-graphql",
+    "rayfin-connector-fabric-semanticmodel",
+    "rayfin-connector-kusto",
     "rayfin-lib"
   ]
 }

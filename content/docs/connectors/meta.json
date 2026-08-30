@@ -1,0 +1,13 @@
+{
+  "title": "Connectors",
+  "description": "Query Fabric warehouses, SQL databases, semantic models, and KQL databases from your app.",
+  "pages": [
+    "adding",
+    "client-setup",
+    "sql-sources",
+    "entity-generation",
+    "semantic-models",
+    "kusto",
+    "auth"
+  ]
+}

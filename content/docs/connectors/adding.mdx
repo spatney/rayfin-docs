@@ -1,0 +1,197 @@
+---
+title: Adding a connector
+description: Discover Fabric sources, add a connector to rayfin.yml, install its pinned packages, and manage connector entries safely.
+---
+
+Add a connector when a Rayfin app needs to reach existing Fabric data. Start with
+`connector search` if you do not already have the workspace ID, item ID, and connector
+type. See [Connectors](/docs/connectors) for the connector-type catalog.
+
+> [!WARNING]
+> Connectors are in private preview. The `rayfin connector` command group is hidden until
+> the project opts in, and the APIs may change between releases.
+
+## Find a source
+
+`connector search` lists Fabric items the signed-in identity can add and prints the exact
+`connector add` command for each result.
+
+```bash
+npx rayfin connector search [query] [--workspace-id <ws-id> --type <type>] [--limit <n>] [--json]
+```
+
+Choose one scope:
+
+| Scope | Command shape | Notes |
+| --- | --- | --- |
+| One workspace | `npx rayfin connector search "sales" --workspace-id <ws-id> --type fabric-warehouse` | `--type` is required so the CLI makes a bounded request. |
+| Every accessible workspace | `npx rayfin connector search --all-workspaces --type fabric-warehouse,fabric-sqldatabase` | `--type` is required because it is the server-side filter for a tenant-wide scan. |
+| Deployed project workspaces | `npx rayfin connector search` | Run inside a deployed Rayfin project with no scope flag. The CLI searches the workspaces recorded in the deployments registry. |
+
+Use `--limit <n>` to cap plain or JSON output. Interactive output ignores the limit because
+the picker paginates the full result set.
+
+Use `--json` when an agent or script will choose the result. The JSON envelope includes
+`status`, `query`, `scope`, `count`, and `sources`. Each source includes `workspaceId`,
+`itemId`, `connectorType`, `suggestedName`, and a ready-to-run `addCommand`.
+
+```json
+{
+  "status": "ok",
+  "query": "sales",
+  "scope": { "workspaceId": "<ws-id>" },
+  "count": 1,
+  "limit": 5,
+  "sources": [
+    {
+      "workspaceId": "<ws-id>",
+      "workspaceName": "Finance",
+      "itemId": "<item-id>",
+      "itemType": "Warehouse",
+      "displayName": "Inventory",
+      "connectorType": "fabric-warehouse",
+      "suggestedName": "inventory",
+      "addCommand": "rayfin connector add --type fabric-warehouse --workspace-id <ws-id> --item-id <item-id> --name inventory"
+    }
+  ]
+}
+```
+
+## Add the connector
+
+Run `connector add` with literal Fabric IDs. The flag is `--type <type>`, not
+`--connector`.
+
+```bash
+npx rayfin connector add --type <type> --workspace-id <ws-id> --item-id <item-id>
+```
+
+| Flag | Required | Purpose |
+| --- | --- | --- |
+| `--type <type>` | Yes | Connector type, such as `fabric-warehouse`, `fabric-sqldatabase`, `fabric-sqlanalytics`, `fabric-semanticmodel`, or `kusto`. |
+| `--workspace-id <id>` | Yes | Fabric workspace ID. It must be a literal value; `${VAR}` placeholders are rejected. |
+| `--item-id <id>` | Yes | Fabric item ID. It must be a literal value. |
+| `--name <name>` | No | Connector name. When omitted, the CLI derives it from the Fabric item display name. |
+| `--operations <ops>` | No | Comma-separated subset of the catalog operations, for example `read,update`. Omit it to use every allowed operation. |
+| `-y`, `--yes` | No | Accept overwrite and confirmation prompts. |
+| `-v`, `--verbose` | No | Print verbose diagnostics. |
+| `--json` | No | Emit machine-readable output. |
+
+Connector names must match `/^[a-zA-Z0-9\-_]+$/` and can be at most 256 characters.
+
+## Know what the command writes
+
+`connector add` verifies the Fabric item, writes a `connectors:` entry in
+`rayfin/rayfin.yml`, and scaffolds `rayfin/connectors/<name>/schema.ts`.
+
+For Category A connectors, it also runs schema discovery and writes
+`rayfin/connectors/<name>/metadata.json`. For `kusto`, it resolves the KQL Database's
+cluster query endpoint and database name from `(workspaceId, itemId)`, then bakes
+`queryServiceUri` and `databaseName` into the generated `schema.ts`.
+
+The `rayfin.yml` entry uses an array. Operations are objects, not bare strings:
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: inventory
+    type: fabric-warehouse
+    config:
+      workspaceId: <ws-id>
+      itemId: <item-id>
+    auth:
+      type: delegated
+    operations:
+      - name: read
+      - name: update
+  - name: telemetry
+    type: kusto
+    version: '1'
+    config:
+      workspaceId: <ws-id>
+      itemId: <kql-database-item-id>
+    auth:
+      type: delegated
+    operations:
+      - name: executeQuery
+      - name: executeCommand
+```
+
+## Scope operations
+
+Use `--operations` to narrow a connector below the catalog default:
+
+```bash
+npx rayfin connector add --type fabric-warehouse --workspace-id <ws-id> --item-id <item-id> --operations read,update
+```
+
+Rules:
+
+- You can narrow below the catalog default, but you cannot widen above it.
+- There is no `all` meta-operation. List every action explicitly, or omit
+  `--operations` to accept the catalog default.
+- The host validator rejects unknown or duplicate operation names at `rayfin up` time.
+
+For the current connector types, the default operations are listed in
+[Connectors](/docs/connectors).
+
+## Install the pinned packages
+
+`connector add` scaffolds files but installs nothing. On success, it prints an exact
+version-pinned install command:
+
+```text
+📦 Install the packages this connector needs:
+   npm install @microsoft/rayfin-connector-kusto@1.35.0-alpha
+```
+
+Run the command verbatim. Do not drop the version.
+
+Connector packages ship in lockstep with the CLI, but their npm `latest` and `preview`
+tags lag. An unversioned install can pull an older connector that hard-pins its own
+`@microsoft/rayfin-data`, leaving two Rayfin version lines in one app.
+
+`rayfin connector types --json` carries the same `packages` array, so an agent can rebuild
+the exact install list from the live catalog when needed.
+
+## List and remove connectors
+
+`connector list` reads the local `rayfin.yml` file and does not make network calls.
+
+```bash
+npx rayfin connector list
+npx rayfin connector list -v
+npx rayfin connector list --json
+```
+
+Use `connector remove` with `-y` or `--yes` to remove both the `rayfin.yml` entry and the
+connector directory:
+
+```bash
+npx rayfin connector remove <name> --yes
+```
+
+Re-add a connector after removing it when you need to refresh `metadata.json` from the
+source.
+
+## Next step
+
+After the connector entry and packages are in place, wire it into your app with
+[Wiring connectors into your app](/docs/connectors/client-setup). For the complete CLI flag
+reference, see [`rayfin connector`](/docs/reference/cli/connector).
+
+```prompt title="Add a connector to a Rayfin project"
+In my Rayfin project, add a connector to an existing Microsoft Fabric source. If I have not
+provided a connector type, workspace ID, and item ID, run `npx rayfin connector search`
+with the right scope to find candidates, and use the `addCommand` from `--json` output
+rather than inventing IDs.
+
+Run the add command with `--type <type>`, `--workspace-id <workspace-id>`, and
+`--item-id <item-id>` using literal IDs. Use `--name <name>` only if I provided a name or
+the derived name is unsuitable. Use `--operations <ops>` only to narrow below the catalog
+default.
+
+After the add command succeeds, run the exact version-pinned `npm install` command it
+prints; do not drop package versions. Then list the configured connectors with
+`npx rayfin connector list` and prepare to wire the connector through
+`ConnectorsRayfinClient` from `@microsoft/rayfin-client/experimental`.
+```

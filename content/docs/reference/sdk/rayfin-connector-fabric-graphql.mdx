@@ -1,0 +1,92 @@
+---
+title: "@microsoft/rayfin-connector-fabric-graphql"
+description: Type-only marker APIs for Category A Fabric SQL connectors that expose typed entity CRUD through client.connectors.
+appliesTo: "@microsoft/rayfin-connector-fabric-graphql — experimental"
+---
+
+`@microsoft/rayfin-connector-fabric-graphql` supplies TypeScript-only markers for
+Category A connectors. It has no runtime behavior; the entity proxy comes from
+[`@microsoft/rayfin-connectors`](/docs/reference/sdk/rayfin-connectors). See
+[Generating entity files](/docs/connectors/entity-generation) for the guide workflow.
+
+> [!WARNING]
+> Connectors are in private preview. This API may change between releases.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-connector-fabric-graphql@1.36.0-alpha
+```
+
+This package is not a dependency of `@microsoft/rayfin-client`, so a fresh app is missing
+it until you install it explicitly. Pin the version to the Rayfin CLI release you are using.
+
+## `GraphQLBackedConnector`
+
+`GraphQLBackedConnector<TSchema, TConfig>` is the published marker for all Category A
+connector types: `fabric-sqlanalytics`, `fabric-warehouse`, and `fabric-sqldatabase`.
+Per-type marker names such as `FabricWarehouse` do not exist.
+
+```typescript
+import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
+import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
+import { Customer } from './Customer';
+import { Order } from './Order';
+
+export const connectorConfig = {
+  connector: 'fabric-warehouse',
+  operations: ['read', 'create', 'update', 'delete'],
+  entities: {
+    Customer: ['CustomerId', 'Name'],
+    Order: ['OrderId', 'CustomerId', 'Amount'],
+  },
+} as const satisfies ConnectorConfig;
+
+export type SalesWarehouseConnector = GraphQLBackedConnector<
+  {
+    Customer: typeof Customer;
+    Order: typeof Order;
+  },
+  typeof connectorConfig
+>;
+```
+
+`TSchema` maps entity names to their classes with `typeof`. The constructor type carries
+the primary-key phantom from the entity source metadata; a bare instance type is treated as
+keyless. `TConfig` should be `typeof connectorConfig`, with the value declared
+`as const satisfies ConnectorConfig` so the `connector` and `operations` literals are not
+widened.
+
+## Restricted CRUD surface
+
+The marker resolves to a `RestrictedDataApi`, one `RestrictedEntityClient` per entity:
+
+```typescript
+type RestrictedDataApi<
+  TSchema extends EntitySchema,
+  TOps extends CrudOperation = CrudOperation,
+  TDialect extends ConnectorType = ConnectorType,
+> = {
+  [K in keyof TSchema & string]: RestrictedEntityClient<TSchema, K, TOps, TDialect>;
+};
+
+type RestrictedEntityClient<
+  TSchema extends EntitySchema,
+  TEntity extends keyof TSchema & string,
+  TOps extends CrudOperation,
+  TDialect extends ConnectorType = ConnectorType,
+> = Pick<ConnectorEntityClient<TSchema, TEntity, TDialect>, AllowedMethods>;
+```
+
+`CrudOperation` is re-exported from `@microsoft/rayfin-connectors`. The marker reads
+`connectorConfig.operations` and keeps only the methods mapped to those CRUD verbs. It also
+drops `findByKey`, `update`, and `delete` for entities that do not declare a usable primary
+key.
+
+## Runtime dependency
+
+The marker gates methods at compile time only. Runtime routing, GraphQL execution,
+read-after-write behavior, and `OPERATION_NOT_ALLOWED` checks live in
+`@microsoft/rayfin-connectors`, mounted by `ConnectorsRayfinClient` from
+`@microsoft/rayfin-client/experimental`. Link the generated connector schema into that
+client as described in [Wiring connectors into your app](/docs/connectors/client-setup).

@@ -33,11 +33,13 @@ If you aren't signed in, `rayfin up` launches an interactive login automatically
    endpoint.
 5. If `services.data.enabled` is `true`: generates and applies the Data API Builder
    configuration for your entities.
-6. If `services.functions.enabled` is `true`: builds, packages, and deploys Functions
+6. For declared Category A connectors: generates each connector's Data API Builder
+   configuration from `rayfin/connectors/<name>/` and applies it to the workload endpoint.
+7. If `services.functions.enabled` is `true`: builds, packages, and deploys Functions
    (experimental — see [rayfin functions](/docs/reference/cli/functions)).
-7. Writes deployment metadata to `rayfin/.deployments.json` and merges the matching
+8. Writes deployment metadata to `rayfin/.deployments.json` and merges the matching
    `RAYFIN_PUBLIC_*` values into `rayfin/.env`.
-8. If `services.staticHosting.enabled` is `true` (and not excluded): runs the configured
+9. If `services.staticHosting.enabled` is `true` (and not excluded): runs the configured
    `buildCommand`, packages the output folder, and deploys it.
 
 ## Flags
@@ -93,6 +95,32 @@ static deploy step.
 | `-v, --verbose` | Enable verbose output. |
 | `--force` | Allow destructive schema changes that may result in data loss. |
 | `--json` | Output the result as JSON. |
+
+## `up connector apply`
+
+```bash
+npx rayfin up connector apply [--name <name>] [-v] [--json]
+```
+
+Regenerates each declared Category A connector's Data API Builder configuration from the
+entities in `rayfin/connectors/<name>/` and posts it to the deployed workload. Category B
+connectors have no Data API Builder configuration, so this command does not apply to them.
+
+`rayfin up` runs the same generate-then-apply pipeline inline. Use `up connector apply`
+after changing connector entity files when you do not need a full deploy. See
+[Generating entity files](/docs/connectors/entity-generation).
+
+Requires a prior `rayfin up`. Without a deployed endpoint, it fails with
+`No remote endpoint configured. Run 'rayfin up' first to deploy and register connectors.`
+
+| Flag | Description |
+| --- | --- |
+| `--name <name>` | Apply only one connector instead of every declared connector. |
+| `-v, --verbose` | Enable verbose output. |
+| `--json` | Output the result as JSON. |
+
+JSON output includes `status` (`success` or `partial`), `generate[]`, `results[]`, `steps`,
+and `duration`.
 
 ## Managing secrets
 

@@ -166,8 +166,80 @@ const nextPage = await client.data.Note.select(['id', 'title'])
 Keep `select`, `where`, and `orderBy` identical across pages — a stable sort order is
 required for the cursor to advance correctly. `first(n)` is bounded by DAB's maximum page
 size (100,000); `totalCount` is present on `PagedResult` but is not populated by DAB today.
-There is no `count()` method — select minimal fields and use `results.length`, or
-`page.items.length` per page. See [Known limitations](/docs/reference/known-limitations).
+There is no `count()` method on the query chain. `count` exists as an
+[aggregation](/docs/data/aggregations) operation over numeric fields — see
+[Aggregation](#aggregation) below. For a row count, select minimal fields and use
+`results.length`, or `page.items.length` per page. See
+[Known limitations](/docs/reference/known-limitations).
+
+## Aggregation
+
+`groupBy()` and `aggregate()` are entry points on both `GraphQLEntityClient` and
+`GraphQLQueryBuilder`. They return a `GraphQLAggregationBuilder`, whose `execute()` resolves
+to one row per group. Calling `aggregate()` without `groupBy()` produces a single grand-total
+row whose `fields` is empty.
+
+```typescript
+class GraphQLEntityClient<TSchema extends EntitySchema, TEntity extends keyof TSchema> {
+  groupBy<const TGroup extends readonly ScalarKeys<TSchema[TEntity]>[]>(
+    fields: TGroup,
+  ): GroupedAggregationStage<TSchema, TEntity, TGroup>;
+  aggregate<const TSpec extends AggregationSpec<TSchema[TEntity]>>(
+    spec: TSpec,
+  ): GraphQLAggregationBuilder<TSchema, TEntity, readonly [], TSpec>;
+}
+
+class GraphQLAggregationBuilder<TSchema, TEntity, TGroup, TSpec> {
+  execute(): Promise<GroupedAggregationRow<TSchema[TEntity], TGroup, TSpec>[]>;
+}
+```
+
+The specification is keyed by aliases you choose. Each entry holds **exactly one** operation,
+whose value is either a field-name shorthand or an options object:
+
+```typescript
+type AggregationOps<T> = {
+  sum: AggregationOpValue<NumericKeys<T>>;
+  avg: AggregationOpValue<NumericKeys<T>>;
+  min: AggregationOpValue<NumericKeys<T>>;
+  max: AggregationOpValue<NumericKeys<T>>;
+  count: AggregationOpValue<NumericKeys<T>>;
+};
+
+type AggregationOpValue<F> = F | { field: F; having?: NumberFilterInput; distinct?: boolean };
+type AggregationSpec<T> = Record<string, ExactlyOne<AggregationOps<T>>>;
+
+interface GroupedAggregationRow<T, G extends readonly ScalarKeys<T>[], S> {
+  fields: Pick<T, G[number] & keyof T>;
+  aggregations: { [K in Extract<keyof S, string>]: AggregationResult<S[K]> };
+}
+```
+
+`AggregationResult` is `number` for `count` and `number | null` for `sum` / `avg` / `min` /
+`max`, because DAB emits those as nullable and SQL returns `NULL` over an empty or all-null
+group.
+
+```typescript
+const rows = await client.data.Order
+  .where({ status: { eq: 'shipped' } })
+  .groupBy(['region'])
+  .aggregate({
+    revenue: { sum: 'amount' },
+    biggest: { max: { field: 'amount', having: { gt: 500 } } },
+  })
+  .execute();
+```
+
+> [!NOTE]
+> Every operation — `count` included — is typed against `NumericKeys<T>`, because DAB
+> generates each aggregation's `field` argument as the entity's `NumericAggregateFields`
+> enum. Non-numeric fields are a compile error.
+
+Aliases and field tokens are validated at runtime against the GraphQL name grammar
+(`/^[_A-Za-z][_0-9A-Za-z]*$/`, and must not begin with `__`). DAB rejects a query combining
+`groupBy` with `items`, so `aggregate()` throws if it follows `select()`, `first()`,
+`after()`, or `orderBy()`; the `RowQueryBuilder` return type makes those combinations
+compile-time errors as well.
 
 ## Mutations
 

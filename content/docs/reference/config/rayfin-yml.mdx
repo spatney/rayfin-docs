@@ -23,7 +23,7 @@ reconfiguration, and (for `allowedRedirectUris` and connector entries) after a d
 | `name` | string | **Required.** Human-readable project name. |
 | `version` | string | **Required.** Project version string. |
 | `services` | object | **Required.** See below. |
-| `connectors` | map | Optional. External Fabric data sources keyed by name — see [Connector](/docs/reference/cli/connector). |
+| `connectors` | list | Optional. External Fabric data sources. Each entry has its own `name` — see [Connector](/docs/reference/cli/connector). |
 | `frontend` | object | Deprecated. The frontend framework is now auto-detected from `vite.config.*` / `next.config.*` / `package.json` at runtime. Retained only for backward compatibility with older `rayfin.yml` files. |
 | `publishable_key` | string | Legacy. Some projects scaffolded by older CLI versions carry a top-level `publishable_key`. Current CLI versions manage the publishable key through `rayfin/.env` (`RAYFIN_PUBLIC_PUBLISHABLE_KEY`) instead — see [Environment variables](/docs/reference/config/environment-variables). |
 
@@ -68,6 +68,66 @@ reconfiguration, and (for `allowedRedirectUris` and connector entries) after a d
 | --- | --- | --- |
 | `enabled` | boolean | Turns the Functions service on or off. `rayfin functions init` sets this to `true` automatically when scaffolding. |
 | `buildCommand` | string | Command to run before deploying Functions. Optional. |
+
+## `services.connectors`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `enabled` | boolean | Registers the `rayfin connector` command group without needing `RAYFIN_FEATURE_FLAGS=connectors`. |
+
+Set this before adding the first connector:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  connectors:
+    enabled: true
+```
+
+## `connectors`
+
+`connectors:` is a top-level **list** of entries, not a map keyed by connector name.
+`rayfin connector add` writes this block and keeps it in the current list shape. See
+[Adding a connector](/docs/connectors/adding) and
+[Connector authentication](/docs/connectors/auth).
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `name` | string | yes | Unique. Must match `/^[a-zA-Z0-9\-_]+$/` and be at most 256 characters. |
+| `type` | string | yes | One of `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, `fabric-semanticmodel`, or `kusto`. |
+| `version` | string | Category B only | Positive integer string, for example `'1'`. Required for `fabric-semanticmodel` and `kusto`. |
+| `config.workspaceId` | string | yes | Fabric workspace ID. |
+| `config.itemId` | string | yes | Fabric item ID. |
+| `auth.type` | `delegated` \| `application` | yes | Lowercase. `application` is rejected on Category B types. |
+| `operations[].name` | string | no | Operation objects, not bare strings. Must be a subset of the type's allowed operations; defaults to all allowed operations. |
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: sales_warehouse
+    type: fabric-warehouse
+    config:
+      workspaceId: 00000000-0000-0000-0000-000000000000
+      itemId: 11111111-1111-1111-1111-111111111111
+    auth:
+      type: delegated
+    operations:
+      - name: read
+      - name: create
+      - name: update
+      - name: delete
+  - name: sales_model
+    type: fabric-semanticmodel
+    version: '1'
+    config:
+      workspaceId: 00000000-0000-0000-0000-000000000000
+      itemId: 22222222-2222-2222-2222-222222222222
+    auth:
+      type: delegated
+    operations:
+      - name: executeQuery
+```
+
+For `kusto`, `queryServiceUri` and `databaseName` are never written into `rayfin.yml`.
+They live only in the generated `rayfin/connectors/<name>/schema.ts`.
 
 ## Complete annotated example
 

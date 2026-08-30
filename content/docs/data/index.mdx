@@ -33,7 +33,31 @@ npx rayfin up
 From there, `client.data.Todo` is a fully typed read/write API, scoped by the row-level
 policy declared above.
 
-## Where to go next
+## Set up the client
+
+Construct one `RayfinClient` and reuse it across your app. Type it with your `AppSchema` so
+every entity access is fully typed.
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import type { AppSchema } from '../../rayfin/data/schema';
+
+export const rayfinClient = new RayfinClient<AppSchema>({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY ?? '',
+});
+```
+
+`VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` are generated into `.env.local` by
+`rayfin up` — see [Schema changes](/docs/data/migrations) for the apply workflow that
+produces them.
+
+That one client also carries [`client.auth`](/docs/auth) and, when enabled,
+[`client.functions`](/docs/functions/calling-functions). To additionally reach existing
+Fabric data sources, swap it for `ConnectorsRayfinClient` — see
+[Wiring connectors into your app](/docs/connectors/client-setup).
+
+## Model your schema
 
 - **[Modeling entities](/docs/data/modeling)** — `@entity()`, file layout, primary keys,
   and the `schema.ts` registration step.
@@ -41,14 +65,22 @@ policy declared above.
   including the MSSQL text-length rule.
 - **[Relationships](/docs/data/relationships)** — `@one()` / `@many()`, foreign key
   columns, and the many-to-many workaround.
-- **[Permissions and row-level security](/docs/data/permissions)** — `@role()`,
-  `@anonymous()`, `@authenticated()`, and the policy DSL.
+- **[Permissions](/docs/data/permissions)** — `@role()`, `@anonymous()`,
+  `@authenticated()`, and the row-level policy DSL.
+
+## Read and write
+
 - **[Querying](/docs/data/querying)** — the `select` / `where` / `orderBy` / `execute`
   chain, filtering, and pagination.
+- **[Aggregations](/docs/data/aggregations)** — sums, averages, and counts computed on the
+  server with `groupBy()` and `aggregate()`.
 - **[Creating, updating, deleting](/docs/data/mutations)** — writes, and setting
   relationships correctly.
-- **[Validation](/docs/data/validation)** — generate form validation from the same
+- **[Form validation](/docs/data/validation)** — generate form validation from the same
   entity, with no separate schema library.
+
+## Operate
+
 - **[Schema changes](/docs/data/migrations)** — how edits to `rayfin/data/` reach the
   database, and how to verify they actually did.
 - **[Seeding data](/docs/data/seeding)** — populate a database from a Node.js script.

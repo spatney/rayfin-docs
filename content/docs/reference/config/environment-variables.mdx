@@ -97,9 +97,9 @@ Read from the shell environment. Never written to files.
 | --- | --- | --- |
 | `storage` | Exposes the Storage prompt in `rayfin init`. | `services.storage.enabled: true` in `rayfin.yml` |
 | `functions` | Exposes `rayfin functions`, `rayfin up functions deploy`, and the Functions prompt in `rayfin init`. | `services.functions.enabled: true` in `rayfin.yml` |
-| `connectors` | Exposes the `rayfin connector` command group. | Any entry under `connectors:` in `rayfin.yml` |
+| `connectors` | Exposes the `rayfin connector` command group. | `services.connectors.enabled: true` or any entry under `connectors:` in `rayfin.yml` |
 
-Combine multiple flags with a comma: `RAYFIN_FEATURE_FLAGS=functions,storage`.
+Combine multiple flags with a comma, for example `RAYFIN_FEATURE_FLAGS=connectors,functions`.
 
 ## File locations
 

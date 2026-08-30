@@ -1,5 +1,5 @@
 {
   "title": "Configuration",
   "description": "rayfin.yml and environment variable reference.",
-  "pages": ["index", "rayfin-yml", "environment-variables", "env-interpolation"]
+  "pages": ["rayfin-yml", "environment-variables", "env-interpolation"]
 }

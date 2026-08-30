@@ -1,5 +1,5 @@
 {
   "title": "Hosting",
   "description": "Serve your frontend from the same app as your backend.",
-  "pages": ["index", "redirect-uris"]
+  "pages": ["redirect-uris"]
 }

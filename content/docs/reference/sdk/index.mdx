@@ -18,9 +18,13 @@ transitive dependencies.
 | One configured client for data, auth, and functions | [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client) — `RayfinClient` / `RayfinServerClient` |
 | Call serverless functions from the client | [`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) — experimental |
 | Store and serve files | [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage) |
+| Query an existing Fabric warehouse, SQL database, semantic model, or KQL database | [`@microsoft/rayfin-connectors`](/docs/reference/sdk/rayfin-connectors) — experimental runtime kernel |
+| Type a Fabric warehouse, SQL database, or Lakehouse SQL analytics endpoint connector | [`@microsoft/rayfin-connector-fabric-graphql`](/docs/reference/sdk/rayfin-connector-fabric-graphql) — type-only Category A marker |
+| Type and run a Fabric semantic model connector | [`@microsoft/rayfin-connector-fabric-semanticmodel`](/docs/reference/sdk/rayfin-connector-fabric-semanticmodel) — DAX marker and runtime |
+| Type and run a Fabric KQL Database connector | [`@microsoft/rayfin-connector-kusto`](/docs/reference/sdk/rayfin-connector-kusto) — KQL marker and runtime |
 | *(internal)* shared HTTP client, error types, naming utilities | [`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib) |
 
-In practice, most applications install just two packages:
+In practice, most applications install two packages:
 
 ```bash
 npm install @microsoft/rayfin-core @microsoft/rayfin-client
@@ -39,9 +43,17 @@ graph TD
   Client["@microsoft/rayfin-client"] --> Auth["@microsoft/rayfin-auth"]
   Client --> Data["@microsoft/rayfin-data"]
   Client --> Functions["@microsoft/rayfin-functions"]
+  Client --> Connectors["@microsoft/rayfin-connectors"]
   Client --> Lib["@microsoft/rayfin-lib"]
   AuthFabric["@microsoft/rayfin-auth-provider-fabric"] --> Auth
   AuthFabric --> Lib
+  FabricGraphQL["@microsoft/rayfin-connector-fabric-graphql"] --> Connectors
+  FabricGraphQL --> Data
+  FabricSemantic["@microsoft/rayfin-connector-fabric-semanticmodel"] --> Connectors
+  Kusto["@microsoft/rayfin-connector-kusto"] --> Connectors
+  Connectors --> Core
+  Connectors --> Data
+  Connectors --> Lib
   Data --> Core["@microsoft/rayfin-core"]
   Data --> Lib
   Auth --> Lib
@@ -68,6 +80,9 @@ depends on it only for the shared `PrimaryKeyField` type, not for any runtime be
   actively evolving — the functions package is explicitly marked experimental, and both are
   gated behind CLI feature flags in current builds. Expect their APIs to change faster than
   `rayfin-core`, `rayfin-client`, `rayfin-data`, and `rayfin-auth`.
+- The connector packages ship in lockstep with the CLI, are preview APIs, and need
+  version-pinned installs. Their npm `latest` and `preview` tags can lag the published
+  release, so install the exact version printed by the connector tooling.
 - When in doubt about the exact signature for the version you have installed, use
   `rayfin docs get --symbol <name>` or the [MCP server](/docs/reference/cli/docs#mcp-server) rather than
   trusting a cached mental model of the API — see
@@ -82,4 +97,8 @@ depends on it only for the shared `PrimaryKeyField` type, not for any runtime be
 - [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric) — Fabric brokered SSO.
 - [`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) — typed serverless function calls.
 - [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage) — blob storage client.
+- [`@microsoft/rayfin-connectors`](/docs/reference/sdk/rayfin-connectors) — connector runtime kernel and `ConnectorsRayfinClient` support.
+- [`@microsoft/rayfin-connector-fabric-graphql`](/docs/reference/sdk/rayfin-connector-fabric-graphql) — type-only marker for Fabric SQL-backed entity connectors.
+- [`@microsoft/rayfin-connector-fabric-semanticmodel`](/docs/reference/sdk/rayfin-connector-fabric-semanticmodel) — semantic model marker, runtime, and result helpers.
+- [`@microsoft/rayfin-connector-kusto`](/docs/reference/sdk/rayfin-connector-kusto) — KQL Database marker, runtime, and result helpers.
 - [`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib) — shared HTTP client and utilities.

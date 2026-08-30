@@ -1,0 +1,157 @@
+---
+title: "@microsoft/rayfin-connector-kusto"
+description: Marker, runtime, config, raw response, and normalization APIs for Fabric KQL Database connectors.
+appliesTo: "@microsoft/rayfin-connector-kusto — experimental"
+---
+
+`@microsoft/rayfin-connector-kusto` provides both the `kusto` connector marker and its
+runtime helper. Use it with `ConnectorsRayfinClient` from
+`@microsoft/rayfin-client/experimental`. See [KQL databases](/docs/connectors/kusto) for
+guide-level usage.
+
+> [!WARNING]
+> Connectors are in private preview. This API may change between releases.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-connector-kusto@1.36.0-alpha
+```
+
+This package supplies both the marker and the config type, so `kusto` connectors need no
+separate runtime package.
+
+## Marker and operation catalog
+
+`Kusto<TOps>` is the connector marker. It defaults to both operations:
+`executeQuery` and `executeCommand`.
+
+```typescript
+import type { OperationDef } from '@microsoft/rayfin-connectors';
+import type {
+  ExecuteCommandInput,
+  ExecuteQueryInput,
+  Kusto,
+  KustoCommandResponse,
+  KustoQueryResponse,
+} from '@microsoft/rayfin-connector-kusto';
+
+interface KustoOperationCatalog {
+  executeQuery: OperationDef<ExecuteQueryInput, KustoQueryResponse>;
+  executeCommand: OperationDef<ExecuteCommandInput, KustoCommandResponse>;
+}
+
+type AppConnectorsSchema = {
+  telemetry: Kusto<'executeQuery' | 'executeCommand'>;
+};
+```
+
+The operation outputs are the raw native Kusto v1 `{ Tables }` document, unlike the
+semantic model package's normalized output. Normalize query or command responses with
+`toQueryResult`.
+
+## Inputs and config
+
+```typescript
+interface ExecuteQueryInput {
+  query: string;
+  clientRequestId?: string;
+}
+
+interface ExecuteCommandInput {
+  command: string;
+  clientRequestId?: string;
+}
+
+interface KustoConnectorConfig extends ConnectorConfig {
+  connector: 'kusto';
+  queryServiceUri: string;
+  databaseName: string;
+}
+```
+
+`KustoConnectorConfig` is exported from `@microsoft/rayfin-connector-kusto`, not from
+`@microsoft/rayfin-connectors`. `queryServiceUri` and `databaseName` are connector-owned
+routing values; callers pass only `query` or `command` plus an optional correlation id.
+
+## Runtime
+
+`kusto()` returns a `ConnectorRuntime`:
+
+```typescript
+function kusto(): ConnectorRuntime;
+```
+
+It registers `invoke` middleware for `executeQuery` and `executeCommand`. The middleware
+merges `queryServiceUri` and `databaseName` into the outbound payload after caller input,
+so a caller cannot override the connector's resolved route. It also generates a
+`clientRequestId` when the caller omits one and Web Crypto is available.
+
+## Raw response and normalization
+
+```typescript
+interface KustoQueryResponse {
+  Tables?: KustoV1Table[];
+}
+
+type KustoCommandResponse = KustoQueryResponse;
+
+interface KustoV1Table {
+  TableName?: string;
+  Columns?: KustoV1Column[];
+  Rows?: unknown[];
+}
+
+interface KustoV1Column {
+  ColumnName?: string;
+  ColumnType?: string;
+  DataType?: string;
+}
+
+function toQueryResult(
+  response: KustoQueryResponse,
+  correlation?: KustoCorrelation,
+): KustoQueryResult;
+```
+
+`toQueryResult` transforms the native Kusto v1 response into a discriminated result:
+
+```typescript
+type KustoQueryResult =
+  | {
+      status: 'success';
+      tables: KustoTable[];
+      clientRequestId: string;
+      activityId?: string;
+    }
+  | {
+      status: 'error';
+      error: KustoQueryError;
+      clientRequestId: string;
+      activityId?: string;
+    };
+
+interface KustoTable {
+  name: string;
+  columns: KustoColumn[];
+  rows: unknown[][];
+}
+
+interface KustoColumn {
+  name: string;
+  type: string;
+}
+
+interface KustoCorrelation {
+  clientRequestId?: string;
+  activityId?: string;
+}
+
+interface KustoQueryError {
+  message: string;
+  code?: string;
+}
+```
+
+`clientRequestId` and `activityId` are out-of-band correlation values. Pass what you know
+to `toQueryResult`; they are not read from the native response body.

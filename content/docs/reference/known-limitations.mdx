@@ -20,15 +20,53 @@ available in every Fabric region or tenant, and the `@microsoft/rayfin-functions
 succeeds in your target workspace before you design around it. Keep data access in
 [`client.data.<Entity>`](/docs/data/querying) where a function is not strictly required.
 
+### Connectors are in private preview
+
+[Connectors](/docs/connectors) are behind a feature flag: `rayfin connector` is not
+registered until the project sets `services.connectors.enabled: true`, has a non-empty
+`connectors:` block, or runs with `RAYFIN_FEATURE_FLAGS=connectors`. `ConnectorsRayfinClient`
+ships from the `@microsoft/rayfin-client/experimental` subpath, and the connector packages
+may change between releases.
+
+Connector packages version in lockstep with the CLI, but their npm `latest` and `preview`
+tags lag the published release. An unversioned install resolves to an older connector that
+hard-pins its own `@microsoft/rayfin-data`, leaving two Rayfin version lines in one app.
+
+**Workaround:** run the version-pinned `npm install` that `rayfin connector add` prints,
+verbatim, and confirm a connector deploys in your own workspace before designing around it.
+
+### `rayfin connector inspect` does not support Kusto
+
+`connector inspect` works for `fabric-sqlanalytics`, `fabric-warehouse`,
+`fabric-sqldatabase`, and `fabric-semanticmodel`. A `kusto` connector fails with
+`Unsupported connector type: kusto`.
+
+**Workaround:** use `npx rayfin connector invoke <name> executeQuery` instead. That transport
+posts to the deployed item, so it needs a prior `npx rayfin up`. See
+[KQL databases](/docs/connectors/kusto).
+
 ## Data client
 
-### `count()` is not available
+### `count()` counts numeric values, not rows
 
-The fluent GraphQL client (`client.data.<Entity>`) has no `count()` method.
+The fluent GraphQL client has no `count()` method on the query chain. `count` exists only as
+an [aggregation](/docs/data/aggregations) operation, and Data API Builder types every
+aggregation's field argument as the entity's numeric fields — so `count` can only target a
+numeric column, and returns the number of rows where that column is non-null.
 
-**Workaround:** select the minimal set of fields you need and use `results.length`, or page
+**Workaround:** point `count` at a non-nullable numeric column when the entity has one.
+Otherwise select the minimal set of fields you need and use `results.length`, or page
 through results with [`.executePaginated()`](/docs/reference/sdk/rayfin-data#pagination) and
 sum `items.length` per page if the total exceeds one page.
+
+### Grouped aggregation cannot be combined with row selection
+
+Data API Builder rejects a query that requests `groupBy` and `items` together, so
+`.aggregate(...)` is mutually exclusive with `.select()`, `.orderBy()`, `.first()`, and
+`.after()`. Each combination is a compile-time error backed by a runtime guard.
+
+**Workaround:** run the aggregation on its own and sort or slice the returned array in
+TypeScript. One row per group is normally a small result.
 
 ### Many-to-many relationships are not supported
 

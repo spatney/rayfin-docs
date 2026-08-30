@@ -9,6 +9,10 @@ so your function accesses resources **as the calling user**, not as a shared ser
 identity. You declare a connection on the function, and the runtime hands you a scoped token
 at invocation time — you never manage a long-lived credential yourself.
 
+See [Delegated access](/docs/auth/delegated-access) for the overview of every
+delegated-auth surface. For the connector equivalent, see
+[Connector authentication](/docs/connectors/auth).
+
 > [!WARNING]
 > Functions and delegated authentication are experimental and are not available in every
 > Fabric region or tenant. See [Functions](/docs/functions) before you depend on them.
@@ -49,15 +53,15 @@ export class ContextTokenCredential implements TokenCredential {
 
 | `AudienceType` | Resource | Ask the user for |
 | --- | --- | --- |
-| `Storage` | OneLake (DFS), Azure Blob/Table/Queue | The file URL from Lakehouse properties, or a storage account URL |
-| `Sql` | Fabric Lakehouse/Warehouse/SQL DB/Mirrored DB, Azure SQL | The SQL analytics endpoint or connection string from the Fabric portal |
-| `Fabric` | Fabric platform APIs | The workspace and item IDs the function should act on |
-| `KeyVault` | Azure Key Vault | The vault URL, e.g. `https://my-vault.vault.azure.net/` |
 | `CosmosDB` | Azure Cosmos DB | The account endpoint plus database/container names |
+| `KeyVault` | Azure Key Vault | The vault URL, e.g. `https://my-vault.vault.azure.net/` |
 | `EventGrid` | Azure Event Grid | The topic endpoint |
+| `Sql` | Fabric Lakehouse/Warehouse/SQL DB/Mirrored DB, Azure SQL | The SQL analytics endpoint or connection string from the Fabric portal |
+| `Storage` | OneLake (DFS), Azure Blob/Table/Queue | The file URL from Lakehouse properties, or a storage account URL |
+| `Fabric` | Fabric platform APIs | The workspace and item IDs the function should act on |
 | `AzureAI` | Azure AI Foundry | The project endpoint URL and the model deployment name |
-| `Kusto` | Azure Data Explorer (Kusto) | The cluster URI and database name |
 | `ADO` | Azure DevOps | The organization and project names |
+| `Kusto` | Azure Data Explorer (Kusto) | The cluster URI and database name |
 | `WorkIQ` | WorkIQ | The service endpoint |
 
 `AzureAI`, `Kusto`, `ADO`, and `WorkIQ` are audiences the Fabric host does not yet resolve

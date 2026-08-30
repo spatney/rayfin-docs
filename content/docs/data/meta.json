@@ -2,14 +2,17 @@
   "title": "Data",
   "description": "Model entities in TypeScript and query them with a type-safe client.",
   "pages": [
-    "index",
+    "---Model---",
     "modeling",
     "field-types",
     "relationships",
     "permissions",
+    "---Read and write---",
     "querying",
+    "aggregations",
     "mutations",
     "validation",
+    "---Operate---",
     "migrations",
     "seeding"
   ]

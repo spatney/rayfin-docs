@@ -1,0 +1,192 @@
+---
+title: Wiring connectors into your app
+description: Configure ConnectorsRayfinClient with connector schemas, runtime hooks, and browser-safe schema imports.
+---
+
+Wire the generated connector files into the frontend after `rayfin connector add` has
+created the connector entry and you have installed the exact pinned packages it printed.
+Category A connectors can run with configuration only; Category B connectors also need
+runtime hooks.
+
+## Import the experimental client
+
+`ConnectorsRayfinClient` is exported from the experimental subpath:
+
+```typescript
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client/experimental';
+```
+
+Do not import it from the stable `@microsoft/rayfin-client` entry.
+
+The type parameters are `<DataSchema, FunctionsSchema, ConnectorsSchema>`. Use
+`Record<string, never>` for any slot your app does not use.
+
+## Pass connector config in the first argument
+
+The constructor is:
+
+```typescript
+new ConnectorsRayfinClient(config, connectorsRuntime?)
+```
+
+`config` extends the standard Rayfin client config, so it accepts `baseUrl` and
+`publishableKey`. It also requires `connectors`, a map keyed by connector name whose
+values are the generated `connectorConfig` objects.
+
+`host` is optional. When omitted, the connectors layer detects `{ type: 'cli' }` under
+Node and `{ type: 'standalone' }` in browsers. Pass `{ type: 'embedded' }` only when the
+app is running inside the Fabric portal host and the host integration has asserted that
+environment.
+
+## Pass Category B runtimes in the second argument
+
+The second constructor argument is the per-connector runtime map, keyed by connector
+name. Category A connectors need no runtime entry.
+
+Category B connectors require one:
+
+- `kusto()` merges the generated `queryServiceUri` and `databaseName` into the outbound
+  payload. Without it, KQL queries cannot route to the cluster.
+- `fabricSemanticModel()` decodes the Arrow response. Without it, semantic-model query
+  results cannot be read.
+
+## Keep connector keys identical
+
+The connector key must be identical in four places:
+
+1. The `name` in `rayfin.yml`.
+2. The property in `AppConnectorsSchema`.
+3. The property in the `connectors` option.
+4. The property in the runtime map for Category B connectors.
+
+If they differ, TypeScript reports `Property '<name>' does not exist on connectors`.
+
+## Wire one client
+
+This example wires one Category A connector and both Category B connectors. It assumes
+`inventory`, `salesModel`, and `telemetry` are the exact connector names in `rayfin.yml`.
+
+```typescript title="src/services/rayfinClient.ts"
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client/experimental';
+import { fabricSemanticModel } from '@microsoft/rayfin-connector-fabric-semanticmodel';
+import { kusto } from '@microsoft/rayfin-connector-kusto';
+import {
+  type InventorySchema,
+  connectorConfig as inventoryConfig,
+} from '../../rayfin/connectors/inventory/schema';
+import {
+  type SalesModelSchema,
+  connectorConfig as salesModelConfig,
+} from '../../rayfin/connectors/salesModel/schema';
+import {
+  type TelemetrySchema,
+  connectorConfig as telemetryConfig,
+} from '../../rayfin/connectors/telemetry/schema';
+
+type AppConnectorsSchema = {
+  inventory: InventorySchema;
+  salesModel: SalesModelSchema;
+  telemetry: TelemetrySchema;
+};
+
+export const rayfinClient = new ConnectorsRayfinClient<
+  Record<string, never>,
+  Record<string, never>,
+  AppConnectorsSchema
+>(
+  {
+    baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+    authStorage: true,
+    connectors: {
+      inventory: inventoryConfig,
+      salesModel: salesModelConfig,
+      telemetry: telemetryConfig,
+    },
+  },
+  {
+    salesModel: fabricSemanticModel(),
+    telemetry: kusto(),
+  },
+);
+```
+
+## Keep entity classes out of browser bundles
+
+> [!WARNING]
+> `schema.ts` is imported by browser code because the client reads `connectorConfig` from
+> it. Importing or re-exporting decorated entity classes as values ships them into the
+> browser bundle. The bundler lowers the decorators into an invalid class expression,
+> `vite build` still exits 0, type-check and deploy both pass, and the deployed page
+> renders blank with `Uncaught SyntaxError: Invalid or unexpected token`.
+
+Always use `import type` and `export type` for Category A entity classes in
+`rayfin/connectors/<name>/schema.ts`.
+
+```typescript title="rayfin/connectors/inventory/schema.ts"
+import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
+import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
+
+import type { Order } from './Order.js';
+import type { Customer } from './Customer.js';
+
+export type { Order } from './Order.js';
+export type { Customer } from './Customer.js';
+
+export const connectorConfig = {
+  connector: 'fabric-warehouse',
+  operations: ['read', 'update'],
+  entities: {
+    Order: ['orderId', 'customerId', 'total', 'placedUtc'],
+    Customer: ['customerId', 'email'],
+  },
+} as const satisfies ConnectorConfig;
+
+export type InventorySchema = GraphQLBackedConnector<
+  { Order: typeof Order; Customer: typeof Customer },
+  typeof connectorConfig
+>;
+```
+
+Give `connectorConfig.entities` string arrays of entity property names rather than entity
+classes. The names are the generated TypeScript property names, not the source column
+names.
+
+## Troubleshoot client wiring
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `Property '<name>' does not exist on connectors` | The connector key differs between `rayfin.yml`, `AppConnectorsSchema`, the `connectors` option, or the runtime map. | Use the `rayfin.yml` `name` in every place. |
+| Import of `ConnectorsRayfinClient` fails to resolve | The client was imported from the stable package entry. | Import from `@microsoft/rayfin-client/experimental`. |
+| `Cannot find module '@microsoft/rayfin-connector-fabric-graphql'` | `connector add` scaffolds files but does not install packages. | Run the pinned `npm install` command `connector add` printed, or rebuild it from `rayfin connector types --json`. |
+| Deployed page is blank with `Uncaught SyntaxError: Invalid or unexpected token` | Category A entity classes were imported or re-exported as values from `schema.ts`. | Switch entity imports and re-exports to `import type` and `export type`, and use property-name arrays in `connectorConfig.entities`. |
+| A read throws `SELECTION_REQUIRED` | `connectorConfig.entities` is missing, so the client has no default column list. | Add string arrays of entity property names, or pass an explicit `select([...])`. |
+| A Kusto query fails to reach the cluster | The runtime map omitted `{ telemetry: kusto() }`, so generated routing was not injected. | Add the Kusto runtime under the exact connector name. |
+| A semantic-model result cannot be read | The runtime map omitted `{ salesModel: fabricSemanticModel() }`, so the Arrow response was not decoded. | Add the semantic-model runtime under the exact connector name. |
+
+## Continue by connector type
+
+- [Fabric SQL sources](/docs/connectors/sql-sources)
+- [Semantic models](/docs/connectors/semantic-models)
+- [KQL databases](/docs/connectors/kusto)
+
+```prompt title="Wire connectors into a Rayfin frontend"
+In my Rayfin project, wire existing connectors into the frontend client. Read
+rayfin/rayfin.yml to get the exact connector names, then import
+ConnectorsRayfinClient from @microsoft/rayfin-client/experimental.
+
+Create or update src/services/rayfinClient.ts so the client type parameters are
+<DataSchema, FunctionsSchema, ConnectorsSchema>, using Record<string, never> for unused
+data or functions schemas. Import each generated connector schema type and connectorConfig
+from rayfin/connectors/<name>/schema.ts. Key AppConnectorsSchema and the connectors option
+with the exact rayfin.yml connector names.
+
+For Category B connectors, pass the second constructor argument as a runtime map keyed by
+the same names: use kusto() for kusto connectors and fabricSemanticModel() for
+fabric-semanticmodel connectors. Do not add runtime entries for Category A unless a
+connector-specific package requires one.
+
+For Category A schema files, keep entity classes out of the browser bundle: use import type
+and export type, and set connectorConfig.entities to string arrays of entity property
+names rather than entity class values.
+```

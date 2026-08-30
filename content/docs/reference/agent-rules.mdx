@@ -65,9 +65,14 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Sort directions are lowercase: `'asc'` or `'desc'`.
 - Use `.first(n).executePaginated()` with `.after(endCursor)` for pagination. Collection
   queries return a single page otherwise; the default page size is 100.
-- `count()` does not exist on the fluent client. Select minimal fields and use
-  `results.length`. See
-  [Known limitations](/docs/reference/known-limitations#count-is-not-available).
+- `count()` does not exist on the fluent client. `count` is an
+  [aggregation](/docs/data/aggregations) operation and, like `sum`/`avg`/`min`/`max`,
+  accepts **numeric fields only** — so it counts non-null numeric values, not rows. For a
+  row count, select minimal fields and use `results.length`. See
+  [Known limitations](/docs/reference/known-limitations#count-counts-numeric-values-not-rows).
+- Grouped aggregation cannot be combined with `.select()`, `.orderBy()`, `.first()` or
+  `.after()` — Data API Builder rejects `groupBy` alongside `items`. Sort the returned array
+  in TypeScript instead.
 
 ## Auth
 
@@ -86,6 +91,38 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - If `services.data.enabled` is `true`, `dialect` is required — `mssql` is the only
   supported value. See
   [Known limitations](/docs/reference/known-limitations#dialect-is-required-when-the-data-module-is-enabled).
+
+## Connectors
+
+Connectors reach data that already exists in Fabric. They are in private preview and behind
+a feature flag — read [Connectors](/docs/connectors) before writing any connector code.
+
+- The `rayfin connector` command group is not registered until the project sets
+  `services.connectors.enabled: true` in `rayfin.yml`, has a non-empty `connectors:` block,
+  or runs with `RAYFIN_FEATURE_FLAGS=connectors`.
+- The `connector add` flag is `--type`, not `--connector`. The five type literals are
+  `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, `fabric-semanticmodel`,
+  and `kusto`. **There is no `fabric-sql`.**
+- `connector add` scaffolds files but installs nothing. Run the version-pinned
+  `npm install` it prints, verbatim — never drop the version.
+- `connector add` does **not** emit entity `.ts` files. Generate them yourself from
+  `rayfin/connectors/<name>/metadata.json`, following
+  [Generating entity files](/docs/connectors/entity-generation). `metadata.json` is the only
+  source of truth for primary keys and relationships — absent metadata means keyless, not
+  permission to infer a key from column names.
+- In `rayfin/connectors/<name>/schema.ts`, import and re-export entity classes with
+  `import type` / `export type` only. A value import ships decorated classes into the browser
+  bundle; the build and deploy both succeed and the deployed page renders blank.
+- `GraphQLBackedConnector` is the marker for all three Category A types. Per-type names like
+  `FabricWarehouse` do not exist.
+- Import `ConnectorsRayfinClient` from `@microsoft/rayfin-client/experimental`, never the
+  stable `@microsoft/rayfin-client` entry.
+- Category B connectors need the runtime map as the client's second constructor argument —
+  `kusto()` injects cluster routing and `fabricSemanticModel()` decodes the response. Omit it
+  and calls do not work.
+- `auth.type` is lowercase, `delegated` or `application`. `application` is rejected on
+  `fabric-semanticmodel` and `kusto`. See
+  [Connector authentication](/docs/connectors/auth).
 
 ## Deployment
 

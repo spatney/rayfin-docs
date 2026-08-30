@@ -1,0 +1,214 @@
+---
+title: Aggregations
+description: Compute sums, averages, minimums, maximums, and counts over your entities with groupBy() and aggregate(), including grand totals and having filters.
+---
+
+Aggregations compute a value **across many rows** on the server instead of fetching rows and
+reducing them in the browser. Use them for dashboard tiles, report rollups, and any number
+that would otherwise require reading a whole table.
+
+```typescript
+const byRegion = await rayfinClient.data.Order.groupBy(['region'])
+  .aggregate({
+    revenue: { sum: 'amount' },
+    orders: { count: 'amount' },
+  })
+  .execute();
+
+for (const row of byRegion) {
+  console.log(row.fields.region, row.aggregations.revenue, row.aggregations.orders);
+}
+```
+
+> [!IMPORTANT]
+> Every aggregation operation — including `count` — accepts **numeric fields only**. See
+> [Only numeric fields aggregate](#only-numeric-fields-aggregate) before you reach for
+> `count` to count rows.
+
+## The aggregation chain
+
+An aggregation is `groupBy()` then `aggregate()` then `execute()`. `where()` is optional and
+comes first:
+
+```typescript
+const rows = await rayfinClient.data.Order
+  .where({ status: { eq: 'shipped' } })
+  .groupBy(['region'])
+  .aggregate({ revenue: { sum: 'amount' } })
+  .execute();
+```
+
+`groupBy()` takes the scalar fields to group on. `aggregate()` takes a map of **aliases you
+choose** to single-operation entries. `execute()` returns one row per group.
+
+## Result shape
+
+Every result row has two halves — the grouped column values, and the aggregated values keyed
+by your aliases:
+
+```typescript
+type Row = {
+  fields: { region: string };
+  aggregations: { revenue: number | null; orders: number };
+};
+```
+
+`fields` carries the values you grouped on, deserialized to your declared entity types (a
+`@date()` column comes back as a `Date`, not an ISO string). `aggregations` carries one entry
+per alias.
+
+`count` is always a `number`. `sum`, `avg`, `min`, and `max` are `number | null`, because SQL
+returns `NULL` over a group with no non-null values.
+
+## Grand totals
+
+Skip `groupBy()` to aggregate over the entire filtered set. You get exactly one row, and its
+`fields` is an empty object:
+
+```typescript
+const [totals] = await rayfinClient.data.Order
+  .where({ status: { eq: 'shipped' } })
+  .aggregate({
+    revenue: { sum: 'amount' },
+    average: { avg: 'amount' },
+    largest: { max: 'amount' },
+  })
+  .execute();
+
+totals.aggregations.revenue; // number | null
+totals.fields;               // {}
+```
+
+## Operations
+
+| Operation | Returns | Meaning |
+| --- | --- | --- |
+| `sum` | `number \| null` | Total of the field across the group |
+| `avg` | `number \| null` | Mean of the field across the group |
+| `min` | `number \| null` | Smallest value in the group |
+| `max` | `number \| null` | Largest value in the group |
+| `count` | `number` | Count of numeric values in the field |
+
+Each alias must specify **exactly one** operation. Two operations under one alias is a
+compile-time error — give each its own alias instead:
+
+```typescript
+// Correct — one operation per alias.
+.aggregate({
+  revenue: { sum: 'amount' },
+  average: { avg: 'amount' },
+})
+```
+
+## Only numeric fields aggregate
+
+Data API Builder generates every aggregation's `field` argument as the entity's
+`NumericAggregateFields` enum. That applies to `count` too — it is a *count of numeric
+values*, not a count of rows.
+
+```typescript
+// Compile error: 'status' is a text field.
+.aggregate({ n: { count: 'status' } })
+```
+
+So `count` gives you a row count only when you point it at a **non-nullable numeric column**
+that every row populates. On an entity with no numeric column, there is still no row count —
+select the minimal field set and use `results.length`, or page through with
+`.executePaginated()` and sum `page.items.length`. See
+[Pagination](/docs/data/querying#paginate-large-lists).
+
+## Filter aggregated values with `having`
+
+The long form of an operation is `{ field, having?, distinct? }`. `having` filters on the
+**aggregated** value, using the same numeric operators as `.where()`:
+
+```typescript
+const bigRegions = await rayfinClient.data.Order.groupBy(['region'])
+  .aggregate({
+    revenue: { sum: { field: 'amount', having: { gt: 10000 } } },
+  })
+  .execute();
+```
+
+`where()` filters rows *before* grouping; `having` filters values *after* aggregation. Use
+both together when you need each.
+
+## Count distinct values
+
+`distinct: true` aggregates only distinct values of the field:
+
+```typescript
+const rows = await rayfinClient.data.Order.groupBy(['region'])
+  .aggregate({
+    uniqueAmounts: { count: { field: 'amount', distinct: true } },
+  })
+  .execute();
+```
+
+## Group on several fields
+
+`groupBy()` accepts multiple fields, and each appears in `fields` on the result:
+
+```typescript
+const rows = await rayfinClient.data.Order.groupBy(['region', 'status'])
+  .aggregate({ revenue: { sum: 'amount' } })
+  .execute();
+
+rows[0].fields.region;
+rows[0].fields.status;
+```
+
+Duplicate fields are collapsed, and order is preserved.
+
+## What you cannot combine
+
+Data API Builder rejects a query that asks for grouped aggregates **and** rows at the same
+time, so `aggregate()` is mutually exclusive with the row-shaping methods. Each of these is a
+compile-time error, backed by a runtime guard:
+
+| Combination | Why it fails |
+| --- | --- |
+| `.select(...).aggregate(...)` | Row selection and grouped aggregation are different queries |
+| `.first(n).aggregate(...)` | Grouped aggregation does not paginate rows |
+| `.after(cursor).aggregate(...)` | Same — no row pagination |
+| `.orderBy(...).aggregate(...)` | Row ordering does not apply to groups |
+| `.groupBy(...).execute()` | Grouping without `aggregate()` returns nothing useful |
+
+Sort or slice the returned array in your own code instead — one row per group is normally a
+small result.
+
+## Aliases and field names
+
+Aliases and field names are emitted into the GraphQL document as bare tokens, so both must
+match the GraphQL name grammar (`/^[_A-Za-z][_0-9A-Za-z]*$/`) and must not start with `__`.
+An alias like `total revenue` or `2024` is rejected before the request is sent. Stick to
+identifiers you would use as a TypeScript property name.
+
+## Aggregating connector entities
+
+Category A [connector](/docs/connectors) entities expose the same `groupBy()` and
+`aggregate()` methods with identical behavior:
+
+```typescript
+const rows = await client.connectors.sales.Order.groupBy(['region'])
+  .aggregate({ revenue: { sum: 'total' } })
+  .execute();
+```
+
+See [Fabric SQL sources](/docs/connectors/sql-sources) for the rest of the connector query
+surface.
+
+```prompt title="Add an aggregated dashboard query"
+In my Rayfin project, add a function that returns dashboard totals from the RayfinClient
+using the aggregation API rather than fetching rows and reducing them in JavaScript.
+
+Group with .groupBy([...]) on the scalar fields I want to break the numbers down by, then
+call .aggregate({ alias: { sum | avg | min | max | count: 'field' } }) and .execute(). Use one
+operation per alias. Remember that every operation, including count, accepts numeric fields
+only, so do not try to count a text or uuid column. Type the result as
+{ fields, aggregations }[], and treat sum/avg/min/max as number | null since SQL returns NULL
+over empty groups.
+
+Do not combine .aggregate() with .select(), .orderBy(), .first() or .after() — those are
+mutually exclusive with grouped aggregation. Sort the returned array in TypeScript instead.
+```

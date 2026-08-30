@@ -2,7 +2,6 @@
   "title": "CLI",
   "description": "Every rayfin command, flag, and subcommand.",
   "pages": [
-    "index",
     "installation",
     "init",
     "login",

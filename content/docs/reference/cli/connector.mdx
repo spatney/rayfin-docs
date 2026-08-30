@@ -1,58 +1,106 @@
 ---
 title: Connector
-description: rayfin connector add, list, and remove — register external Fabric data sources (SQL analytics endpoints, Warehouse, Fabric SQL, semantic models) in rayfin.yml.
+description: rayfin connector manages external Fabric sources, from discovery and registration through inspection and invocation.
 ---
 
 > [!NOTE]
-> `connector` is only registered on the CLI when the `connectors` feature is on — either
-> because `rayfin.yml` already has a `connectors:` block, or because
-> `RAYFIN_FEATURE_FLAGS` includes `connectors`. There is no published guide chapter for this
-> command group yet; this page documents only what's verified directly from the CLI source,
-> so treat conceptual guidance (how a discovered schema maps into queries, for example) as
-> not yet covered here.
+> `connector` is registered only when connectors are enabled. Enable it with
+> `services.connectors.enabled: true` in `rayfin/rayfin.yml`, with any non-empty
+> top-level `connectors:` block, or for one command with
+> `RAYFIN_FEATURE_FLAGS=connectors`. Without one of those opt-ins, the CLI reports
+> `connector` as an unknown command.
 
-`rayfin connector` registers an external Fabric data source — a SQL analytics endpoint, a
-Warehouse, a Fabric SQL database, or a semantic model — as a named entry in `rayfin.yml`,
-and scaffolds a matching directory under `rayfin/connectors/`.
+Use `rayfin connector` to discover existing Microsoft Fabric sources, register them in
+`rayfin.yml`, inspect their read shape, and invoke configured operations. For the workflow
+and app-code model, start with [Connectors](/docs/connectors); this page is the command
+reference.
+
+```bash
+npx rayfin connector <command>
+```
 
 ## Connector types
 
-| Type | Description |
-| --- | --- |
-| `fabric-sqlanalytics` | Fabric SQL Analytics endpoint |
-| `fabric-warehouse` | Fabric Warehouse |
-| `fabric-sql` | Fabric SQL Database |
-| `fabric-semanticmodel` | Fabric semantic model |
+| Type | Fabric item | Category | Operations | Version |
+| --- | --- | --- | --- | --- |
+| `fabric-sqlanalytics` | Lakehouse | Category A | `read` | No |
+| `fabric-warehouse` | Warehouse | Category A | `read`, `create`, `update`, `delete` | No |
+| `fabric-sqldatabase` | SQL Database | Category A | `read`, `create`, `update`, `delete` | No |
+| `fabric-semanticmodel` | Semantic model | Category B | `executeQuery` | Pinned to `'1'` by `connector add` |
+| `kusto` | KQL Database | Category B | `executeQuery`, `executeCommand` | Pinned to `'1'` by `connector add` |
 
-All four require `--workspace-id` and `--item-id`. The `rayfin.yml` schema also has a
-connector-level `version` field described as required for function-bridge connectors like
-`fabric-semanticmodel`, but `connector add` has no flag to set it — it isn't currently
-exposed through this command.
+Category A connectors generate entity configuration for Data API Builder. Category B
+connectors expose function-style query operations and are delegated-only. See
+[Connectors](/docs/connectors), [Fabric SQL sources](/docs/connectors/sql-sources),
+[Semantic models](/docs/connectors/semantic-models), and [KQL databases](/docs/connectors/kusto).
+
+## Subcommands
+
+The registered subcommands are `search`, `add`, `list`, `remove`, `types`, `inspect`, and
+`invoke`.
+
+## `connector search`
+
+```bash
+npx rayfin connector search [query] --workspace-id <id> --type <type>
+npx rayfin connector search [query] --all-workspaces --type <type>
+npx rayfin connector search [query]
+```
+
+Searches Fabric items that the signed-in identity can add as connectors. Use one of these
+scopes:
+
+| Scope | Required flags | Behavior |
+| --- | --- | --- |
+| Single workspace | `--workspace-id <id>` and `--type <type>` | Searches one workspace. |
+| Tenant-wide | `--all-workspaces` and `--type <type>` | Searches all accessible workspaces. |
+| Deployed project | No scope flags | Searches every workspace recorded in the project's deployments; `--type` is optional. |
+
+| Flag | Description |
+| --- | --- |
+| `[query]` | Optional case-insensitive item-name filter. |
+| `--query <text>` | Same filter as `[query]`; wins when both are provided. |
+| `--workspace-id <id>` | Search one Fabric workspace. Requires `--type`. |
+| `--all-workspaces` | Search every workspace the signed-in identity can access. Requires `--type`. |
+| `--type <type>` | Narrow to one or more comma-separated connector types. Required with explicit workspace scope. |
+| `--limit <n>` | Limit non-interactive output to the first `n` results. |
+| `--output interactive\|plain\|json` | Select output mode. |
+| `--json` | Emit one JSON object and skip the interactive picker. |
+| `-v, --verbose` | Enable verbose output. Cannot be combined with `--json`. |
+| `-y, --yes` | Auto-accept prompts in the interactive add handoff. |
+
+With `--json`, the command emits `{ status, query, scope, count, sources }`. Each result in
+`sources` includes a suggested name and a ready-to-run `addCommand`.
 
 ## `connector add`
 
 ```bash
-npx rayfin connector add --connector fabric-sql --workspace-id <id> --item-id <id>
+npx rayfin connector add --type fabric-sqldatabase --workspace-id <id> --item-id <id> --name sales
 ```
+
+Registers one source in `rayfin/rayfin.yml` and scaffolds `rayfin/connectors/<name>/`.
 
 | Flag | Description |
 | --- | --- |
-| `--connector <type>` | Required. One of the connector types above. |
-| `--name <name>` | Name for the connector entry. Derived from the Fabric item's display name if omitted (requires item verification — see below). |
-| `--workspace-id <id>` | Fabric workspace ID. |
-| `--item-id <id>` | Fabric item/artifact ID. |
-| `--verbose` | Enable verbose output. |
-| `-y, --yes` | Auto-accept confirmation prompts, including overwriting an existing connector with the same name. |
+| `--type <type>` | Required. One of the five connector type literals. |
+| `--workspace-id <id>` | Required Fabric workspace ID. Must be a literal value; `${VAR}` placeholders are rejected. |
+| `--item-id <id>` | Required Fabric item ID. Must be a literal value; `${VAR}` placeholders are rejected. |
+| `--name <name>` | Connector name. If omitted, the CLI derives one from the Fabric item display name. Must match `/^[a-zA-Z0-9\-_]+$/` and be at most 256 characters. |
+| `--operations <ops>` | Comma-separated subset of allowed operations. This can narrow the catalog defaults but cannot widen them; there is no `all` meta-operation. |
+| `-y, --yes` | Auto-accept confirmation prompts, including overwriting an existing connector. |
+| `-v, --verbose` | Enable verbose output. |
+| `--json` | Emit machine-readable JSON. |
 
-When both `--workspace-id` and `--item-id` are given, the command signs you in (prompting
-`rayfin login` if needed), verifies the item exists, and — for a Lakehouse resolving to a
-SQL endpoint — updates the recorded item ID to the resolved endpoint. It then:
+The command verifies the Fabric item, writes the `connectors:` entry, and writes
+`rayfin/connectors/<name>/schema.ts`. For Category A it also runs schema discovery and
+writes `metadata.json`. For `kusto`, it resolves `queryServiceUri` and `databaseName` and
+bakes them into `schema.ts`; those values are not written to `rayfin.yml`.
 
-1. Writes a `connectors.<name>` entry to `rayfin.yml`.
-2. Scaffolds `rayfin/connectors/<name>/schema.ts` (skipped if the directory already
-   exists).
-3. Attempts schema discovery against the connected database (best-effort — a failure here
-   still leaves the connector registered in `rayfin.yml`, so it can be retried later).
+For versioned Category B types (`fabric-semanticmodel` and `kusto`), `connector add` writes
+the catalog `defaultVersion` automatically. Today that value is `'1'`.
+
+`connector add` does not install packages. It prints a version-pinned `npm install` command;
+with `--json`, the same data appears under `install.packages` and `install.command`.
 
 ## `connector list`
 
@@ -60,26 +108,155 @@ SQL endpoint — updates the recorded item ID to the resolved endpoint. It then:
 npx rayfin connector list
 ```
 
-Lists every connector configured in `rayfin.yml` with its type, workspace ID, and item ID.
-Add `--json` for machine-readable output.
+Lists connectors declared in `rayfin.yml`. It does not call Fabric or the deployed workload.
+
+| Flag | Description |
+| --- | --- |
+| `-v, --verbose` | Include catalog metadata for each connector. |
+| `--json` | Emit the configured connector entries as JSON. |
 
 ## `connector remove`
 
 ```bash
-npx rayfin connector remove <name>
+npx rayfin connector remove sales --yes
 ```
 
-Removes the named entry from `rayfin.yml`. Prompts to also delete
-`rayfin/connectors/<name>/` unless `-y/--yes` is passed (in non-interactive mode with
-`--yes`, the directory is deleted).
+Removes the named connector entry from `rayfin.yml` and deletes
+`rayfin/connectors/<name>/`.
 
 | Flag | Description |
 | --- | --- |
-| `-y, --yes` | Auto-accept all confirmation prompts, including directory deletion. |
+| `-y, --yes` | Auto-accept confirmation prompts. Required in non-interactive contexts for existing connectors. |
+| `-v, --verbose` | Enable verbose output. |
+| `--json` | Emit machine-readable JSON. |
 
-```prompt title="Register a Fabric Warehouse connector"
-Add a rayfin connector named "sales" for my Fabric Warehouse using
-`npx rayfin connector add --connector fabric-warehouse --workspace-id <workspace-id>
---item-id <item-id>`, then show me the resulting rayfin.yml entry and the scaffolded
-rayfin/connectors/sales/schema.ts.
+JSON output for a removed connector is
+`{ status, action: 'connector.remove', name, removed, directoryDeleted }`.
+
+## `connector types`
+
+```bash
+npx rayfin connector types --verbose
+```
+
+Lists the connector catalog.
+
+| Flag | Description |
+| --- | --- |
+| `-v, --verbose` | Add category, default auth, dialect, operations, discoverable item types, required version, and client packages. |
+| `--output interactive\|plain\|json` | Select output mode. |
+| `--json` | Emit the catalog as JSON. |
+
+`--json` emits the same detailed catalog fields as verbose mode.
+
+## `connector inspect`
+
+```bash
+npx rayfin connector inspect --name sales
+npx rayfin connector inspect --name sales --entity dbo.Customers --rows 10
+npx rayfin connector inspect --workspace-id <id> --item-id <id> --type fabric-warehouse --query queries\sample.sql
+```
+
+Inspects a source in read-only mode. It supports `fabric-sqlanalytics`,
+`fabric-warehouse`, `fabric-sqldatabase`, and `fabric-semanticmodel`. It does not support
+`kusto`; that type fails with `Unsupported connector type: kusto`.
+
+| Flag | Description |
+| --- | --- |
+| `--name <name>` | Select a connector declared in `rayfin.yml`. Mutually exclusive with direct selectors. |
+| `--workspace-id <id>` / `--workspace <name>` | Direct mode workspace selector. Use with `--item-id` or `--item` and `--type`. |
+| `--item-id <id>` / `--item <name>` | Direct mode item selector. Use with a workspace selector and `--type`. |
+| `--type <type>` | Connector type for direct mode. |
+| `--url <portal-url>` | Semantic-model portal URL; extracts workspace and item IDs. Cannot be combined with other selectors. |
+| `--entity <name>` | Structured entity sampling mode. |
+| `--query <path>` | Raw query mode. Path must point to a `.sql` or `.dax` file inside the project. |
+| `--rows <n>` | Row cap. Default is 100 for entity listing and 10 for entity or query modes; maximum is 100. |
+| `-v, --verbose` | Enable verbose output. |
+| `--output interactive\|plain\|json` | Select output mode. |
+| `--json` | Emit a machine-readable JSON object. |
+
+Inspect has three modes:
+
+| Mode | How to select it | Query shape |
+| --- | --- | --- |
+| Entity listing | Omit `--entity` and `--query` | SQL uses `INFORMATION_SCHEMA.TABLES`; DAX uses `INFO.TABLES()`. |
+| Structured entity | Pass `--entity <name>` | SQL builds `SELECT TOP(n) * FROM <entity>`; DAX builds `EVALUATE TOPN(n, '<entity>')`. |
+| Raw query | Pass `--query <path>` | Runs the `.sql` or `.dax` file verbatim. |
+
+SQL inspect accepts only read queries that start with `SELECT` or `WITH`; DML and DDL are
+rejected. DAX inspect requires the query to start with `EVALUATE`.
+
+## `connector invoke`
+
+```bash
+npx rayfin connector invoke mymodel executeQuery --input '{"query":"EVALUATE TOPN(10, Sales)"}'
+npx rayfin connector invoke --name mymodel --operation executeQuery --file payload.json
+```
+
+Invokes one configured operation. The positional connector name and operation also have flag
+forms, `--name` and `--operation`; flag values win over positionals.
+
+| Flag | Description |
+| --- | --- |
+| `<connector-name>` | Connector name declared in `rayfin.yml`. |
+| `<operation>` | Operation to invoke. |
+| `--name <name>` | Connector name flag form; wins over the positional. |
+| `--operation <operation>` | Operation flag form; wins over the positional. |
+| `--input '<json>'` | Inline JSON payload. Exactly one of `--input` or `--file` is required. |
+| `--file <path>` | JSON payload file, resolved against the project root. The resolved path must stay inside it; `..\` escapes are rejected before the file is read. |
+| `-v, --verbose` | Enable verbose output. Cannot be combined with `--json`. |
+| `--output interactive\|plain\|json` | Select output mode. |
+| `--json` | Emit one machine-readable JSON object. |
+
+Operation names match case-insensitively against the connector's `operations:` list. If the
+entry has no operations, the command falls back to the connector type's full catalog
+allowlist.
+
+### Invoke transports
+
+`fabric-semanticmodel` calls Fabric and Power BI directly under the developer's own
+identity. It works with or without `rayfin up`, and it requires `workspaceId` and `itemId`
+under the connector's `config:` block.
+
+Every other type, including `kusto`, POSTs to the deployed item at
+`/__private/connectors/<name>/invoke` and requires a prior `rayfin up`.
+
+### Invoke token handling
+
+`rayfin login` consents to the Fabric scope, not the Power BI scope the semantic-model path
+needs. Interactively, the CLI prompts to complete Power BI consent. With `--json`, token
+acquisition is silent-only so prompts cannot corrupt the single-JSON-object contract; if
+consent is still needed, the command fails and tells you to drop `--json` or set
+`RAYFIN_TOKEN`. When `RAYFIN_TOKEN` is set, it is passed through unchanged and its audience
+is decoded and checked locally.
+
+### Invoke output
+
+Success emits `{ status: 'ok', connector, operation, output }`. A resolved call is not
+automatically a success: a normalizing connector reports failure as `status: 'error'`, and a
+connector returning a raw envelope reports failure as `status: 'Failed'`. The CLI converts
+either failure shape into a non-zero exit.
+
+> [!NOTE]
+> Invoking a semantic model operation whose DAX returns Int64 columns, for example
+> `DISTINCTCOUNT`, can fail while printing with `Do not know how to serialize a BigInt` even
+> though the query succeeded. Select a non-Int64 column to read the output.
+
+### Invoke errors
+
+| Message | Fix |
+| --- | --- |
+| `Missing required connector invoke arguments` | Supply both the connector name and the operation. |
+| `Choose exactly one payload source` / `Missing payload input` | Pass exactly one of `--input` or `--file`. |
+| `Input file must be inside the project` | Use a relative path under the project root. |
+| `Operation "<op>" is not allowed for connector "<name>"` | Check the connector's `operations:` in `rayfin.yml`, or the type's allowlist. |
+| `missing workspaceId/itemId in rayfin.yml` | Add both under `config:`, or re-run [`connector add`](#connector-add). |
+| `Access token has the wrong audience for the Power BI query API` | Unset or replace `RAYFIN_TOKEN`, or re-run without `--json` to consent interactively. |
+| `No remote endpoint configured` | The non-semantic-model transport needs a deployed item; run `npx rayfin up` first. |
+
+```prompt title="Register a Fabric SQL Database connector"
+Add a Rayfin connector named "sales" for my Fabric SQL Database using
+`npx rayfin connector add --type fabric-sqldatabase --workspace-id <workspace-id>
+--item-id <item-id> --name sales`, then show me the resulting rayfin.yml entry and the
+scaffolded rayfin/connectors/sales/schema.ts.
 ```

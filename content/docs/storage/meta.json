@@ -1,5 +1,4 @@
 {
   "title": "Storage",
-  "description": "Store and serve files with the blob storage client.",
-  "pages": ["index"]
+  "description": "Store and serve files with the blob storage client."
 }

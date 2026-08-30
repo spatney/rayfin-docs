@@ -1,0 +1,302 @@
+---
+title: KQL databases
+description: Run KQL queries and Kusto management commands against a Fabric KQL Database from a Rayfin app.
+---
+
+Run KQL against an existing Fabric KQL Database when your app needs operational or
+telemetry data owned by Fabric. The `kusto` connector is a
+[Category B function-bridge connector](/docs/connectors): it exposes `executeQuery` for
+KQL, `executeCommand` for management commands, uses delegated authentication only, and is
+pinned to an adapter version (`version: '1'` today).
+
+> [!WARNING]
+> `kusto` is a private-preview connector type. `rayfin up` rejects
+> `auth.type: application`; keep the connector delegated so each query or command runs as
+> the signed-in user.
+
+## Keep the generated schema
+
+`npx rayfin connector add --type kusto` resolves the KQL Database routing values from the
+Fabric `(workspaceId, itemId)` pair and writes them into
+`rayfin/connectors/<name>/schema.ts`. The generated file is complete for this connector
+type: it exports the phantom marker used in `AppConnectorsSchema` and the Kusto-specific
+`connectorConfig`.
+
+```typescript title="rayfin/connectors/telemetry/schema.ts"
+// @generated — do not edit.
+
+import type { Kusto, KustoConnectorConfig } from '@microsoft/rayfin-connector-kusto';
+
+export type TelemetrySchema = Kusto<'executeQuery' | 'executeCommand'>;
+
+export const connectorConfig = {
+  connector: 'kusto',
+  queryServiceUri: 'https://<cluster>.kusto.fabric.microsoft.com',
+  databaseName: '<database>',
+} as const satisfies KustoConnectorConfig;
+```
+
+Do not hand-edit this file. If `queryServiceUri` or `databaseName` looks wrong, regenerate
+it by removing and adding the connector again:
+
+```bash
+npx rayfin connector remove telemetry
+npx rayfin connector add --type kusto --workspace-id <workspace-id> --item-id <kql-database-item-id> --name telemetry
+```
+
+`queryServiceUri` and `databaseName` live only in the generated `schema.ts`. They are not
+part of the `rayfin/rayfin.yml` schema, must not be written into `rayfin.yml`, and must not
+be sent from app code.
+
+## Register the runtime
+
+Register `kusto()` in the connector runtime map before calling the connector. The runtime
+injects the generated `queryServiceUri` and `databaseName` after caller input, so a caller
+cannot override the cluster routing. Without the runtime map, nothing injects that routing
+and the connector cannot reach the cluster. See
+[Wiring connectors into your app](/docs/connectors/client-setup) for the full client setup.
+
+```typescript title="src/services/rayfinClient.ts"
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client/experimental';
+import { kusto } from '@microsoft/rayfin-connector-kusto';
+import type { AppSchema } from '../../rayfin/data/schema';
+import type { TelemetrySchema } from '../../rayfin/connectors/telemetry/schema';
+import { connectorConfig as telemetryConfig } from '../../rayfin/connectors/telemetry/schema';
+
+type AppConnectorsSchema = {
+  telemetry: TelemetrySchema;
+};
+
+export const client = new ConnectorsRayfinClient<
+  AppSchema,
+  Record<string, never>,
+  AppConnectorsSchema
+>(
+  {
+    baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+    connectors: {
+      telemetry: telemetryConfig,
+    },
+  },
+  {
+    telemetry: kusto(),
+  }
+);
+```
+
+The key must match the connector `name` in `rayfin.yml`, the
+`AppConnectorsSchema` property, the `connectors` option, and the runtime map.
+
+## Generate a client request id
+
+Kusto correlation travels outside the response body. Generate a
+`clientRequestId`, pass it to the operation, and pass the same value to
+`toQueryResult`. The connector forwards it as the `x-ms-client-request-id` header. If you
+omit it, the runtime generates one for the Kusto request, but your caller cannot correlate
+the normalized result because the native response body does not carry the id.
+
+```typescript
+const clientRequestId = `KPC.rayfin_kusto_v1;${crypto.randomUUID()}`;
+```
+
+Normalized results echo the `clientRequestId` you give to `toQueryResult` and may carry an
+`activityId` when one is available.
+
+## Call `executeQuery`
+
+`executeQuery` accepts a KQL query and resolves to the native Kusto v1 `{ Tables }`
+document. The connector function is a byte pump: it relays the Kusto response untouched, so
+the caller must normalize it with `toQueryResult(response, { clientRequestId })`.
+
+```typescript title="src/features/telemetry/loadErrorsByState.ts"
+import { toQueryResult } from '@microsoft/rayfin-connector-kusto';
+import { client } from '../../services/rayfinClient';
+
+export async function loadErrorsByState() {
+  const clientRequestId = `KPC.rayfin_kusto_v1;${crypto.randomUUID()}`;
+  const response = await client.connectors.telemetry.executeQuery({
+    query: `
+AppEvents
+| where Severity == "Error"
+| summarize ErrorCount = count() by State
+| top 10 by ErrorCount desc
+`,
+    clientRequestId,
+  });
+
+  const result = toQueryResult(response, { clientRequestId });
+
+  if (result.status === 'error') {
+    throw new Error(
+      `${result.error.message} Client request id: ${result.clientRequestId}`
+    );
+  }
+
+  return result.tables.flatMap((table) =>
+    table.rows.map((row) => {
+      const record = Object.fromEntries(
+        table.columns.map((column, index) => [column.name, row[index]])
+      );
+
+      return {
+        state: String(record.State ?? ''),
+        errorCount: Number(record.ErrorCount ?? 0),
+        tableName: table.name,
+        clientRequestId: result.clientRequestId,
+      };
+    })
+  );
+}
+```
+
+## Call `executeCommand`
+
+`executeCommand` runs a Kusto management command. The command text starts with a leading
+dot and routes to the management endpoint. It returns the same native Kusto v1 `{ Tables }`
+document as `executeQuery`, so normalize it the same way.
+
+```typescript title="src/features/telemetry/showDatabases.ts"
+import { toQueryResult } from '@microsoft/rayfin-connector-kusto';
+import { client } from '../../services/rayfinClient';
+
+export async function showDatabases() {
+  const clientRequestId = `KPC.rayfin_kusto_v1;${crypto.randomUUID()}`;
+  const response = await client.connectors.telemetry.executeCommand({
+    command: '.show databases',
+    clientRequestId,
+  });
+
+  const result = toQueryResult(response, { clientRequestId });
+  if (result.status === 'error') {
+    throw new Error(result.error.message);
+  }
+
+  return result.tables;
+}
+```
+
+Use `executeCommand` only for Kusto management commands. Use `executeQuery` for KQL query
+text.
+
+## Normalize the Kusto table shape
+
+`KustoOperationCatalog.executeQuery` is typed as
+`OperationDef<ExecuteQueryInput, KustoQueryResponse>`, so the operation returns the native
+wire document. `toQueryResult` converts that document into a discriminated union:
+
+```typescript
+type KustoQueryResult =
+  | {
+      status: 'success';
+      tables: KustoTable[];
+      clientRequestId: string;
+      activityId?: string;
+    }
+  | {
+      status: 'error';
+      error: {
+        message: string;
+        code?: string;
+      };
+      clientRequestId: string;
+      activityId?: string;
+    };
+
+type KustoTable = {
+  name: string;
+  columns: { name: string; type: string }[];
+  rows: unknown[][];
+};
+```
+
+Rows are row-major arrays aligned with `columns`. A query can return more than one table,
+so render or inspect every entry in `result.tables`.
+
+```typescript title="src/features/telemetry/KustoTables.tsx"
+import type { KustoQueryResult } from '@microsoft/rayfin-connector-kusto';
+
+export function KustoTables({ result }: { result: KustoQueryResult }) {
+  if (result.status === 'error') {
+    return <p>{result.error.message}</p>;
+  }
+
+  return (
+    <>
+      {result.tables.map((table) => (
+        <section key={table.name}>
+          <h2>{table.name}</h2>
+          <table>
+            <thead>
+              <tr>
+                {table.columns.map((column) => (
+                  <th key={column.name}>{column.name}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {table.columns.map((column, columnIndex) => (
+                    <td key={column.name}>{String(row[columnIndex] ?? '')}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ))}
+    </>
+  );
+}
+```
+
+## Exercise the connector from the CLI
+
+`connector inspect` does not support `kusto`; it errors with
+`Unsupported connector type: kusto`. There is no ad-hoc query path for Kusto today, so
+`connector invoke` is the development loop.
+
+```bash
+npx rayfin up
+npx rayfin connector invoke telemetry executeQuery --input '{"query":"AppEvents | take 10"}'
+npx rayfin connector invoke telemetry executeCommand --input '{"command":".show databases"}'
+```
+
+Unlike `fabric-semanticmodel`, Kusto `connector invoke` POSTs to the deployed item, so a
+real query requires a deployed backend (`rayfin up`). A resolved invocation is not
+automatically a success: a connector returning the raw envelope can report
+`status: 'Failed'`, and the CLI exits non-zero for that failure.
+
+See [CLI connector reference](/docs/reference/cli/connector) for payload rules and error
+handling.
+
+## Troubleshoot KQL database queries
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `rayfin up` rejects `auth.type: application` | Category B connectors are delegated-only. | Set `auth.type: delegated`. |
+| `executeQuery` or `executeCommand` cannot reach the cluster. | `kusto()` is missing from the runtime map, so routing was not injected. | Register `{ telemetry: kusto() }` as the client's second constructor argument. |
+| A caller tries to pass `queryServiceUri` or `databaseName`. | Those are connector-owned fields injected from generated config after caller input. | Remove them from app code and re-add the connector if the generated values are wrong. |
+| `connector inspect` reports `Unsupported connector type: kusto`. | The inspect command has no Kusto path. | Use `npx rayfin connector invoke telemetry executeQuery --file ./query.json` after deploying. |
+| `connector invoke` reports `No remote endpoint configured`. | Kusto invoke uses the deployed item transport. | Run `npx rayfin up`, then invoke again. |
+| `toQueryResult` returns `clientRequestId: ''`. | The caller did not pass the generated id to `toQueryResult`. | Reuse the same `clientRequestId` for the operation and normalization call. |
+| `client.connectors.telemetry` is not typed. | The connector key differs across `rayfin.yml`, `AppConnectorsSchema`, the `connectors` option, or the runtime map. | Use the connector `name` from `rayfin.yml` in all four places. |
+
+```prompt title="Query a Fabric KQL Database from a Rayfin app"
+In my Rayfin project, add a KQL Database connector named telemetry and call it from the
+frontend.
+
+Use `npx rayfin connector add --type kusto --workspace-id <workspace-id> --item-id
+<kql-database-item-id> --name telemetry`, run the pinned npm install command the CLI
+prints, and do not edit rayfin/connectors/telemetry/schema.ts by hand. Do not put
+queryServiceUri or databaseName in rayfin/rayfin.yml or pass them from app code.
+
+Wire `TelemetrySchema` into `AppConnectorsSchema`, pass `connectorConfig` in the
+ConnectorsRayfinClient `connectors` option, and register `{ telemetry: kusto() }` in the
+runtime map. For a KQL query, create a client request id in the
+`KPC.rayfin_kusto_v1;<uuid>` format, pass it to
+`client.connectors.telemetry.executeQuery({ query, clientRequestId })`, then normalize with
+`toQueryResult(response, { clientRequestId })` and branch on `result.status`. Use
+`executeCommand` only for Kusto management commands whose text starts with a leading dot.
+```

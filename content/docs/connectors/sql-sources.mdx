@@ -1,0 +1,268 @@
+---
+title: Fabric SQL sources
+description: Read and write Fabric SQL connector entities from Rayfin apps, including query chains, by-key reads, mutations, defaults, and troubleshooting.
+---
+
+Use a Category A connector when an existing Fabric SQL source should feel like typed Rayfin
+entities. Category A covers `fabric-sqlanalytics`, `fabric-warehouse`, and
+`fabric-sqldatabase`; see [Connectors](/docs/connectors) for the full connector-type
+catalog and the steps that create the connector entry.
+
+Each generated entity is reached at `client.connectors.<name>.<Entity>`. The methods on
+that entity come from two gates:
+
+- The connector's `operations:` list in `rayfin.yml` decides which CRUD verbs exist.
+- The connector type decides the write dialect, including whether mutations return the row
+  or a status object.
+
+## Choose the expected shape
+
+- **Lakehouse SQL analytics endpoint (`fabric-sqlanalytics`)** — reads only. Write methods
+  are not exposed.
+- **Fabric SQL Database (`fabric-sqldatabase`)** — full CRUD when `operations:` allows it;
+  writes return the full persisted row.
+- **Fabric Warehouse (`fabric-warehouse`)** — full CRUD when `operations:` allows it;
+  writes return `DbOperationResult { result: string }`.
+
+## Read rows with the query chain
+
+Reads work the same way on Lakehouse, Warehouse, and SQL Database connectors. Start from an
+entity, choose a selection, add filters or ordering, and call `execute()`.
+
+```typescript
+const orders = await client.connectors.inventory.Order
+  .select(['orderId', 'customerEmail', 'total'])
+  .where({ total: { gt: 100 } })
+  .orderBy({ total: 'desc' })
+  .execute();
+
+const firstPage = await client.connectors.inventory.Order
+  .select(['orderId', 'customerEmail', 'total'])
+  .where({ customerEmail: { contains: '@contoso.com' } })
+  .orderBy({ orderId: 'asc' })
+  .first(25)
+  .execute();
+
+const savedCursor = 'opaque-page-cursor-from-the-previous-response';
+
+const nextPage = await client.connectors.inventory.Order
+  .select(['orderId', 'customerEmail', 'total'])
+  .orderBy({ orderId: 'asc' })
+  .first(25)
+  .after(savedCursor)
+  .execute();
+```
+
+`select`, `where`, `orderBy`, `first`, and `after` are read operations. They are available
+when the connector includes `read` in `operations:`.
+
+## Read one row by key
+
+`findByKey` identifies a row with a key object. For a composite primary key, the object
+must include every key part; omitting one is a compile error. Pass the required scalar-only `select` when projecting a by-key read. Relationships cannot be selected through `findByKey`; use
+the query chain for related data.
+
+```typescript
+const order = await client.connectors.inventory.Order.findByKey(
+  { orderId: 'o-1' },
+  ['orderId', 'customerEmail', 'total'],
+);
+
+const lineItem = await client.connectors.inventory.OrderItem.findByKey(
+  { orderId: 'o-1', productId: 'p-9' },
+  ['orderId', 'productId', 'quantity'],
+);
+
+lineItem?.quantity;
+```
+
+The projected result is `Pick<Row, selected> | null`. A keyless entity exposes no
+`findByKey` method.
+
+## Read related columns with dotted paths
+
+`select` accepts scalar columns and dotted paths through generated `@one` and `@many`
+navigation fields. The builder expands each dotted path into the nested GraphQL selection
+and unwraps to-many `items` connections so related rows are inline in the response.
+
+```typescript
+const products = await client.connectors.inventory.Product
+  .select(['name', 'category.name', 'orderItems.quantity'])
+  .where({ stock: { gt: 0 } })
+  .execute();
+
+products[0].category.name;
+products[0].orderItems[0].quantity;
+```
+
+Paths can continue through more relationships.
+
+```typescript
+const products = await client.connectors.inventory.Product
+  .select(['name', 'orderItems.order.customerEmail'])
+  .execute();
+```
+
+Name a related column as a dotted path such as `category.name`. Naming the bare
+relationship, such as `category`, is a compile error because a navigation field is not a
+selectable leaf. Each segment is checked against the generated schema.
+
+Self-referencing foreign keys still generate an entity relationship for DAB, but the client
+cannot query across a self-relationship. Do not select a dotted path over a self-reference.
+
+## Write rows by dialect
+
+Write methods exist only when the connector's `operations:` includes the verb and the
+entity's `@role()` grants it. Autocomplete is expected to omit a method that is outside the
+connector operation list.
+
+| Connector type | Source behavior | `create` / `update` / `delete` return | What to do |
+| --- | --- | --- | --- |
+| `fabric-sqlanalytics` (Lakehouse) | Read-only at the host | Method does not exist | Treat missing write methods as expected compile-time protection. |
+| `fabric-sqldatabase` (SQL Database) | Supports read-after-write | The full entity row | Use the returned row, including server-generated columns the caller never sent. Requires the `entities` map. |
+| `fabric-warehouse` (Warehouse) | DWSQL has no `OUTPUT` clause | `DbOperationResult { result: string }` | Treat `"success"` as completion; failed writes throw GraphQL errors. Re-query if you need persisted values. |
+
+```typescript
+const created = await client.connectors.orders.Order.create({
+  customerEmail: 'ada@example.com',
+  total: 250,
+});
+
+created.orderId;
+created.createdUtc;
+
+const result = await client.connectors.inventory.Order.update(
+  { orderId: 'o-1' },
+  { total: 275 },
+);
+
+result.result;
+
+await client.connectors.inventory.OrderItem.delete({
+  orderId: 'o-1',
+  productId: 'p-9',
+});
+```
+
+`update` and `delete` take the same full key object as `findByKey`. A keyless entity, where
+`Source({ primaryKey })` is omitted or `primaryKey: []`, exposes no `findByKey`, `update`,
+or `delete` at all. It is read-only by key regardless of connector type.
+
+## Handle server-generated columns
+
+A generated entity marks server-filled columns as `AutoGenerated<T>`. The metadata that
+triggers this type wrapper is:
+
+- `IDENTITY` columns.
+- Any column with a `DEFAULT` expression.
+- Computed columns declared with `AS (...)`.
+- Server-managed rowversion or temporal-period columns.
+
+Those columns are optional in `create` and `update` inputs and read back as plain `T` in
+query and mutation results. Most cannot be written: passing an `IDENTITY`, computed,
+rowversion, or temporal value is rejected by the database. A plain `DEFAULT` column is the
+exception: omit it to get the default, or pass a value to override it.
+
+```typescript title="rayfin/connectors/orders/Order.ts"
+import { entity, date, decimal, int, Source } from '@microsoft/rayfin-core/experimental';
+import type { AutoGenerated } from '@microsoft/rayfin-core/experimental';
+
+@entity()
+export class Order extends Source({ schema: 'dbo', table: 'Order', primaryKey: ['orderId'] }) {
+  @int({ column: 'OrderID' })
+  orderId!: AutoGenerated<number>;
+
+  @decimal({ precision: 18, scale: 2 })
+  total!: number;
+
+  @date({ column: 'CreatedUtc' })
+  createdUtc!: AutoGenerated<Date>;
+}
+```
+
+## Configure default selections with `entities`
+
+`connectorConfig.entities` gives the runtime the scalar property names for each entity. It
+is what makes no-selection reads work, and it is how `fabric-sqldatabase` writes know which
+columns to read back after a mutation.
+
+```typescript title="rayfin/connectors/inventory/schema.ts"
+import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
+import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
+
+import type { Order } from './Order.js';
+import type { OrderItem } from './OrderItem.js';
+
+export type { Order } from './Order.js';
+export type { OrderItem } from './OrderItem.js';
+
+export const connectorConfig = {
+  connector: 'fabric-warehouse',
+  operations: ['read', 'create', 'update', 'delete'],
+  entities: {
+    Order: ['orderId', 'customerEmail', 'total', 'createdUtc'],
+    OrderItem: ['orderId', 'productId', 'quantity', 'unitPrice'],
+  },
+} as const satisfies ConnectorConfig;
+
+export type InventorySchema = GraphQLBackedConnector<
+  { Order: typeof Order; OrderItem: typeof OrderItem },
+  typeof connectorConfig
+>;
+```
+
+Without `entities`, every no-selection `findMany`, `findFirst`, or `findByKey` throws
+`SELECTION_REQUIRED` on every dialect. Passing an explicit `select([...])` remains the most
+precise way to control a read projection.
+
+Use entity property names, not database column names. If the entity declares
+`@uuid({ column: 'ProductID' }) productId!: string`, the map entry is `productId`. The one
+exception is a field that declares `graphqlName`; then use that GraphQL field name. Leave
+relationship fields out of the string-array form.
+
+A relationship `select` against the string-array form throws
+`ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT`, because arrays of field names do not carry the
+`@one` and `@many` cardinality metadata needed to shape nested GraphQL. Select the foreign
+key scalar and fetch the related entity separately, or run relationship reads in code that
+can provide the decorated classes.
+
+## Aggregate connector rows
+
+Aggregations use the same client pattern as Rayfin data entities. Use
+`groupBy(fields).aggregate(spec).execute()` for grouped values, or call `aggregate(spec)` on
+the entity client for a grand total. See [Aggregations](/docs/data/aggregations) for the
+full API and response shape.
+
+```typescript
+const totalsByCustomer = await client.connectors.inventory.Order
+  .groupBy(['customerEmail'])
+  .aggregate({ total: { sum: true, avg: true, count: true } })
+  .execute();
+
+const grandTotal = await client.connectors.inventory.Order
+  .aggregate({ total: { sum: true, min: true, max: true } })
+  .execute();
+```
+
+All five aggregate operations, `sum`, `avg`, `min`, `max`, and `count`, accept numeric
+fields only on connector entities.
+
+## Troubleshoot connector entity calls
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| A read throws `SELECTION_REQUIRED` | `connectorConfig.entities` is missing and the call did not pass an explicit selection | Add the entity's scalar property names to `entities`, or pass `.select([...])` / a selected read. |
+| A relationship read throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT` | The connector registered `entities` as string arrays, so runtime relationship cardinality is unavailable | Select foreign key scalars and fetch separately, or run the relationship read where decorated classes can be registered. |
+| A CRUD method is missing from autocomplete | Expected: the typed marker narrows methods to the connector's `operations:` and removes by-key methods from keyless entities | Check `rayfin.yml`, `connectorConfig.operations`, and `Source({ primaryKey })`; widen only if the source and policy should allow it. |
+
+```prompt title="Query and update a Fabric SQL connector"
+In my Rayfin project, use the existing Category A connector named inventory. Inspect
+rayfin/connectors/inventory/schema.ts and the generated entity files to confirm the
+connector type, operations, primary keys, scalar fields, and relationship fields. Then add a
+client-side query that reads Order rows through client.connectors.inventory.Order with an
+explicit select, a where filter, and an orderBy. If the connector exposes update, update one
+Order by passing the full key object and the scalar fields to change. If the connector is a
+Warehouse, treat the mutation result as DbOperationResult and re-query the row with
+findByKey if persisted values are needed; if it is a SQL Database, use the returned row.
+```
+

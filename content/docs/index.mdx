@@ -68,8 +68,9 @@ flowchart TB
   subgraph Outside["Outside the app"]
     Entra["Microsoft Entra ID"]
     MSRes["Microsoft resources<br/>Fabric · Azure AI<br/>Key Vault · Cosmos DB<br/>Kusto · Azure DevOps"]
+    Sources["Existing Fabric data<br/>Warehouse · SQL DB<br/>Semantic model · KQL"]
     AnyApi["Any HTTPS API"]
-    Entra ~~~ MSRes ~~~ AnyApi
+    Entra ~~~ MSRes ~~~ Sources ~~~ AnyApi
   end
 
   Static ==> Web
@@ -78,6 +79,7 @@ flowchart TB
   Fn ==> MSSQL
   Web ==> Blob
   Web -.->|"Fabric SSO"| Entra
+  Web -.->|"connectors"| Sources
   Fn -.->|"delegated token"| MSRes
   Fn -.->|"secrets"| AnyApi
 
@@ -85,7 +87,7 @@ flowchart TB
   class CLI,Static,Web,DataApi service
   class MSSQL store
   class Fn,Blob experimental
-  class Entra,MSRes,AnyApi external
+  class Entra,MSRes,Sources,AnyApi external
 ```
 
 `rayfin up` packages your project and provisions it as a Fabric app: Fabric hosts the
@@ -101,10 +103,16 @@ through [delegated authentication](/docs/functions/connections): the runtime exc
 caller's identity for a resource-scoped token, so the function acts **as the signed-in
 user** rather than as a shared service identity.
 
+[Connectors](/docs/connectors) cover the other direction: data that already lives in Fabric.
+Point one at a Warehouse, SQL Database, Lakehouse SQL endpoint, semantic model, or KQL
+database and query it from the same client — as typed entities, or with DAX and KQL. Those
+queries also run under the signed-in user's identity. See
+[Delegated access](/docs/auth/delegated-access) for how the surfaces relate.
+
 > [!WARNING]
-> Functions, blob storage, and delegated authentication are experimental and are not
-> available in every Fabric region or tenant. Confirm availability in your tenant before
-> you depend on them.
+> Functions, blob storage, connectors, and delegated authentication are experimental or in
+> preview, and are not available in every Fabric region or tenant. Confirm availability in
+> your tenant before you depend on them.
 
 During development, a local Vite server takes the place of the *Static Content* node above:
 `npx rayfin up --exclude-services staticHosting` deploys everything else to Fabric, and
@@ -117,6 +125,8 @@ no backend to run yourself.
 - **[Auth](/docs/auth)** — sign users in with Fabric SSO and read claims on the server.
 - **[Functions](/docs/functions)** — server-side TypeScript for logic that does not belong
   in the client. Experimental.
+- **[Connectors](/docs/connectors)** — read and write data that already exists in Fabric:
+  warehouses, SQL databases, semantic models, and KQL databases. Preview.
 - **[Storage](/docs/storage)** — upload, serve, and secure files in blob storage.
   Experimental.
 - **[Hosting](/docs/hosting)** — build and serve your frontend from the deployed app.
