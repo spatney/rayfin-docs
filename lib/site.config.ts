@@ -23,8 +23,8 @@ export const siteConfig = {
   },
 
   /** Rayfin package versions this documentation set was written against. */
-  sdkVersion: '1.34.0',
-  cliVersion: '1.33.2',
+  sdkVersion: '1.35.1',
+  cliVersion: '1.35.1',
 
   /** npm package names documented by the SDK reference section. */
   packages: [
