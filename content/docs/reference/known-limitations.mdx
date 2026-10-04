@@ -1,39 +1,103 @@
 ---
 title: Known limitations
-description: Current constraints in the Rayfin data client, Data API Builder, relationships, auth, and schema apply — organized by area, each with a workaround.
+description: Current constraints in Rayfin — service availability, functions, connectors, the data client, Data API Builder, relationships, auth, and schema apply — each with a workaround.
 ---
 
 This page lists the current constraints Rayfin builders run into most often, grouped by
 area. Each entry names the limitation and the workaround to use instead — if you're an
 agent generating Rayfin code, check the relevant section here before you write entities,
-queries, or permission decorators.
+queries, permission decorators, functions, or connectors.
 
 ## Service availability
 
-### Functions and storage are experimental
+### Functions are not available in every region or tenant
 
-`services.functions` and `services.storage` are experimental services. They are not
-available in every Fabric region or tenant, and the `@microsoft/rayfin-functions` and
-`@microsoft/rayfin-storage` packages may change substantially between releases.
+Functions are generally available as of Rayfin 1.36 — no feature flag is needed — but the
+service is not available in every Fabric region or tenant.
 
-**Workaround:** deploy a minimal app with the service enabled and confirm `npx rayfin up`
-succeeds in your target workspace before you design around it. Keep data access in
-[`client.data.<Entity>`](/docs/data/querying) where a function is not strictly required.
+**Workaround:** deploy a minimal app with `services.functions.enabled: true` and confirm
+`npx rayfin up` succeeds in your target workspace before you design around it. Keep data
+access in [`client.data.<Entity>`](/docs/data/querying) where a function is not strictly
+required.
 
-### Connectors are in private preview
+### Storage is experimental
 
-[Connectors](/docs/connectors) are behind a feature flag: `rayfin connector` is not
-registered until the project sets `services.connectors.enabled: true`, has a non-empty
-`connectors:` block, or runs with `RAYFIN_FEATURE_FLAGS=connectors`. `ConnectorsRayfinClient`
-ships from the `@microsoft/rayfin-client/experimental` subpath, and the connector packages
-may change between releases.
+[Storage](/docs/storage) is experimental. It is enabled only with
+`RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled: true`, it is not available in
+every Fabric region or tenant, and `@microsoft/rayfin-storage` may change substantially
+between releases.
 
-Connector packages version in lockstep with the CLI, but their npm `latest` and `preview`
-tags lag the published release. An unversioned install resolves to an older connector that
-hard-pins its own `@microsoft/rayfin-data`, leaving two Rayfin version lines in one app.
+**Workaround:** confirm a storage-enabled deploy succeeds in your target workspace before
+you depend on it, and pin every Rayfin package to one exact version.
 
-**Workaround:** run the version-pinned `npm install` that `rayfin connector add` prints,
-verbatim, and confirm a connector deploys in your own workspace before designing around it.
+### Deep linking is rolling out per tenant
+
+[Deep linking](/docs/hosting/deep-linking) depends on the Fabric portal, and it is not
+available in every tenant yet.
+
+**Workaround:** call `isSupported()` before you show a share button or rely on the URL
+carrying state, and keep the app fully usable when it resolves to `undefined`.
+
+## Functions
+
+### Function connections run only as the app identity
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+A deployed function's `ctx.Tokens.<Audience>` token belongs to the app identity — for
+current Fabric apps, the owner of the Fabric app item — not to the signed-in user.
+`services.functions.auth.type` accepts only `application`, so a function cannot call an
+external resource as the caller.
+
+**Workaround:** grant the app identity access to each resource the function calls. When
+each user must see only their own data at the source, query it through a
+[SQL or semantic model connector](/docs/connectors/auth) with `auth.type: delegated`
+instead of a function. Data your app owns stays caller-scoped through
+`ctx.getDataClient()`. See [Delegated and application access](/docs/auth/delegated-access).
+
+### Local function connections use your own identity
+
+When `rayfin dev` runs Functions locally, `ctx.Tokens` holds tokens for the account you
+signed in with, not for the app identity. A call that works locally can fail after
+`rayfin up` with an authorization error.
+
+**Workaround:** grant the app identity access before you deploy, and test the deployed
+function once with `npx rayfin up`.
+
+### Five audiences only
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+`AudienceType` has five members: `Sql`, `Storage`, `Fabric`, `AzureAI`, and `ADO`.
+`CosmosDB`, `KeyVault`, `EventGrid`, `Kusto`, and `WorkIQ` were removed in 1.36.
+
+**Workaround:** for a service that accepts key-based access, store the credential with
+`npx rayfin secret set` and read it from `ctx.Secrets` in the function. See
+[Secrets in functions](/docs/functions/secrets).
+
+## Connectors
+
+### Connectors do not run under `rayfin dev`
+
+`rayfin dev` reads the `connectors:` block but does not wire it, so connector calls do not
+work in a development session until the connector is deployed.
+
+**Workaround:** deploy with `npx rayfin up` (or `npx rayfin up connector apply`) and test
+against the deployed app. Prove the connector returns rows with
+[`rayfin connector invoke` or `rayfin connector inspect`](/docs/reference/cli/connector)
+before you build UI on it.
+
+### New Kusto connectors cannot be added
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Rayfin 1.36 holds the `kusto` (Eventhouse) connector type back. `rayfin connector add`,
+`types`, and `search` reject it with
+`Connector type "kusto" is not available in this release.` A project that already declares
+a Kusto connector keeps validating and deploying.
+
+**Workaround:** keep existing Kusto connectors as they are. See
+[KQL databases](/docs/connectors/kusto) for operating one on 1.36.
 
 ### `rayfin connector inspect` does not support Kusto
 
@@ -44,6 +108,27 @@ verbatim, and confirm a connector deploys in your own workspace before designing
 **Workaround:** use `npx rayfin connector invoke <name> executeQuery` instead. That transport
 posts to the deployed item, so it needs a prior `npx rayfin up`. See
 [KQL databases](/docs/connectors/kusto).
+
+### Install connector packages at the pinned version
+
+An unversioned install of a connector package can resolve to a different release than the
+rest of your Rayfin packages. The connector then pulls its own `@microsoft/rayfin-data`,
+leaving two Rayfin version lines in one app.
+
+**Workaround:** run the version-pinned `npm install` that `rayfin connector add` prints,
+verbatim, so every `@microsoft/rayfin-*` package stays on one version.
+
+### Decorated entity classes can break a browser bundle
+
+`connectorConfig.entities` accepts either an entity's class or a string array of its field
+names. The class form is required to select a relationship — selecting one with the array
+form throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT`. But a bundler that lowers the
+decorators on an entity class produces an invalid class expression, and the deployed page
+fails to parse at runtime.
+
+**Workaround:** in code the browser loads, list each entity's fields as a string array
+unless you need relationship selects. If you use the class form, confirm the production
+build runs before you deploy. See [Client setup](/docs/connectors/client-setup).
 
 ## Data client
 
@@ -173,8 +258,8 @@ unsubscribe function. See [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-
 Enabling or disabling auth (or changing its settings) in `rayfin.yml` doesn't take effect
 on a running backend.
 
-**Workaround:** restart the backend (`npx rayfin up`) after any `services.auth` change in
-`rayfin.yml` so the updated endpoints are exposed.
+**Workaround:** restart `npm run dev` (which runs `rayfin dev`) during development, or
+redeploy with `npx rayfin up`, after any `services.auth` change in `rayfin.yml`.
 
 ## Data
 
@@ -203,19 +288,26 @@ enable anonymous data access for the tenant. See
 
 ### Run `rayfin up` before `rayfin up db apply`
 
-`rayfin up db apply` expects the backend services it's applying schema to already be
-running and healthy.
+`rayfin up db apply` applies schema to an app that already exists in Fabric.
 
-**Workaround:** run `npx rayfin up` first and wait for services to report healthy, then
-run the `db apply` subcommand.
+**Workaround:** run `npx rayfin up` once to create the app, then use the `db apply`
+subcommand for schema-only changes.
 
-### `unsupported UUID` errors
+### Entity names can't reuse GraphQL built-in type names
 
-This usually means another service is already running on the default port, backed by a
-different database dialect than your current project expects.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-**Workaround:** stop the conflicting service (or free the port) and retry. See
-[Errors and troubleshooting](/docs/reference/errors).
+An entity name becomes a GraphQL type name. Names such as `Date`, `DateTime`, `String`,
+`Int`, `Decimal`, `UUID`, `Query`, `Mutation`, and `Subscription` collide with types the
+generated schema already defines, as does any name that starts with `__`. Before 1.36 the
+deploy failed with an opaque schema-build error. Since 1.36 the CLI rejects the name up
+front — for example `Entity name 'Date' is a built-in GraphQL scalar type reserved by the
+platform`, or `Reserved GraphQL type names detected in connector entities:` for connectors.
+This applies to your own entities and to connector entities.
+
+**Workaround:** rename the class — for example `EventDate` instead of `Date` — or keep the
+class name and pass a different entity name with `@entity('EventDate')`. For a connector
+entity, keep `Source({ table: '...' })` pointing at the original table.
 
 ### `dialect` is required when the Data module is enabled
 

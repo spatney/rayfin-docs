@@ -34,7 +34,7 @@ requires a valid signed-in user's access token on every request (see
 There is no supported way for a Node.js script to acquire that token itself. Fabric SSO
 signs a user in through a browser popup or the Fabric portal iframe (see
 [Fabric SSO](/docs/auth/fabric-sso)) — flows a headless script cannot drive — and, per
-[Sessions](/docs/auth/sessions#token-handling), Rayfin doesn't expose a way to read a token
+[Sessions](/docs/auth/sessions), Rayfin doesn't expose a way to read a token
 back out for reuse elsewhere. `accessToken` on `RayfinServerClient` exists for code that
 already holds a token issued by some other trusted flow — for example, a Rayfin function
 forwarding the caller's own request token — not as a way to sign a script in.

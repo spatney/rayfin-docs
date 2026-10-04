@@ -1,5 +1,12 @@
 {
   "title": "Functions",
   "description": "Run server-side TypeScript alongside your data.",
-  "pages": ["writing-functions", "connections", "calling-functions", "deploying"]
+  "pages": [
+    "writing-functions",
+    "secrets",
+    "connections",
+    "calling-functions",
+    "local-development",
+    "deploying"
+  ]
 }

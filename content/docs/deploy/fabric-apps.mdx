@@ -1,153 +1,114 @@
 ---
 title: Fabric apps
-description: What a managed Fabric app is, its prerequisites and child services, and how to create and manage one from the Microsoft Fabric portal.
+description: Understand the Fabric App (preview) item Rayfin deploys into, including services, permissions, capacity, and portal creation.
 ---
 
-A **Fabric app** is a Fabric item that hosts your Rayfin project as a managed service.
-Fabric provisions and operates the database, authentication, static hosting, and API
-endpoints, so you maintain application code instead of infrastructure.
+A **Fabric app** is the managed Microsoft Fabric item that hosts a Rayfin project. In the Fabric portal, create it with **New item** → **App (preview)**.
 
 ## What a Fabric app contains
 
-Every Fabric app exposes a single Rayfin endpoint backed by a set of child services:
-
 ```mermaid
 flowchart TD
-  App["Fabric app"] --> Auth["Auth"]
-  App ==> Static["Static content"]
-  App ==> Web["WebService"]
-  Web ==> DataApi["Data API Builder"]
-  Web ==> Fn["Functions"]
-  Web ==> Blob[("Blob storage")]
-  DataApi ==> MSSQL[("MSSQL")]
-  Fn ==> MSSQL
-  Auth -.->|"Fabric SSO"| Entra["Microsoft Entra ID"]
+  App["App (preview) item"] --> Auth["Auth"]
+  App --> Static["Static hosting"]
+  App --> Web["WebService"]
+  Web --> DataApi["Data API Builder"]
+  Web --> Fn["Functions"]
+  Web --> Blob[("Blob storage")]
+  DataApi --> MSSQL[("MSSQL")]
+  Fn --> MSSQL
+  Auth -.-> Entra["Microsoft Entra ID"]
 
-  class App,Auth,Static,Web,DataApi service
+  class App,Auth,Static,Web,DataApi,Fn service
   class MSSQL store
-  class Fn,Blob experimental
+  class Blob experimental
   class Entra external
 ```
 
-Each node maps to a key under `services` in
-[`rayfin.yml`](/docs/reference/config/rayfin-yml):
+| Service | `rayfin.yml` key | Status | What it provides |
+| --- | --- | --- | --- |
+| Auth | `services.auth` | GA | Session issuing and Microsoft Entra ID through Fabric SSO. |
+| Data | `services.data` | GA | GraphQL over the app's Fabric MSSQL database. |
+| Static hosting | `services.staticHosting` | GA | Built frontend assets served from the app origin. |
+| Functions | `services.functions` | GA since 1.36 | TypeScript server workflows. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| Storage | `services.storage` | Experimental | Blob storage when the storage feature is enabled. [Experimental](/docs/reference/changelog#feature-status) |
 
-| Service | `rayfin.yml` key | What it provides |
-| --- | --- | --- |
-| Auth | `services.auth` | Session issuing and validation. Sign-in itself is delegated to Microsoft Entra ID through [Fabric SSO](/docs/auth/fabric-sso) — the identity provider lives outside the app. |
-| Data API Builder | `services.data` | The [GraphQL data API](/docs/data) over the app's MSSQL database. `dialect` is `mssql`. |
-| Static content | `services.staticHosting` | Your built frontend, served from the app's origin. See [Static hosting](/docs/hosting). |
-| Functions | `services.functions` | Server-side [TypeScript functions](/docs/functions). Experimental. |
-| Blob storage | `services.storage` | [File and blob storage](/docs/storage). Experimental. |
-
-Auth, data, and static hosting are the core services. Functions and blob storage are
-optional — enable them in `rayfin.yml` when you need them.
+> [!NOTE]
+> Functions are not available in every Fabric region or tenant.
 
 > [!WARNING]
-> Functions and blob storage are experimental and are not available in every Fabric region
-> or tenant. Confirm availability in your tenant before you depend on them.
+> Storage is experimental and not available in every Fabric region or tenant.
 
-A Fabric app lives inside a Fabric workspace. A workspace can hold multiple Fabric apps —
-for example, one per environment or one per project.
+## Capacity readiness
+
+A Fabric app lives inside a Fabric workspace, and the workspace needs usable Fabric capacity. Rayfin 1.36 checks capacity during first deploys and can create a new workspace, start or reuse an eligible Fabric trial capacity, or assign a selected capacity when the user consents. [New in 1.36](/docs/reference/changelog#rayfin-136)
+
+Pass `--capacity-id <capacity-guid>` to choose a capacity explicitly. Existing recorded deployments keep their current workspace capacity.
+
 
 ## Prerequisites
 
-### Fabric capacity
+### Tenant setting
 
-The workspace that will hold your Fabric app must have Fabric capacity assigned — select a
-capacity when you create the workspace if it does not already have one. Every service your
-app uses consumes capacity units from that assignment. See
-[Capacity and billing](/docs/deploy/pricing) for what consumes capacity and what does not.
+A Fabric tenant administrator must enable **Fabric Apps (preview)** before users can create Rayfin-hosted apps:
 
-### Tenant admin setting
-
-A Fabric tenant administrator must enable the Fabric app workload before anyone in the
-tenant can create one:
-
-1. Sign in to the [Fabric admin portal](https://app.fabric.microsoft.com/admin-portal).
+1. Open the [Fabric admin portal](https://app.fabric.microsoft.com/admin-portal).
 2. Go to **Tenant settings**.
-3. Under **Fabric Apps (preview)**, toggle the setting to **Enabled**.
-4. Choose whether to enable it for the whole organization or specific security groups.
+3. Enable **Fabric Apps (preview)**.
+4. Scope the setting to the whole organization or the security groups that should build apps.
 5. Click **Apply**.
 
-Changes can take a few minutes to propagate. If you are not a tenant admin, ask your
-Fabric administrator to complete this step before trying to create a Fabric app.
+### Workspace capacity
 
-## Create a Fabric app in the portal
+The workspace that contains the App (preview) item must have usable Fabric capacity. If it does not, Rayfin 1.36 can prepare a workspace during first deploy, including trial-capacity readiness when the account and tenant are eligible. See [Deploying with rayfin up](/docs/deploy/rayfin-up#prepare-workspace-capacity).
 
-1. Open [Microsoft Fabric](https://app.fabric.microsoft.com) and sign in with your
-   Microsoft account.
-2. Select a workspace from the left navigation, or create one: **Workspaces** → **New
-   workspace** → enter a name and select a Fabric capacity.
-3. In the workspace, click **New item**, then search for and select **App (preview)** —
-   this is the item type a Rayfin project deploys into.
-4. Enter a name (for example, `my-rayfin-app`) and click **Create**.
-5. Click **Open in VS Code** on the new item to load the project, then use GitHub Copilot
-   to build your app.
-6. When you are ready to ship, run `npx rayfin up` from the project's terminal. See
-   [Deploying with rayfin up](/docs/deploy/rayfin-up) for the full workflow.
+## Create an App (preview) item in the portal
 
-```prompt title="Create and deploy a Fabric app"
-I have a Rayfin project ready to ship. Sign me in with `npx rayfin login`, then run `npx
-rayfin up` to create a Fabric app for it (or update the existing one, if
-rayfin/.deployments.json already has a deployment) and deploy the current build. Once it
-finishes, run `npx rayfin up status` and tell me the live hosting URL.
-```
+1. Open [Microsoft Fabric](https://app.fabric.microsoft.com).
+2. Select or create a workspace with Fabric capacity.
+3. Click **New item**.
+4. Search for **App (preview)** and create it.
+5. Open the item in VS Code, or deploy an existing local project with `npx rayfin up`.
+
+The CLI can also create the item during first deploy. The Fabric item display name defaults to `id` in `rayfin.yml`; use `--item-name` to override it for the deploy. [New in 1.36](/docs/reference/changelog#rayfin-136)
+
 
 ## Child services
 
-`rayfin up` provisions these as child items under the Fabric app, based on your
-`rayfin.yml`:
+Rayfin provisions child services based on `rayfin.yml`. The portal can show these resources, but schema and settings are code-owned and should be changed through Rayfin commands.
 
-| Child service | What it provides | Portal capabilities |
+| Child service | What it provides | How to update it |
 | --- | --- | --- |
-| **SQL Database** | An MSSQL database with the schema generated from your TypeScript data model decorators. | View the database and run queries with the query editor, or copy the connection string. Read-only — schema changes must come from your code via `rayfin up`. |
-| **Authentication** | Fabric brokered auth using Microsoft Entra ID (SSO). Users sign in with their existing Fabric identity. | View authenticated users in the SQL Database. |
-| **Static Content** | Your built frontend assets (HTML, CSS, JS), served at a public URL from OneLake storage. | View the hosting URL. Assets update on every deploy. |
+| SQL Database | Tables and indexes generated from decorated entities. | Change entity code and run `npx rayfin up` or `npx rayfin up db apply`. |
+| Authentication | Fabric brokered auth backed by Microsoft Entra ID. | Update `services.auth` in `rayfin.yml` and redeploy. |
+| Static content | Built HTML, CSS, JavaScript, and assets. | Run `npx rayfin up` or `npx rayfin up staticapp deploy`. |
+| Functions | Server-side TypeScript functions when enabled. | Run `npx rayfin up` or `npx rayfin up functions deploy`. |
 
-## The Rayfin endpoint
+## Rayfin endpoint and app URL
 
-Every Fabric app has one Rayfin endpoint that fronts all of its services:
+Each Fabric app has a Rayfin backend endpoint used by the SDK and, when static hosting is enabled, a hosting URL used by browsers. `rayfin up status --json` reports the recorded hosting URL as `deployment.hostingUrl`.
 
-```text
-https://<your-app>-app.rayfin.windows.net/
-```
-
-| Path | Service |
+| Route | Used for |
 | --- | --- |
-| `/api/graphql` | Data API (GraphQL) — used by `RayfinClient` for CRUD operations. |
-| `/auth` | Authentication service. |
-| `/storage` | File storage. |
+| `/api` | Backend API routes, including auth helpers. |
+| `/graphql` | Data API queries and mutations. |
+| `/functions/<name>/invoke` | Function invocation through the deployed backend. |
+| `/connectors` and `/connector-invoke` | Connector metadata and invocation. |
 
-Your frontend reads this endpoint from the `RAYFIN_PUBLIC_API_URL` variable in
-`rayfin/.env`. See [Environments and configuration](/docs/deploy/environments) for how
-that value is generated into `.env.local` for your framework.
-
-## Manage it in the Fabric portal
-
-Open the Fabric app in the portal to see its **Rayfin endpoint**, its **App URL** (the
-public static content URL), and a link back to the Fabric portal. Click into it to see
-child items: the **SQL Database** (opens the query editor for read-only queries) and
-**Authentication** (view signed-in users). Schema changes made directly in the portal's
-query editor are overwritten on the next `rayfin up`.
-
-### Permissions
-
-Workspace roles do not automatically carry item-level permissions. To let someone in your
-organization open and use the app, grant them **Run and interact** on the Fabric app item.
+## Permissions
 
 | Permission | What it allows |
 | --- | --- |
-| **Run and interact** (default) | Open and use the deployed app. Every workspace member gets this by default. |
-| **Edit (Write)** | Deploy code with `rayfin up`, apply schema changes, update settings, and manage child services. Requires **contributor** or **admin** on the workspace. |
-| **Reshare** | Grant other users access to the Fabric app. Requires **admin** on the workspace. |
+| Workspace Viewer plus item Run and interact | Open and use the deployed app. |
+| Workspace Contributor or Admin | Deploy with `rayfin up`, apply schema changes, and update settings. |
+| Workspace Admin | Assign workspace capacity and reshare access. |
 
-See [Workspace roles](https://learn.microsoft.com/fabric/fundamentals/roles-workspaces) in
-the Microsoft Fabric documentation for how workspace roles work.
+```prompt title="Create or target a Fabric app"
+Help me deploy this Rayfin project into Microsoft Fabric. If rayfin/.deployments.json has a recorded deployment, reuse it. Otherwise, target the Fabric workspace I provide or help me choose one, ensure the workspace has usable capacity, and run `npx rayfin up`. Use the portal item name App (preview) when describing manual steps.
+```
 
 ## Next steps
 
-- [Deploying with rayfin up](/docs/deploy/rayfin-up) — the full deploy workflow and CLI
-  flags.
-- [Capacity and billing](/docs/deploy/pricing) — what running this app costs in Fabric
-  capacity units.
+- [Deploying with rayfin up](/docs/deploy/rayfin-up)
+- [Capacity and billing](/docs/deploy/pricing)
+- [Static hosting](/docs/hosting)

@@ -35,6 +35,7 @@ These apply to `@uuid()`, `@text()`, `@int()`, `@decimal()`, `@boolean()`, `@dat
 | `optional` | `boolean` | `false` | Allows `NULL` in the database. Pair with a `?` on the TypeScript property — see [below](#the-nullable-pattern). |
 | `unique` | `boolean` | `false` | Adds a unique constraint on the column. |
 | `default` | matches the field's type | — | Default value used when the field is omitted on create. |
+| `column` | `string` | property name | SQL column name to create or map for this field. The GraphQL field stays the TypeScript property name. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `description` | `string` | — | Free-text note attached to the field's metadata. Does not change validation or the database column. |
 
 ```typescript title="rayfin/data/Todo.ts"
@@ -121,31 +122,39 @@ object as the first argument instead, followed by the allowed values:
 > Storage is experimental and is not available in every Fabric region or tenant. See
 > [Storage](/docs/storage) before you depend on it.
 
-`@blob()` is a **class-level** decorator, structurally different from the field
-decorators above — it marks a class as a storage folder configuration for
-`@microsoft/rayfin-storage`, the same way `@entity()` marks a class as a database table.
-It does not take `optional`, `default`, `max`, or `unique` options itself, and the
-properties inside the class are plain TypeScript fields rather than `@text()` / `@uuid()`
-decorated columns:
+`@blob()` is a **class-level** decorator for experimental Rayfin Storage folders. Import it from `@microsoft/rayfin-core/experimental`, not from the stable package root.
 
 ```typescript title="rayfin/storage/ProfileImage.ts"
-import { blob, role } from '@microsoft/rayfin-core';
+import { role } from '@microsoft/rayfin-core';
+import {
+  blob,
+  ContentTypes,
+  mb,
+  StorageObject,
+} from '@microsoft/rayfin-core/experimental';
 
-@blob('uploads')
+@blob({
+  name: 'profile-images',
+  onConflict: 'overwrite',
+  maxSize: mb(5),
+  allowedContentTypes: [ContentTypes.AnyImage],
+})
 @role('authenticated', '*', {
   policy: (claims, item) => claims.sub.eq(item.owner_id),
 })
-export class ProfileImage {
-  owner_id!: string;
-}
+export class ProfileImage extends StorageObject {}
 ```
 
-The string argument (`'uploads'` above) is the storage folder name; it defaults to the
-kebab-case class name if omitted. Permissions on a `@blob()` class use the same `@role()` /
-`@anonymous()` / `@authenticated()` decorators described in
-[Permissions and row-level security](/docs/data/permissions), but they generate a storage
-policy instead of a database policy. File upload, download, and listing operations are
-part of the storage client, not the `client.data.<Entity>` API this section covers.
+`StorageObject` declares server-managed intrinsic fields such as `owner_id`, `id`, `path`, `size`, and `etag`; do not pass those through upload metadata. Add decorated fields to the class only for application metadata you will send with `upload({ fields })`.
+
+| `@blob()` option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | normalized class name | Storage folder name. |
+| `onConflict` | `'error' \| 'overwrite'` | `'error'` | Folder-level conflict behavior. `overwrite` requires authenticated `update` permission. |
+| `maxSize` | `number \| ByteSize` | service limit | Maximum object size. Use `bytes()`, `kb()`, `mb()`, or `gb()` helpers. |
+| `allowedContentTypes` | `MimeGlob[]` | any type | MIME globs such as `'image/*'` or `ContentTypes.Pdf`; unsupported uploads fail with `UnsupportedContentType`. |
+
+Every storage folder needs at least one authenticated permission rule. Anonymous storage permissions are not supported. File upload, download, listing, and delete operations are part of `@microsoft/rayfin-storage`, not `client.data`.
 
 ```prompt title="Add a validated field to an entity"
 In my Rayfin project, add an "email" field to the User entity in rayfin/data/User.ts

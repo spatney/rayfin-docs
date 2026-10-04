@@ -1,0 +1,111 @@
+---
+title: Deep linking
+description: Use @microsoft/rayfin-app-state-fabric to store shareable app state in Fabric portal URLs for embedded Rayfin apps.
+---
+
+Deep linking lets a user share a Fabric portal URL that reopens the same view in an embedded Rayfin app. The app cannot write the parent address bar directly, so `@microsoft/rayfin-app-state-fabric` exchanges a JSON state object with the Fabric host.
+
+
+## Install the package
+
+```bash
+npm install @microsoft/rayfin-app-state-fabric
+```
+
+Keep Rayfin package versions aligned.
+
+## Create one client
+
+```typescript title="src/appState.ts"
+import { createFabricAppStateClient } from '@microsoft/rayfin-app-state-fabric';
+
+export const appState = createFabricAppStateClient();
+```
+
+Leave `targetOrigin` unset. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+The embedding Fabric extension host does not share the portal origin shown in the address bar. Pinning the portal origin can make the browser drop messages silently.
+
+## Check support
+
+Deep linking rolls out per tenant. Check support before showing a share button.
+
+```typescript
+const capabilities = await appState.isSupported();
+
+if (capabilities) {
+  showShareButton();
+  if (!capabilities.canPush) hideBackForwardHints();
+}
+```
+
+`isSupported()` resolves to `undefined` when the host does not support deep linking or the app is running standalone.
+
+## Read launch state before first render
+
+```typescript
+const launchState = appState.getLaunchStateSync();
+renderApp(launchState ?? defaultView);
+```
+
+Treat launch state as untrusted input. Validate it before using it in queries or navigation.
+
+## Preserve the restored route through sign-in
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+A shared link often opens for a signed-out user. If your route guard redirects to sign-in, carry the requested route through the auth redirect and return to it after sign-in.
+
+```tsx
+if (requireAuth && !isAuthenticated) {
+  return <Navigate to="/auth" replace state={{ from: `${location.pathname}${location.search}` }} />;
+}
+
+if (!requireAuth && isAuthenticated) {
+  return <Navigate to={resolveReturnPath(location.state)} replace />;
+}
+```
+
+Validate the captured path. Accept only same-origin app paths and reject the sign-in route itself. Templates with a route guard already preserve the requested route; keep that behavior when adding routes.
+
+## Write state as navigation changes
+
+Use `setState()` for user navigation that Back should undo:
+
+```typescript
+await appState.setState({ view: 'sales', region: 'AT' });
+```
+
+Use `replaceState()` for app-initiated or high-frequency changes:
+
+```typescript
+await appState.replaceState({ view: 'sales', threshold: value });
+```
+
+The whole object is replaced each time. Merge independent state slices before writing.
+
+## React to Back and Forward
+
+```typescript
+const unsubscribe = appState.onStateChange((state) => {
+  restore(state ?? defaultView);
+});
+
+unsubscribe();
+appState.dispose();
+```
+
+## Limits and security
+
+- State must be a plain JSON object.
+- Encoded state is capped at 4 KiB and 20 levels deep by default.
+- Do not put secrets, access tokens, or personal data in URL state.
+- Links are user-controlled input; validate all launch state.
+- Standalone writes reject with `NO_HOST_WINDOW`; branch on `isSupported()`.
+
+```prompt title="Add Fabric deep linking to my Rayfin app"
+Add `@microsoft/rayfin-app-state-fabric` to my Rayfin app. Create one app-state client without `targetOrigin`, read `getLaunchStateSync()` before first render, guard share UI with `isSupported()`, write user navigation with `setState()`, write app-initiated changes with `replaceState()`, subscribe with `onStateChange()`, and preserve the requested route through sign-in so shared links do not land on the default page.
+```
+
+## API reference
+
+See [`@microsoft/rayfin-app-state-fabric`](/docs/reference/sdk/rayfin-app-state-fabric).

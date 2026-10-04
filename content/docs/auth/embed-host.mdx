@@ -1,0 +1,146 @@
+---
+title: Embed in your own portal
+description: "Use the external embed host to sign a Rayfin app in when your own portal embeds it in an iframe."
+appliesTo: "@microsoft/rayfin-embed-host >= 1.36"
+---
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+Use `@microsoft/rayfin-embed-host` when your own portal embeds a Rayfin app in an iframe and the parent portal already has a delegated Microsoft Entra token for the signed-in user. The parent page brokers a one-time handoff for the embedded app; the iframe never receives the Entra token.
+
+Use [Fabric SSO](/docs/auth/fabric-sso) when the app runs inside the Fabric portal iframe. Use [Direct Entra token sign-in](/docs/auth/entra-token) when the caller should sign itself in rather than broker an embedded iframe.
+
+## Enable external Entra exchange in the embedded app
+
+The embedded Rayfin app must opt in to the external brokered endpoints:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+      externalEntraExchange: true
+```
+
+Apply the setting before embedding the app. No additional app-side query flag is required for external embed mode. The embedded app detects the scenario from the parent host's acknowledgement.
+
+## Install the host package
+
+Install the host package in the parent portal project:
+
+```bash
+npm install @microsoft/rayfin-embed-host
+```
+
+The embedded Rayfin app uses `initEmbeddedAuth()` from `@microsoft/rayfin-auth-provider-fabric`, so keep that provider installed in the Rayfin app as described in [Fabric SSO](/docs/auth/fabric-sso).
+
+## How the external embed flow works
+
+1. The parent page calls `createEmbedHost()` before it mounts the Rayfin iframe.
+2. The embedded app calls and awaits `initEmbeddedAuth()` during startup.
+3. The iframe posts one readiness message to the parent.
+4. The host checks the iframe origin against `allowedOrigins` and acknowledges the `externalEmbed` scenario.
+5. The embedded app signs out any existing local session, then posts a correlated handoff request with its brokered-authorize endpoint, artifact ID, return origin, and PKCE challenge.
+6. The host validates the return origin, calls `getAccessToken()`, and posts the delegated Entra token to the embedded app's external brokered-authorize endpoint.
+7. The endpoint returns a single-use handoff code. The host sends the code to the iframe, and the embedded app exchanges it for a Rayfin session.
+
+The readiness signal is sent once with no retry. Register the host before creating or navigating the iframe.
+
+## Register the host before mounting the iframe
+
+```typescript title="src/embed/rayfinEmbed.ts"
+import { createEmbedHost } from '@microsoft/rayfin-embed-host';
+
+const rayfinOrigin = 'https://my-rayfin-app.example.com';
+
+const host = createEmbedHost({
+  allowedOrigins: [rayfinOrigin],
+  getAccessToken: () => acquireDelegatedEntraToken(),
+});
+
+const iframe = document.createElement('iframe');
+iframe.src = rayfinOrigin;
+document.querySelector('#rayfin-embed')?.append(iframe);
+
+window.addEventListener('pagehide', () => {
+  host.dispose();
+});
+```
+
+`dispose()` is idempotent. Call it when the embedded app is removed, such as a route change or component unmount.
+
+## Provide the delegated token
+
+`getAccessToken` is your connection to the parent portal's identity stack. Return the delegated Entra access token for the current portal user. The host invokes it once per handoff request and does not cache the returned token.
+
+```typescript title="src/embed/createRayfinHost.ts"
+import { createEmbedHost } from '@microsoft/rayfin-embed-host';
+
+interface AccessTokenProvider {
+  getDelegatedToken(scopes: string[]): Promise<string>;
+}
+
+export function createRayfinHost(tokenProvider: AccessTokenProvider) {
+  return createEmbedHost({
+    allowedOrigins: ['https://my-rayfin-app.example.com'],
+    getAccessToken: () =>
+      tokenProvider.getDelegatedToken([
+        'https://analysis.windows.net/powerbi/api/Item.Execute.All',
+      ]),
+  });
+}
+```
+
+## Configure allowed origins
+
+`allowedOrigins` is a list of exact origins for embedded Rayfin apps that this parent can broker for. It gates both trust checks:
+
+- The browser-attested `event.origin` of the iframe posting readiness and handoff messages.
+- The `returnOrigin` carried in the handoff request, which is the origin the resulting handoff code is bound to.
+
+Use origins only, for example `https://my-rayfin-app.example.com` or `http://localhost:5173`. Do not include paths.
+
+## Embedded app startup
+
+In the Rayfin app being embedded, statically import `@microsoft/rayfin-auth-provider-fabric` and await `initEmbeddedAuth()` before rendering authenticated UI or restoring a stored user:
+
+```typescript title="src/auth/bootstrapEmbedded.ts"
+import { initEmbeddedAuth } from '@microsoft/rayfin-auth-provider-fabric';
+import { client } from '../services/rayfinClient';
+import { fabricOptions } from './fabricOptions';
+
+export async function bootstrapEmbeddedAuth() {
+  await initEmbeddedAuth(client.auth, fabricOptions);
+}
+```
+
+Do not skip this call because `client.auth.getSession()` is already authenticated. In an external embed, the parent portal brokers a fresh delegated handoff and the SDK discards any prior iframe session before that handoff.
+
+## Security properties
+
+- `allowedOrigins` gates both the iframe origin and the handoff return origin.
+- The delegated Entra token is attached only to the host's HTTP call to the brokered-authorize endpoint; it is not posted to the iframe.
+- The embedded app generates the PKCE challenge, and the handoff code is single-use.
+- Handoff responses are correlated to the request that asked for them.
+- Messages from origins outside the allowlist are ignored. A request whose return origin is not allowed receives `VALIDATION_FAILED` before any network call.
+
+## Troubleshooting
+
+| Symptom or error | Meaning | Fix |
+| --- | --- | --- |
+| The embedded app falls back to a popup or normal Fabric login | The readiness message was missed or the iframe origin was not allowed. | Call `createEmbedHost()` before mounting the iframe and include the iframe's exact origin in `allowedOrigins`. |
+| `VALIDATION_FAILED` / `returnOrigin is not permitted by the embed host.` | The request's return origin is not in `allowedOrigins`. | Add the embedded app's exact origin. |
+| `EXCHANGE_NOT_ENABLED` | The target app has not enabled external Entra exchange. | Set `services.auth.fabric.externalEntraExchange: true` and apply the setting. |
+| `AUTH_FAILED` | The delegated Entra token was rejected. | Check audience, tenant, scope, expiry, and how `getAccessToken()` acquires the token. |
+| `INSUFFICIENT_PERMISSIONS` | The user lacks Execute permission on the item. | Grant the user Execute permission for the Fabric item. |
+| `NOT_AVAILABLE` | The endpoint is unavailable or the embedded app sent the wrong endpoint. | Check the iframe URL and deployed Rayfin package versions. |
+| `AUTHORIZE_FAILED` | The host could not reach the brokered-authorize endpoint or received an unsupported response. | Check network reachability, CORS, and backend availability. |
+
+```prompt title="Embed a Rayfin app in my portal"
+In my portal, embed a Rayfin app in an iframe and broker sign-in with the portal user's Microsoft Entra identity.
+
+In the Rayfin app, enable services.auth.fabric.externalEntraExchange: true in rayfin/rayfin.yml, install @microsoft/rayfin-auth-provider-fabric, and call initEmbeddedAuth(client.auth, fabricOptions) during startup before rendering authenticated UI.
+
+In the parent portal, install @microsoft/rayfin-embed-host. Call createEmbedHost({ allowedOrigins, getAccessToken }) before mounting the iframe. allowedOrigins must contain the embedded app's exact origin. getAccessToken must return a delegated Entra token for the current user with Item.Execute.All. Dispose the host when the iframe is removed.
+```

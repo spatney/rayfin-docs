@@ -1,21 +1,17 @@
 ---
 title: "@microsoft/rayfin-connector-fabric-graphql"
-description: Type-only marker APIs for Category A Fabric SQL connectors that expose typed entity CRUD through client.connectors.
-appliesTo: "@microsoft/rayfin-connector-fabric-graphql — experimental"
+description: Marker APIs for Category A Fabric SQL connectors that expose typed entity CRUD through client.connectors.
+appliesTo: "@microsoft/rayfin-connector-fabric-graphql >= 1.36"
 ---
 
-`@microsoft/rayfin-connector-fabric-graphql` supplies TypeScript-only markers for
-Category A connectors. It has no runtime behavior; the entity proxy comes from
+`@microsoft/rayfin-connector-fabric-graphql` supplies marker types for Category A connectors. It has no runtime behavior. The entity proxy comes from
 [`@microsoft/rayfin-connectors`](/docs/reference/sdk/rayfin-connectors). See
 [Generating entity files](/docs/connectors/entity-generation) for the guide workflow.
-
-> [!WARNING]
-> Connectors are in private preview. This API may change between releases.
 
 ## Installation
 
 ```bash
-npm install @microsoft/rayfin-connector-fabric-graphql@1.36.0-alpha
+npm install @microsoft/rayfin-connector-fabric-graphql@1.36.2
 ```
 
 This package is not a dependency of `@microsoft/rayfin-client`, so a fresh app is missing
@@ -30,15 +26,15 @@ Per-type marker names such as `FabricWarehouse` do not exist.
 ```typescript
 import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
 import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
-import { Customer } from './Customer';
-import { Order } from './Order';
+import type { Customer } from './Customer';
+import type { Order } from './Order';
 
 export const connectorConfig = {
   connector: 'fabric-warehouse',
   operations: ['read', 'create', 'update', 'delete'],
   entities: {
-    Customer: ['CustomerId', 'Name'],
-    Order: ['OrderId', 'CustomerId', 'Amount'],
+    Customer: ['customerId', 'name'],
+    Order: ['orderId', 'customerId', 'amount'],
   },
 } as const satisfies ConnectorConfig;
 
@@ -51,7 +47,9 @@ export type SalesWarehouseConnector = GraphQLBackedConnector<
 >;
 ```
 
-`TSchema` maps entity names to their classes with `typeof`. The constructor type carries
+`TSchema` maps entity names to their classes with `typeof`. `connectorConfig.entities` can register either string arrays of scalar field names or decorated entity classes. Prefer string arrays in browser-loaded code. Use class entries only when relationship selections need `@one` / `@many` cardinality, and verify the production bundle loads; see [Decorated entity classes can break a browser bundle](/docs/reference/known-limitations#decorated-entity-classes-can-break-a-browser-bundle).
+
+The constructor type carries
 the primary-key phantom from the entity source metadata; a bare instance type is treated as
 keyless. `TConfig` should be `typeof connectorConfig`, with the value declared
 `as const satisfies ConnectorConfig` so the `connector` and `operations` literals are not
@@ -88,5 +86,5 @@ key.
 The marker gates methods at compile time only. Runtime routing, GraphQL execution,
 read-after-write behavior, and `OPERATION_NOT_ALLOWED` checks live in
 `@microsoft/rayfin-connectors`, mounted by `ConnectorsRayfinClient` from
-`@microsoft/rayfin-client/experimental`. Link the generated connector schema into that
+`@microsoft/rayfin-client`. Link the generated connector schema into that
 client as described in [Wiring connectors into your app](/docs/connectors/client-setup).

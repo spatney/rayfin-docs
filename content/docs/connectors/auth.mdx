@@ -1,19 +1,19 @@
 ---
 title: Connector authentication
+appliesTo: "@microsoft/rayfin-connectors >= 1.36"
 description: Configure connector auth.type values, validation rules, and caller identity for delegated and application connector access.
 ---
 
-Choose connector authentication in `rayfin/rayfin.yml` before you deploy a connector. The
-auth block controls whether runtime queries use the signed-in user's identity or the app's
+Choose connector authentication in `rayfin/rayfin.yml` before you deploy a connector.
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+The auth block controls whether runtime queries use the signed-in user's identity or the app's
 identity.
 
 For the conceptual overview across auth, functions, connectors, and data policies, see
 [Delegated access](/docs/auth/delegated-access). For the sibling function surface, see
 [Function connections](/docs/functions/connections).
-
-> [!WARNING]
-> Connectors are in private preview. Confirm the feature is available in your tenant before
-> you design an app around it.
 
 ## Declare `auth.type`
 
@@ -21,7 +21,7 @@ Each connector entry has an `auth:` block:
 
 ```yaml
 auth:
-  type: delegated
+  type: application
 ```
 
 In context, the entry looks like this:
@@ -34,7 +34,7 @@ connectors:
       workspaceId: <workspace-id>
       itemId: <warehouse-item-id>
     auth:
-      type: delegated
+      type: application
     operations:
       - name: read
       - name: create
@@ -42,8 +42,9 @@ connectors:
       - name: delete
 ```
 
-`npx rayfin connector add ...` writes `auth.type: delegated` by default. The value is
-lowercase: `delegated` or `application`. Other values, including uppercase variants, fail
+`npx rayfin connector add ...` writes `auth.type: application` by default for Category A SQL connectors. It writes `auth.type: delegated` for Category B connectors.
+
+This default changed in 1.36. The value is lowercase: `delegated` or `application`. Other values, including uppercase variants, fail
 validation.
 
 ## Use an allowed value for the connector type
@@ -51,16 +52,17 @@ validation.
 `rayfin up` validates that `auth.type` is known and allowed for the connector type before
 deployment starts.
 
-| Type | Allowed auth |
-| --- | --- |
-| `fabric-sqlanalytics` | `delegated`, `application` |
-| `fabric-warehouse` | `delegated`, `application` |
-| `fabric-sqldatabase` | `delegated`, `application` |
-| `fabric-semanticmodel` | `delegated` only |
-| `kusto` | `delegated` only |
+| Type | Default auth | Allowed auth |
+| --- | --- | --- |
+| `fabric-sqlanalytics` | `application` | `delegated`, `application` |
+| `fabric-warehouse` | `application` | `delegated`, `application` |
+| `fabric-sqldatabase` | `application` | `delegated`, `application` |
+| `fabric-semanticmodel` | `delegated` | `delegated` only |
+| `kusto` | `delegated` | Existing connectors only; `delegated` only |
 
-Category B connectors are delegated-only. `auth.type: application` on
-`fabric-semanticmodel` or `kusto` is rejected by `rayfin up` before deployment.
+Category B connectors are delegated-only. `auth.type: application` on `fabric-semanticmodel` or an existing `kusto` connector is rejected by `rayfin up` before deployment.
+
+New Kusto authoring is held in 1.36.2.
 
 ## Run queries as the signed-in user
 
@@ -99,7 +101,7 @@ auth.type for each connector.
 Use auth.type: delegated when queries should run as the signed-in user and the user has
 permission on the target Fabric workspace and item. Use auth.type: application only for
 fabric-sqlanalytics, fabric-warehouse, or fabric-sqldatabase when the connector should run
-as the app identity. Do not set application auth on fabric-semanticmodel or kusto because
+as the app identity. Do not set application auth on fabric-semanticmodel or existing kusto because
 rayfin up rejects that combination.
 
 If the connector is Category A and uses @role() policies on generated entities, explain how

@@ -4,6 +4,7 @@
   "pages": [
     "fabric-apps",
     "rayfin-up",
+    "deployment-pipelines",
     "secrets",
     "environments",
     "pricing",

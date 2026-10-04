@@ -1,21 +1,18 @@
 ---
 title: "@microsoft/rayfin-connector-fabric-semanticmodel"
 description: Marker, runtime, direct execution, URL parsing, Arrow decoding, and normalized result APIs for Fabric semantic model connectors.
-appliesTo: "@microsoft/rayfin-connector-fabric-semanticmodel — experimental"
+appliesTo: "@microsoft/rayfin-connector-fabric-semanticmodel >= 1.36"
 ---
 
 `@microsoft/rayfin-connector-fabric-semanticmodel` provides the type marker and runtime
 helpers for `fabric-semanticmodel` connectors. Use it with
-`ConnectorsRayfinClient` from `@microsoft/rayfin-client/experimental`. See
+`ConnectorsRayfinClient` from `@microsoft/rayfin-client`. See
 [Semantic models](/docs/connectors/semantic-models) for guide-level usage.
-
-> [!WARNING]
-> Connectors are in private preview. This API may change between releases.
 
 ## Installation
 
 ```bash
-npm install @microsoft/rayfin-connector-fabric-semanticmodel@1.36.0-alpha
+npm install @microsoft/rayfin-connector-fabric-semanticmodel@1.36.2
 ```
 
 ## Marker and operation catalog
@@ -36,7 +33,7 @@ interface FabricSemanticModelOperationCatalog {
 }
 
 type AppConnectorsSchema = {
-  salesModel: FabricSemanticModel<'executeQuery'>;
+  salesmodel: FabricSemanticModel<'executeQuery'>;
 };
 ```
 
@@ -96,6 +93,14 @@ function toQueryResult(
 
 `toQueryResult` accepts the raw tabular envelope or an already-normalized result. It returns
 success rows as column-aligned arrays and gives failures a category and message.
+
+## Int64 and overflow handling
+
+[Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
+
+`parseArrowStream` coerces Arrow Int64 values, including Int64 values nested inside Power BI Variant/Union columns, to JavaScript numbers when the value is within the safe integer range.
+
+Values outside that range become an `overflow` query error instead of leaking a raw `bigint` that would fail JSON serialization.
 
 ## Runtime options
 

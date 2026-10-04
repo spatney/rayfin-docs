@@ -1,61 +1,43 @@
 ---
 title: CLI installation
-description: Install the Rayfin CLI as a project dev dependency, globally, or run it ad hoc with npx — plus how to verify the install and update it.
+description: Install @microsoft/rayfin-cli for a project, verify the version, and keep the CLI aligned with the Rayfin packages in package.json.
 ---
 
-`@microsoft/rayfin-cli` ships as a normal npm package. Most projects never install it
-directly — `npm create @microsoft/rayfin@latest` adds it as a dev dependency automatically —
-but this page covers every install path.
+Install the Rayfin CLI in the project that owns `rayfin/rayfin.yml`. A local dev dependency
+keeps the CLI version aligned with the rest of the Rayfin packages.
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) 20 or later.
+- Node.js 20 or later.
+- npm 10 or later.
 
 ## New project
-
-Scaffolding a project installs the CLI as a dev dependency for you:
 
 ```bash
 npm create @microsoft/rayfin@latest my-app
 cd my-app
 ```
 
-## Existing project
+The create wrapper scaffolds a project and installs `@microsoft/rayfin-cli` as a dev
+dependency.
 
-Install the CLI as a dev dependency, then run the interactive setup:
+## Existing project
 
 ```bash
 npm install --save-dev @microsoft/rayfin-cli
 npx rayfin init
 ```
 
-See [Init](/docs/reference/cli/init) for what the setup prompts for.
+Run `npx rayfin init` from the directory that should contain `rayfin/rayfin.yml`.
 
-## Global install
-
-You can also install the CLI globally and call `rayfin` directly, without `npx`:
+## Run a specific CLI version without installing
 
 ```bash
-npm install -g @microsoft/rayfin-cli
-rayfin --version
+npx @microsoft/rayfin-cli@1.36.2 --version
 ```
 
-> [!NOTE]
-> Run `rayfin` from inside a project directory regardless of how it's installed. Commands
-> like [`rayfin docs`](/docs/reference/cli/docs) discover version-locked documentation by
-> scanning the current project's `node_modules`, so a globally-installed CLI still needs to
-> be invoked from the project root to see the right package versions.
-
-## Run without installing
-
-`npx` fetches and runs the CLI without adding it to `package.json`:
-
-```bash
-npx @microsoft/rayfin-cli --version
-```
-
-Inside a project that already has `@microsoft/rayfin-cli` as a dev dependency, plain
-`npx rayfin <command>` resolves to the locally installed version.
+Inside a project with `@microsoft/rayfin-cli` installed, prefer `npx rayfin <command>` so
+npm resolves the local project version.
 
 ## Verify the installation
 
@@ -64,31 +46,32 @@ npx rayfin --version
 npx rayfin --help
 ```
 
-## First steps
-
-```bash
-npx rayfin login   # sign in with Entra ID
-npx rayfin up       # deploy backend services to Fabric
-npm run dev         # run the frontend dev server
-```
-
-See [Login](/docs/reference/cli/login) and [Up](/docs/reference/cli/up) for details.
+The help output should show the visible 1.36 command groups: `init`, `dev`, `up`,
+`secret`, `functions`, `connector`, `env`, `login`, `logout`, and `docs`.
 
 ## Update the CLI
 
 ```bash
-npm update --save
+npm install --save-dev @microsoft/rayfin-cli@latest
 npm install
-```
-
-Verify the update:
-
-```bash
 npx rayfin --version
 ```
 
-```prompt title="Add Rayfin to an existing project"
-I have an existing TypeScript project at the current directory with no Rayfin backend yet.
-Install @microsoft/rayfin-cli as a dev dependency, then run `npx rayfin init` and walk me
-through the prompts to enable Auth and Data services with the mssql dialect.
+Rayfin packages ship in lockstep. When you update the CLI, update the other
+`@microsoft/rayfin-*` dependencies in the same change.
+
+## First commands
+
+```bash
+npx rayfin login
+npm run dev
+npx rayfin up
+```
+
+`npm run dev` in bundled templates runs `rayfin dev`; it does not publish static content.
+
+```prompt title="Install the Rayfin CLI locally"
+In my existing TypeScript project, install `@microsoft/rayfin-cli` as a dev dependency,
+run `npx rayfin --version`, then run `npx rayfin init` to create rayfin/rayfin.yml with
+Auth and Data enabled for Fabric.
 ```

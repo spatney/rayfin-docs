@@ -7,12 +7,14 @@
     "rayfin-data",
     "rayfin-auth",
     "rayfin-auth-provider-fabric",
+    "rayfin-embed-host",
     "rayfin-functions",
     "rayfin-storage",
     "rayfin-connectors",
     "rayfin-connector-fabric-graphql",
     "rayfin-connector-fabric-semanticmodel",
     "rayfin-connector-kusto",
+    "rayfin-app-state-fabric",
     "rayfin-lib"
   ]
 }

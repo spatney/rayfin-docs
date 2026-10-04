@@ -1,47 +1,34 @@
 ---
 title: Redirect URIs
-description: Configure allowedRedirectUris in rayfin.yml for auth callbacks and the Fabric SSO handoff, and understand what rayfin up appends automatically.
+description: Configure allowedRedirectUris for Fabric SSO, local rayfin dev ports, static hosting origins, and retained frontend port aliases.
 ---
 
-`allowedRedirectUris` is the allow-list of origins and URLs Rayfin will redirect back to
-after an auth flow. It backs two different things — the Fabric SSO `postMessage` handoff and
-ordinary auth callbacks — so it matters for both a local Vite app and a deployed Fabric app.
+`services.auth.allowedRedirectUris` is the allow-list of origins Rayfin can use for Fabric SSO handoffs and auth callbacks. Keep it scoped to origins that serve your app.
 
-## Configuring `allowedRedirectUris`
-
-It lives under `services.auth` in `rayfin.yml`:
+## Configure the local origin
 
 ```yaml title="rayfin/rayfin.yml"
 services:
   auth:
     enabled: true
+    fabric:
+      enabled: true
     allowedRedirectUris:
       - http://localhost:5173
 ```
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `allowedRedirectUris` | `string[]` | `["http://localhost:5173"]` | Allowed redirect URIs for auth callbacks and the Fabric SSO handoff. Must include the bare origin for Fabric auth. |
+Fabric SSO's popup flow works from any listed origin, including a local Vite server. Embedded iframe flows require the app to run inside Fabric.
 
-## What it's used for
+## How rayfin dev updates local redirects
 
-The Fabric SSO popup flow uses your app's bare origin (e.g. `http://localhost:5173`, with no
-path) as the `postMessage` target origin for the handoff code. See
-[Fabric SSO](/docs/auth/fabric-sso) for the full flow.
 
-Add every origin your app is actually served from — typically your local dev server and your
-deployed hosting URL — and nothing else.
+`rayfin dev` resolves a stable frontend port and writes it as `RAYFIN_PUBLIC_FRONTEND_PORT` in `rayfin/.env`. The backend is patched to allow both `http://localhost:<port>` and `http://127.0.0.1:<port>`.
 
-## What `rayfin up` appends automatically
+If the previous port is still occupied, Rayfin records it in `RAYFIN_FRONTEND_DEV_PORT_ALIASES` and keeps that origin allow-listed until the old process stops. Remove stale aliases when they are no longer serving the app.
 
-When [static hosting](/docs/hosting) is enabled, `rayfin up` automatically registers the
-hosting URL's bare origin in `allowedRedirectUris` on every deploy — you don't add it
-yourself. This is required for the Fabric SSO `postMessage` handoff, even when interactive
-Fabric auth is disabled.
+## How rayfin up updates deployed redirects
 
-For example, if your hosting URL is `https://bold-river-a3f1bc9d02-westus2.webapp.example.com`,
-the deploy tool adds it alongside whatever you already configured, so `rayfin.yml` ends up
-looking like this after the first deploy:
+When static hosting is enabled, `rayfin up` registers the deployed static hosting origin. For example:
 
 ```yaml title="rayfin/rayfin.yml"
 services:
@@ -51,35 +38,21 @@ services:
       - https://bold-river-a3f1bc9d02-westus2.webapp.example.com
 ```
 
-The deploy tool updates the configuration and pushes it to the backend during deployment —
-this is why a project's `rayfin.yml` typically grows a second, Fabric-hosted entry the first
-time you deploy, without anyone editing the file by hand.
+You do not need to add the hosted origin before the first deploy.
 
-## Keep the list tightly scoped
+## Keep the list tight
 
-`allowedRedirectUris` is a security boundary, not a convenience list. Every origin in it can
-receive a Fabric SSO handoff or complete an auth callback on behalf of your app, so:
+- Include the local dev origins and the deployed Fabric hosting origins you use.
+- Do not add wildcards.
+- Do not add third-party origins.
+- Review the list after copying `rayfin.yml` between projects.
 
-- Only add origins your app is actually served from — your local dev server and your
-  deployed hosting URL(s).
-- Don't add wildcard or third-party origins.
-- Review the list after copying a `rayfin.yml` between projects or environments — a stale
-  entry from a previous deployment is a redirect target an attacker could try to exploit.
+```prompt title="Audit Rayfin redirect URIs"
+Inspect `services.auth.allowedRedirectUris` in rayfin/rayfin.yml and the local port values in rayfin/.env. Classify each URI as a current `rayfin dev` origin, a retained `RAYFIN_FRONTEND_DEV_PORT_ALIASES` origin, a deployed static-hosting origin, or an unknown origin. Propose a trimmed list before editing anything.
+```
 
 ## Troubleshooting
 
-- **Fabric SSO origin mismatch** — see the origin-related entries in
-  [Fabric SSO troubleshooting](/docs/auth/fabric-sso#troubleshooting); most trace back to
-  `returnOrigin` (or the deployed hosting origin) not matching what's registered here.
-- **Changes not taking effect** — `rayfin.yml` changes require a restart (`rayfin up`)
-  before the new redirect URIs are honored.
-
-```prompt title="Audit and tighten allowedRedirectUris"
-Look at services.auth.allowedRedirectUris in my Rayfin project's rayfin/rayfin.yml.
-
-List every origin currently in it and tell me, for each one, whether it looks like: my local
-dev server, a Fabric-hosted deployment origin that rayfin up would have added automatically,
-or something else that shouldn't be there. Flag anything that isn't clearly one of my own
-app's origins, and propose a trimmed list. Do not remove entries without showing me the
-before/after diff first.
-```
+- If local sign-in fails after Vite slides to a new port, restart `npm run dev` so Rayfin registers the new origin.
+- If a deployed app fails the auth handoff, run `npx rayfin up` so the hosting origin is recorded and synced.
+- If `.env.local` is hand-managed, do not pass `--no-emit-env` unless it already has the current backend and port values.

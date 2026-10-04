@@ -1,5 +1,6 @@
 ---
 title: Semantic models
+appliesTo: "@microsoft/rayfin-connectors >= 1.36"
 description: Run DAX against a Fabric semantic model from a Rayfin app and handle typed table results, row limits, and connector diagnostics.
 ---
 
@@ -8,25 +9,23 @@ logic that already lives in Power BI. The `fabric-semanticmodel` connector is a
 [Category B function-bridge connector](/docs/connectors): it exposes `executeQuery`, uses
 delegated authentication only, and is pinned to an adapter version (`version: '1'` today).
 
-> [!WARNING]
-> `fabric-semanticmodel` is a private-preview connector type. `rayfin up` rejects
-> `auth.type: application`; keep the connector delegated so each query runs as the
-> signed-in user.
+> [!NOTE]
+> `fabric-semanticmodel` is a Category B connector. It is delegated-only, so `rayfin up` rejects `auth.type: application`. Each deployed app query runs as the signed-in user.
 
 ## Keep the generated schema
 
 `npx rayfin connector add --type fabric-semanticmodel` writes
 `rayfin/connectors/<name>/schema.ts`. The file is complete for this connector type: it
 exports the phantom marker used in `AppConnectorsSchema` and a generic `connectorConfig`
-that tells the client which runtime to use.
+that tells the client which runtime to use. Connector names are lowercase because `connector add` normalizes `--name` before writing files.
 
-```typescript title="rayfin/connectors/salesModel/schema.ts"
+```typescript title="rayfin/connectors/salesmodel/schema.ts"
 // @generated — do not edit.
 
 import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
 import type { FabricSemanticModel } from '@microsoft/rayfin-connector-fabric-semanticmodel';
 
-export type SalesModelSchema = FabricSemanticModel<'executeQuery'>;
+export type SalesmodelSchema = FabricSemanticModel<'executeQuery'>;
 
 export const connectorConfig = {
   connector: 'fabric-semanticmodel',
@@ -37,8 +36,8 @@ Do not hand-edit this file. If the connector points at the wrong semantic model,
 it by removing and adding the connector again:
 
 ```bash
-npx rayfin connector remove salesModel
-npx rayfin connector add --type fabric-semanticmodel --workspace-id <workspace-id> --item-id <semantic-model-item-id> --name salesModel
+npx rayfin connector remove salesmodel
+npx rayfin connector add --type fabric-semanticmodel --workspace-id <workspace-id> --item-id <semantic-model-item-id> --name salesmodel
 ```
 
 The workspace and item IDs belong under the connector's `config:` entry in
@@ -52,14 +51,14 @@ The runtime decodes the Arrow response and normalizes the operation output; with
 [Wiring connectors into your app](/docs/connectors/client-setup) for the full client setup.
 
 ```typescript title="src/services/rayfinClient.ts"
-import { ConnectorsRayfinClient } from '@microsoft/rayfin-client/experimental';
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
 import { fabricSemanticModel } from '@microsoft/rayfin-connector-fabric-semanticmodel';
 import type { AppSchema } from '../../rayfin/data/schema';
-import type { SalesModelSchema } from '../../rayfin/connectors/salesModel/schema';
-import { connectorConfig as salesModelConfig } from '../../rayfin/connectors/salesModel/schema';
+import type { SalesmodelSchema } from '../../rayfin/connectors/salesmodel/schema';
+import { connectorConfig as salesmodelConfig } from '../../rayfin/connectors/salesmodel/schema';
 
 type AppConnectorsSchema = {
-  salesModel: SalesModelSchema;
+  salesmodel: SalesmodelSchema;
 };
 
 export const client = new ConnectorsRayfinClient<
@@ -71,11 +70,11 @@ export const client = new ConnectorsRayfinClient<
     baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
     publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
     connectors: {
-      salesModel: salesModelConfig,
+      salesmodel: salesmodelConfig,
     },
   },
   {
-    salesModel: fabricSemanticModel(),
+    salesmodel: fabricSemanticModel(),
   }
 );
 ```
@@ -93,7 +92,7 @@ The key must match the connector `name` in `rayfin/rayfin.yml`, the
 import { client } from '../../services/rayfinClient';
 
 export async function loadSalesByRegion() {
-  const result = await client.connectors.salesModel.executeQuery({
+  const result = await client.connectors.salesmodel.executeQuery({
     query: `
 EVALUATE
 SUMMARIZECOLUMNS(
@@ -220,12 +219,16 @@ optional `recoveryHint`.
 `connector invoke` runs a DAX payload against a registered connector:
 
 ```bash
-npx rayfin connector invoke salesModel executeQuery --input '{"query":"EVALUATE TOPN(10, Sales)","resultSetRowCountLimit":500}'
+npx rayfin connector invoke salesmodel executeQuery --input '{"query":"EVALUATE TOPN(10, Sales)","resultSetRowCountLimit":500}'
 ```
 
-For `fabric-semanticmodel`, the command calls Fabric and Power BI directly under the
-developer's own identity. It works with or without `npx rayfin up`, but the connector entry
-must have both `workspaceId` and `itemId` under `config:`. The output is already normalized:
+For `fabric-semanticmodel`, the default `--transport auto` path calls Fabric and Power BI directly under the developer's own identity. It works with or without `npx rayfin up`, but the connector entry must have both `workspaceId` and `itemId` under `config:`.
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+`--transport deployed` forces the deployed BaaS route. It needs a Rayfin app-session token in `RAYFIN_TOKEN`; a normal `rayfin login` cannot mint that token.
+
+The output is already normalized:
 `status: 'success'` carries `table` and `requestId`; `status: 'error'` carries `error` and
 `requestId`. A resolved invocation is not automatically a success, and the CLI exits
 non-zero for the normalized error arm.
@@ -233,8 +236,8 @@ non-zero for the normalized error arm.
 Use `connector inspect` for read-only exploration before writing app code:
 
 ```bash
-npx rayfin connector inspect --name salesModel
-npx rayfin connector inspect --name salesModel --query rayfin/queries/sales-by-region.dax
+npx rayfin connector inspect --name salesmodel
+npx rayfin connector inspect --name salesmodel --query rayfin/queries/sales-by-region.dax
 ```
 
 `connector inspect` supports semantic models, including direct selectors and portal URLs.
@@ -242,34 +245,32 @@ See [CLI connector reference](/docs/reference/cli/connector) for selector and pa
 rules.
 
 > [!NOTE]
-> If `connector invoke` prints `Do not know how to serialize a BigInt` for an Int64 or
-> `DISTINCTCOUNT` column, the DAX query still succeeded. Select a non-Int64 column to read
-> the CLI output.
+> Rayfin 1.36.1 coerces Arrow Int64 values, including Int64 values inside Power BI Variant/Union columns, before CLI output is serialized. Safe Int64 values such as `DISTINCTCOUNT` results should no longer fail with `Do not know how to serialize a BigInt`. An Int64 or Decimal outside JavaScript's safe integer range returns an `overflow` error instead. [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
 
 ## Troubleshoot semantic-model queries
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `rayfin up` rejects `auth.type: application` | Category B connectors are delegated-only. | Set `auth.type: delegated`. |
-| `executeQuery` returns a raw transport payload or cannot decode the table. | `fabricSemanticModel()` is missing from the runtime map. | Register `{ salesModel: fabricSemanticModel() }` as the client's second constructor argument. |
-| `client.connectors.salesModel` is not typed. | The connector key differs across `rayfin.yml`, `AppConnectorsSchema`, the `connectors` option, or the runtime map. | Use the connector `name` from `rayfin.yml` in all four places. |
+| `executeQuery` returns a raw transport payload or cannot decode the table. | `fabricSemanticModel()` is missing from the runtime map. | Register `{ salesmodel: fabricSemanticModel() }` as the client's second constructor argument. |
+| `client.connectors.salesmodel` is not typed. | The connector key differs across `rayfin.yml`, `AppConnectorsSchema`, the `connectors` option, or the runtime map. | Use the connector `name` from `rayfin.yml` in all four places. |
 | A large query fails with category `overflow`. | `resultSetRowCountLimit` or a service byte cap stopped a truncated result. | Narrow the DAX query or choose a higher explicit limit. |
 | `connector invoke` reports `missing workspaceId/itemId in rayfin.yml`. | The semantic model connector lacks a complete `config:` block. | Re-add the connector with `--workspace-id` and `--item-id`. |
 | `connector invoke` exits non-zero but prints a JSON result. | The operation resolved to `status: 'error'`. | Read `error.category`, `error.message`, and `requestId`; a resolved call is not a successful query. |
-| The CLI prints `Do not know how to serialize a BigInt`. | The result includes an Int64 value that the CLI serializer cannot print. | Select a non-Int64 column for CLI inspection or query the same model from app code. |
+| A semantic-model query returns category `overflow`. | An Int64 or Decimal value cannot be represented as a JavaScript safe number. | Narrow or cast the DAX result so the returned numeric values fit safely, and include `requestId` in diagnostics. |
 
 ```prompt title="Query a Fabric semantic model from a Rayfin app"
-In my Rayfin project, add a Fabric semantic model connector named salesModel and call it
+In my Rayfin project, add a Fabric semantic model connector named salesmodel and call it
 from the frontend.
 
 Use `npx rayfin connector add --type fabric-semanticmodel --workspace-id <workspace-id>
---item-id <semantic-model-item-id> --name salesModel`, run the pinned npm install command
-the CLI prints, and do not edit rayfin/connectors/salesModel/schema.ts by hand.
+--item-id <semantic-model-item-id> --name salesmodel`, run the pinned npm install command
+the CLI prints, and do not edit rayfin/connectors/salesmodel/schema.ts by hand.
 
-Wire `SalesModelSchema` into `AppConnectorsSchema`, pass `connectorConfig` in the
-ConnectorsRayfinClient `connectors` option, and register `{ salesModel:
+Wire `SalesmodelSchema` into `AppConnectorsSchema`, pass `connectorConfig` in the
+ConnectorsRayfinClient `connectors` option, and register `{ salesmodel:
 fabricSemanticModel() }` in the runtime map. Then call
-`client.connectors.salesModel.executeQuery({ query, resultSetRowCountLimit: 500 })`, branch
+`client.connectors.salesmodel.executeQuery({ query, resultSetRowCountLimit: 500 })`, branch
 on `result.status`, render `result.table.columns` with row-major `result.table.rows`, and
 show `result.error.category`, `result.error.message`, and `result.requestId` on failure.
 ```

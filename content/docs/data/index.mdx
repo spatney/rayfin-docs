@@ -49,8 +49,7 @@ export const rayfinClient = new RayfinClient<AppSchema>({
 ```
 
 `VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` are generated into `.env.local` by
-`rayfin up` — see [Schema changes](/docs/data/migrations) for the apply workflow that
-produces them.
+`rayfin dev` during development, and by deployment/environment commands for deployed flows — see [Schema changes](/docs/data/migrations) for the apply workflow that produces them.
 
 That one client also carries [`client.auth`](/docs/auth) and, when enabled,
 [`client.functions`](/docs/functions/calling-functions). To additionally reach existing

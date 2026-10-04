@@ -1,7 +1,11 @@
 ---
-title: Init
-description: Scaffold a new Rayfin project with npm create, add Rayfin to an existing one with rayfin init, or reconfigure an existing project's services.
+title: rayfin init
+description: Scaffold a new Rayfin project, add Rayfin to an existing directory, select templates, and choose services with rayfin init.
 ---
+
+Use `rayfin init` to create or update `rayfin/rayfin.yml`. Use
+`npm create @microsoft/rayfin@latest` when you want the same initializer wrapped in npm's
+project-creation flow.
 
 ## Create a new project
 
@@ -9,95 +13,108 @@ description: Scaffold a new Rayfin project with npm create, add Rayfin to an exi
 npm create @microsoft/rayfin@latest my-app
 ```
 
-`npm create @microsoft/rayfin@latest` resolves to the `@microsoft/create-rayfin` package,
-following npm's `npm create <name>` convention. It shares its implementation with
-`rayfin init` below, but treats the project name as a new directory to create rather than
-an existing directory to initialize in place.
-
-The project name is a **positional argument**, not a flag. Use a valid directory name, or
-`.` to scaffold into the current directory.
-
-The CLI prompts interactively for a template — unless you skip the prompt with
-`-t/--template`. See [Templates](/docs/reference/cli/templates) for choosing a built-in
-template, scaffolding from a git URL, or authoring your own.
+The project name is positional. Bare names with whitespace are slugified for the folder
+(`My App` → `my-app/`); pass `./My App` to keep spaces in the directory name.
 
 ## Add Rayfin to an existing project
-
-Use `rayfin init` instead of `npm create` for a project that already has source code, or an
-empty directory you don't want treated as a template target:
 
 ```bash
 npm install --save-dev @microsoft/rayfin-cli
 npx rayfin init [directory]
 ```
 
-`[directory]` defaults to the current directory and doubles as the default project name. A
-bare name with whitespace is slugified for the folder (`My App` → `my-app/`); pass
-`"./My App"` to keep the spaces.
+`[directory]` defaults to the current directory and doubles as the default project name.
 
 ## Interactive prompts
 
-Without flags to skip them, `rayfin init` (and `npm create`) prompt for:
+Without flags, `rayfin init` asks for the template/source first. In scratch mode it then
+asks which services to enable, which auth method to use, and whether static hosting should
+be configured. Fabric SSO is the supported auth method. The Data dialect defaults to
+`mssql` because managed Fabric apps use MSSQL.
 
-- **Template** — which starting point to scaffold from (skip with `-t/--template`).
-- **Services** — Auth and Data are always offered. Storage and Functions prompts only
-  appear when their preview feature flag is on (`RAYFIN_FEATURE_FLAGS=storage` or
-  `RAYFIN_FEATURE_FLAGS=functions`) — see
-  [Environment variables](/docs/reference/config/environment-variables).
-- **Database dialect** — shown when Data is enabled. `mssql` is the only supported dialect
-  for a Fabric-deployed backend, so the CLI defaults to it automatically without prompting.
-- **Auth methods** — Fabric SSO (Entra ID) is the only supported authentication method.
-- **Static hosting** — enabled by default; the prompt lets you point it at a different
-  build output folder or command.
+The default interactive template path is the `blankapp` built-in, displayed as
+`✨ Use default template` and backed by the Universal App in 1.36. Choose **Start from scratch** only when you want the CLI to write
+a minimal `rayfin.yml` instead of copying a template.
 
 ## Reconfiguring an existing project
 
-Running `rayfin init` again in a project that already has `rayfin/rayfin.yml` re-runs the
-prompts and regenerates the configuration. Use this to enable or disable services, or
-toggle static hosting without hand-editing `rayfin.yml`.
+Running `rayfin init` again in a directory with `rayfin/rayfin.yml` reruns configuration.
+Existing entity files under `rayfin/data/` are preserved. Use `--overwrite` only when you
+intend to replace scaffold-level files that already exist.
 
-> [!TIP]
-> Reconfiguring **preserves your data model files under `rayfin/data/`**. Only
-> `rayfin/rayfin.yml` and scaffold-level files are regenerated.
+When a template ships `rayfin.yml`, the initializer preserves template-authored service
+settings and applies only explicit command-line choices such as `--project-name`,
+`--dialect`, or `--services`.
 
-## Flags
+## Options
 
-| Flag | Description |
-| --- | --- |
-| `--project-name <name>` | Override the project name and update `rayfin.yml`. |
-| `-t, --template <uri>` | Template name, git URL, or local path to scaffold from. Skips the template picker. |
-| `--template-name <name>` | Pick one template from a multi-template source non-interactively. Requires `-t/--template` pointing at that source. |
-| `-l, --list-templates` | Print available templates as JSON and exit. |
-| `--services <list>` | Comma-separated services to enable non-interactively, e.g. `auth,data,storage`. |
-| `--auth-methods <list>` | Comma-separated auth methods to enable. `fabric` (Fabric SSO) is the only supported value. |
-| `--static-hosting` | Scaffold a static frontend. Enabled by default. |
-| `--overwrite` | Overwrite existing configuration files instead of prompting. |
-| `-w, --workspace <name>` | Fabric workspace display name to pre-associate with the project. Mutually exclusive with `--workspace-id`. |
-| `--workspace-id <id>` | Fabric workspace ID to pre-associate with the project. Mutually exclusive with `--workspace`. |
-| `--item-id <id>` | Fabric App Item ID to pre-associate with the project. |
+| Option | Default | Description |
+| --- | --- | --- |
+| `[directory]` | current directory | Directory to create the project in. |
+| `--project-name <name>` | directory name | Override the project name and update `rayfin.yml` without changing the directory. |
+| `-t, --template <uri>` | prompt | Template name, git URL, or local path to create the project from. |
+| `--template-name <name>` | prompt for multi-template sources | Pick one template from a multi-template source non-interactively. |
+| `-l, --list-templates` | `false` | List all available project templates and exit. |
+| `--dialect <dialect>` | `mssql` when Data is enabled | Database dialect. Fabric supports `mssql`. |
+| `--services <list>` | `auth,data` in non-interactive scratch init | Comma-separated services to enable: `auth`, `data`, `functions`. `functions` is accepted without a feature flag. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `--auth-methods <list>` | `fabric` | Comma-separated auth methods. `fabric` is the supported value. |
+| `--static-hosting` | `true` | Scaffold a static frontend. |
+| `--overwrite` | `false` | Overwrite existing configuration files. |
+| `-w, --workspace <name>` | — | Fabric workspace display name. Mutually exclusive with `--workspace-id`. |
+| `--workspace-id <id>` | — | Fabric workspace ID. Mutually exclusive with `--workspace`. |
+| `--item-id <id>` | — | Fabric App Item ID to pre-associate with the project. |
 
-Global `-y/--yes`, `--verbose`, and `--json` also apply — see [CLI](/docs/reference/cli).
+Root `-y, --yes`, `--output <mode>`, `--json`, and `--verbose` also apply.
 
-## What happens after scaffolding
+## Services
 
-The CLI creates the `rayfin/` directory (`rayfin.yml`, `data/`, a gitignore entry for
-`rayfin/.env`) and then installs the project's agent context files — `AGENTS.md`,
-`.mcp.json`, and `.agents/skills/rayfin/SKILL.md` — automatically. See
-[Ai-files](/docs/reference/cli/ai-files) for what those files are and how to refresh them
-later.
+Auth and Data are regular services. Functions are regular in 1.36; use
+`--services auth,data,functions` to scaffold the Functions block and starter package.
+Storage remains experimental and is only offered when `RAYFIN_FEATURE_FLAGS=storage` or an
+existing config enables storage.
+
+## What init writes
+
+For a scratch 1.36 project, `rayfin init` writes:
+
+- `rayfin/rayfin.yml` with `id`, `name`, `version`, and a `services` block.
+- `services.staticHosting.assetAccess: protected` when static hosting is scaffolded. [New in 1.35.1](/docs/reference/changelog#rayfin-1351)
+- `services.functions.auth.type: application` when Functions are selected. [New in 1.36](/docs/reference/changelog#rayfin-136)
+- `rayfin/data/` when Data is enabled.
+- A Functions package when Functions are enabled, unless the template already supplies one.
+- `.gitignore` entries for local Rayfin state.
+- Agent files: `AGENTS.md` one time, `mcpServers.rayfin` in `.mcp.json`, and Rayfin skills under `.agents/skills/`.
+
+When a template already ships `rayfin.yml`, the CLI preserves the authored service shape
+and only applies explicit identity, dialect, and `--services` edits.
+
+## Template selection
+
+Built-in templates use stable CLI names such as `dataapp`, `gettingstartedauth`, and
+`todoapp`. The `blankapp` built-in remains the visible default template name; in 1.36 it is backed by `universal-app` and displayed as `✨ Use default template`. Plugin automation can still pass `--template universal-app`.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Run `npx rayfin init --list-templates` in the target project to see names accepted by the
+installed CLI. See [Templates](/docs/reference/cli/templates).
 
 ## Next steps
 
 ```bash
 npx rayfin login
+npm run dev
 npx rayfin up
 ```
 
-See [Login](/docs/reference/cli/login) and [Up](/docs/reference/cli/up).
+Use `npm run dev` for the local Fabric-backed session. Use `rayfin up` to publish static
+content and Functions.
 
-```prompt title="Reconfigure a project to add Storage"
-My Rayfin project at the current directory already has a rayfin/rayfin.yml with Auth and
-Data enabled. Set RAYFIN_FEATURE_FLAGS=storage and run `npx rayfin init` again to add the
-Storage service, keeping my existing entities under rayfin/data/ untouched. Then show me the
-resulting rayfin.yml.
+## Agent files subcommand
+
+`rayfin init ai-files` is documented on [Ai-files](/docs/reference/cli/ai-files).
+
+```prompt title="Scaffold a Rayfin project with Functions"
+Create a new Rayfin project named orders-app with the current CLI. Use
+`npm create @microsoft/rayfin@latest orders-app -- --services auth,data,functions --auth-methods fabric --yes`,
+then show the generated rayfin/rayfin.yml and confirm it contains
+`services.staticHosting.assetAccess: protected` and `services.functions.auth.type: application`.
 ```

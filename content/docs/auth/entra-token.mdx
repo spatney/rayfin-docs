@@ -1,0 +1,136 @@
+---
+title: Sign in with an Entra token
+description: "Exchange an existing delegated Microsoft Entra access token for a Rayfin session in browser or Node.js code."
+appliesTo: "@microsoft/rayfin-auth-provider-fabric >= 1.36"
+---
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+Use `signInWithEntraToken()` when your browser or Node.js code already has a delegated Microsoft Entra access token and needs to call a Rayfin app as that user. The helper exchanges the Entra token for a Rayfin session on an existing `Auth` instance. It does not open a popup, load an iframe, or acquire the Entra token for you.
+
+Use [Fabric SSO](/docs/auth/fabric-sso) when Fabric should handle interactive browser sign-in. Use [External embed host](/docs/auth/embed-host) when your own portal embeds a Rayfin app in an iframe.
+
+## Enable external Entra exchange
+
+The target Rayfin app must opt in to external delegated-token exchange:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+      externalEntraExchange: true
+```
+
+Apply the setting with `npm run dev` for the development loop or `npx rayfin up` for deployment. The CLI sends `externalEntraExchange` in the auth runtime settings payload; it is an additive opt-in on top of `fabric.enabled`.
+
+## Use a delegated Entra token
+
+The Entra token must meet all of these requirements:
+
+- It is a delegated user token, not an app-only service principal token.
+- It targets the Fabric or Power BI audience accepted by the deployment.
+- It includes delegated `Item.Execute.All`.
+- It is issued in the tenant that owns the target Fabric item.
+- The signed-in user has Execute permission on the item.
+
+For production Power BI, request `https://analysis.windows.net/powerbi/api/Item.Execute.All` through your identity library. Development environments may use a different resource. The Rayfin SDK does not handle Entra consent or token acquisition.
+
+## Install the package
+
+```bash
+npm install @microsoft/rayfin-client @microsoft/rayfin-auth-provider-fabric
+```
+
+## Sign in a browser client
+
+Pass `client.auth` from the same `RayfinClient` that your data and functions calls use:
+
+```typescript title="src/auth/signInWithExistingToken.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric';
+
+const client = new RayfinClient({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+});
+
+export async function signInWithExistingToken(entraToken: string) {
+  const session = await signInWithEntraToken(client.auth, { entraToken });
+  console.log('Authenticated:', session.isAuthenticated);
+  return session;
+}
+```
+
+`entraToken` is the raw access token string without the `Bearer` prefix.
+
+The client's `baseUrl` must be the trusted HTTPS AppBackend workload API base URL, including the deployment's capacity, workspace, and artifact path. Use the same backend base URL as the Rayfin SDK client, not the static-hosting URL and not the token endpoint itself. The helper appends `/api/auth/v1/brokered/token` internally.
+
+The URL must be absolute HTTPS, with no credentials, query string, or fragment. Do not accept this endpoint from an untrusted caller.
+
+## Use Node.js with memory-only storage
+
+`signInWithEntraToken()` can run without `window`, `document`, or `localStorage`. In Node.js, construct `Auth` and `ApiClient` directly, use memory-only storage, attach auth to the client, and destroy the instance when done:
+
+```typescript title="scripts/sign-in-with-entra-token.ts"
+import { Auth } from '@microsoft/rayfin-auth';
+import { ApiClient } from '@microsoft/rayfin-lib';
+import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric';
+
+const apiClient = new ApiClient({
+  baseUrl: process.env.RAYFIN_API_URL!,
+  publishableKey: process.env.RAYFIN_PUBLISHABLE_KEY!,
+});
+
+const auth = new Auth(apiClient, { storage: false });
+auth.attachToClient(apiClient);
+
+try {
+  const session = await signInWithEntraToken(auth, {
+    entraToken: process.env.ENTRA_ACCESS_TOKEN!,
+  });
+
+  console.log('Authenticated:', session.isAuthenticated);
+  // Use SDK clients configured with apiClient here.
+} finally {
+  auth.destroy();
+}
+```
+
+Use a separate `Auth` instance per user in server applications. Do not share a mutable user session across requests from different users.
+
+`RayfinServerClient` uses an access-token configuration instead of exposing `auth`, so pass a standalone `Auth` instance or `RayfinClient.auth` to this helper.
+
+## Session behavior
+
+Each call exchanges the supplied Entra token, even if the `Auth` instance already has a session. Concurrent direct sign-ins on the same `Auth` instance run in invocation order and coordinate with refresh operations.
+
+A successful exchange replaces the session on the `Auth` instance and persists according to your `Auth` configuration. The SDK does not store the supplied Entra token. Later refreshes use the Rayfin refresh token. If refresh can no longer establish a Rayfin session, acquire another Entra token and call `signInWithEntraToken()` again.
+
+On failure, an existing unexpired session remains in memory; do not treat the failed call as authentication of the newly selected identity. A successful direct sign-in does not revoke the previous server session.
+
+## Error codes
+
+`signInWithEntraToken()` rejects with `AuthError` from `@microsoft/rayfin-lib`. The message is safe to log and does not include the Entra token or raw server response.
+
+| Code | Message | Meaning |
+| --- | --- | --- |
+| `INVALID_REQUEST` | `A raw Entra access token is required.` | `entraToken` was missing, blank, contained whitespace, or was only `Bearer`. |
+| `INVALID_REQUEST` | `An absolute HTTPS backend URL is required.` | The configured backend URL is not an absolute HTTPS workload URL or includes credentials, query, or fragment. |
+| `EXCHANGE_NOT_ENABLED` | `External Entra exchange is not enabled.` | `services.auth.fabric.externalEntraExchange` is not enabled for the project. |
+| `AUTH_FAILED` | `Entra authentication failed.` | The token was rejected; check audience, tenant, scope, and expiry. |
+| `INSUFFICIENT_PERMISSIONS` | `Item Execute permission is required.` | The user lacks Execute permission on the Fabric item. |
+| `NOT_AVAILABLE` | `External Entra exchange is not available.` | The endpoint is unavailable in the target environment or the URL points at the wrong service. |
+| `TOKEN_EXCHANGE_FAILED` | `Entra token exchange failed.` | A network, redirect, or other HTTP failure prevented exchange. |
+| `INVALID_TOKEN_RESPONSE` | `The token exchange returned an invalid token response.` | The service returned a successful response that did not match the token shape. |
+
+The helper does not follow redirects or retry exchange failures automatically. Browser callers need the backend CORS policy to allow the origin and authorization header.
+
+```prompt title="Add direct Entra token sign-in"
+In my Rayfin app or script, add direct Microsoft Entra token sign-in.
+
+Enable services.auth.fabric.externalEntraExchange: true in rayfin/rayfin.yml and apply the configuration. Install @microsoft/rayfin-auth-provider-fabric. Use an existing delegated Entra access token with Item.Execute.All for the target Fabric item tenant; do not use an app-only token.
+
+If I have a RayfinClient, call signInWithEntraToken(client.auth, { entraToken }). If this is Node.js, create ApiClient and Auth directly, pass { storage: false }, call auth.attachToClient(apiClient), and call auth.destroy() in a finally block. Use the trusted HTTPS AppBackend workload API base URL, not the static-hosting URL.
+```

@@ -1,25 +1,26 @@
 ---
 title: Telemetry
-description: What the Rayfin CLI collects, what it explicitly does not, and how to opt out with RAYFIN_TELEMETRY_OPTOUT.
+description: What Rayfin CLI telemetry records, what it never records, and the environment variables that control telemetry.
 ---
 
-The Rayfin CLI collects anonymous usage data to help improve the product. On first run, it
-prints a notice explaining what's collected and how to opt out.
+The Rayfin CLI collects anonymous usage telemetry unless you opt out. On first run it
+prints a notice with the opt-out variable.
 
-## What's collected
+## Collected
 
-- Command names.
-- Which flags were passed, by name only (for example `--force`, `-v`) — never their values.
-- Execution status (success/failure), and on failure, a sanitized error name/type/message
-  with file paths and stack traces stripped out.
-- Execution duration.
-- Environment metadata: OS and Node.js version.
+- Command name.
+- Flag names that were passed, never flag values.
+- Success, cancellation, or failure classification.
+- Sanitized error type/name/message with file paths and stack traces removed.
+- Duration.
+- OS and Node.js version.
+- Anonymous installation identifier from `~\.rayfin\dev-device-id`.
+- Telemetry environment label derived from CI/dev-container signals or `RAYFIN_TELEMETRY_ENV`.
 
-## What's not collected
+## Not collected
 
-No personal data, flag *values*, or file contents are collected — arguments you pass
-(project names, workspace names, connection strings, file paths) are never sent, only the
-fact that a given flag was used.
+Rayfin CLI telemetry does not collect project names, workspace names, file contents,
+connection strings, secret values, flag values, or command arguments.
 
 ## Opt out
 
@@ -27,17 +28,25 @@ fact that a given flag was used.
 export RAYFIN_TELEMETRY_OPTOUT=1
 ```
 
-Set this in your shell profile to opt out permanently, or inline for a single invocation.
+When telemetry is off, the CLI does not create `~\.rayfin\dev-device-id`.
 
-## Telemetry endpoint override
+## Environment label override
 
-`RAYFIN_APPINSIGHTS_CONNECTION_STRING` overrides the telemetry endpoint used by the CLI and
-the VS Code extension. This is a contributor/internal setting, not something most projects
-need to set. See
-[Environment variables](/docs/reference/config/environment-variables) for the full
-shell-only variable reference.
+`RAYFIN_TELEMETRY_ENV` overrides the environment label. Values are trimmed and lowercased.
+Known labels include `github-actions`, `azure-pipelines`, `gitlab-ci`, `jenkins`,
+`codespaces`, `devcontainer`, `local`, and `other`. Custom labels may contain 1–64 ASCII
+letters, digits, hyphens, or underscores. Invalid non-empty values map to `other`; an
+empty value uses automatic detection.
+
+Do not put identifying or sensitive values in `RAYFIN_TELEMETRY_ENV`.
+
+## Endpoint override
+
+`RAYFIN_APPINSIGHTS_CONNECTION_STRING` overrides the Application Insights endpoint used by
+the CLI and VS Code extension. It is intended for contributors and controlled test
+environments.
 
 ```prompt title="Disable Rayfin CLI telemetry in CI"
-Add RAYFIN_TELEMETRY_OPTOUT=1 to my CI workflow's environment variables so the Rayfin CLI
-doesn't send usage telemetry from automated runs.
+Set `RAYFIN_TELEMETRY_OPTOUT=1` in my CI workflow environment so Rayfin CLI commands do
+not send usage telemetry from automated runs.
 ```

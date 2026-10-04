@@ -76,31 +76,67 @@ Every entity has an `id` field that serves as its UUID primary key. If you don't
 on create (the server generates one when omitted). Composite or non-`id` primary keys are
 not supported.
 
+### Reserved entity names
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+Entity names become GraphQL type names, and the generated schema already defines scalar and root operation types. The CLI rejects an entity or connector entity whose name collides exactly, or whose name starts with GraphQL's introspection prefix `__`.
+
+Matching is case-sensitive: `Date` is reserved, but `TaskDate` is not.
+
+Reserved names: `Any`, `Base64String`, `Boolean`, `Byte`, `ByteArray`, `Date`, `DateTime`, `Decimal`, `Duration`, `Float`, `ID`, `Int`, `LocalDate`, `LocalDateTime`, `LocalTime`, `Long`, `Mutation`, `Query`, `Short`, `SignedByte`, `Single`, `String`, `Subscription`, `Time`, `TimeSpan`, `UnsignedByte`, `UnsignedInt`, `UnsignedLong`, `UnsignedShort`, `URI`, `URL`, `UUID`, plus any name beginning with `__`.
+
+To resolve a collision, rename the class or pass an explicit safe name to `@entity()`:
+
+```typescript title="rayfin/data/DateRecord.ts"
+import { entity, text } from '@microsoft/rayfin-core';
+
+@entity('DateRecord')
+export class DateRecord {
+  @text({ max: 200 }) label!: string;
+}
+```
+
 ### `@blob()`
 
-Marks a class as a blob storage folder configuration, used with `@microsoft/rayfin-storage`.
-Permissions and visibility (public vs. private) are inferred from the class's `@role()` /
-`@authenticated()` decorators — a folder is public if the `anonymous` role has any granted
-permissions.
+Marks a class as a Rayfin Storage folder configuration. This decorator is experimental and is exported from `@microsoft/rayfin-core/experimental`, not from the stable package root.
 
 ```typescript
-export declare function blob(_folderName?: string): <T extends constructor<unknown>>(
+import { role } from '@microsoft/rayfin-core';
+import {
+  blob,
+  ContentTypes,
+  mb,
+  StorageObject,
+} from '@microsoft/rayfin-core/experimental';
+
+@blob({
+  name: 'uploads',
+  onConflict: 'overwrite',
+  maxSize: mb(5),
+  allowedContentTypes: [ContentTypes.AnyImage],
+})
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class ProfileImage extends StorageObject {}
+```
+
+```typescript
+function blob(folderNameOrOptions?: string | BlobFolderOptions): <T extends constructor<unknown>>(
   _target: T,
   context: ClassDecoratorContext<T>,
 ) => void;
-```
 
-The parameter sets the folder name; it defaults to the kebab-case class name.
-
-```typescript
-import { blob, role } from '@microsoft/rayfin-core';
-
-@blob('uploads')
-@role('authenticated', '*')
-export class FileModel {
-  owner_id!: string;
+interface BlobFolderOptions {
+  name?: string;
+  onConflict?: 'error' | 'overwrite';
+  maxSize?: number | ByteSize;
+  allowedContentTypes?: MimeGlob[];
 }
 ```
+
+Use `StorageObject` when a policy references server-managed intrinsic object fields such as `owner_id`. The `user_metadata` intrinsic was removed from `StorageObject` in 1.36; application metadata is represented by decorated fields on the folder class and sent through `upload({ fields })`. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
 
 ## Field decorators
 
@@ -114,6 +150,7 @@ shared set of base options, plus type-specific options.
 | `optional` | `boolean` | `false` | Allows `NULL`. Fields are **required by default** — combine with a TypeScript `?` on the property. |
 | `unique` | `boolean` | `false` | Adds a unique constraint. |
 | `default` | matches the field's type | none | Default value for the column. |
+| `column` | `string` | property name | SQL column name to create or map for this field while keeping the TypeScript property as the GraphQL field name. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 
 ### `@text(options?)` / `@email(options?)`
 
@@ -135,7 +172,7 @@ export class Author {
   @uuid() id!: string;
   @text({ max: 200 }) name!: string;
   @text({ optional: true, max: 2000 }) bio?: string;
-  @email({ unique: true }) emailAddress!: string;
+  @email({ max: 254, unique: true }) emailAddress!: string;
 }
 ```
 
@@ -265,7 +302,7 @@ import { Category } from './Category.js'; // `import`, not `import type` — the
 @entity()
 export class Todo {
   @uuid() id!: string;
-  @text() title!: string;
+  @text({ max: 200 }) title!: string;
   @one(() => Category) category!: Category;   // generates category_id
   @one(() => Category, { optional: true }) parentCategory?: Category;
 }
@@ -282,7 +319,7 @@ import { Todo } from './Todo.js';
 @entity()
 export class Category {
   @uuid() id!: string;
-  @text() name!: string;
+  @text({ max: 100 }) name!: string;
   @many(() => Todo) todos?: Todo[];
 }
 ```
@@ -294,6 +331,11 @@ entity that has two `@one()` fields. See [Known limitations](/docs/reference/kno
 > `@microsoft/rayfin-core` ships a built-in, read-only `User` system entity (`id`, `email`)
 > that is always a valid `@one()` / `@many()` target — you don't need to declare it in your
 > own schema to reference it.
+
+
+### Connector-only custom relationship keys
+
+`CustomKeyRelationshipFieldOptions` is exported from the stable package root in 1.36 for connector entities with explicit primary keys. Data-path entities still use the conventional `id` primary key; `sourceFields` and `targetFields` are not available for relationships between normal `rayfin/data/` entities. [New in 1.36](/docs/reference/changelog#rayfin-136)
 
 ## Permission decorators
 
@@ -334,7 +376,7 @@ import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
 export class Todo {
   @uuid() id!: string;
   @text({ max: 200 }) title!: string;
-  @text() user_id!: string;
+  @text({ max: 128 }) user_id!: string;
 }
 ```
 
@@ -374,17 +416,10 @@ export class PublicPost {
 ```
 
 > [!NOTE]
-> Anonymous access on a deployed Fabric app also requires a tenant administrator to enable
-> anonymous data access for the tenant. See
-> [Permissions](/docs/data/permissions) for the full picture.
-
-> [!WARNING]
-> Anonymous data access is not currently supported when deployed to Fabric: the CLI rejects
-> any DAB configuration that grants the `anonymous` role at apply time, regardless of
-> whether you used `@anonymous(...)` or `@role('anonymous', ...)`. Treat this as a preview
-> of a future stable API, and prefer `@anonymous()` (rather than the `role()` widening) so
-> the intent is clear at the call site. To use anonymous data with Microsoft Fabric,
-> contact your tenant admin about the "Enable anonymous data access for Fabric Apps" setting.
+> Anonymous data access on a deployed Fabric app requires a tenant administrator to enable
+> the "Enable anonymous data access for Fabric Apps" tenant setting. The decorators compile
+> to DAB anonymous-role permissions; the tenant setting controls whether those permissions
+> can be exercised in Fabric. See [Permissions](/docs/data/permissions) for the full picture.
 
 ### Policy DSL and field visibility
 
@@ -418,14 +453,20 @@ import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
 })
 export class Document {
   @uuid() id!: string;
-  @text() owner_id!: string;
-  @text() title!: string;
-  @text({ optional: true }) secret?: string;
+  @text({ max: 128 }) owner_id!: string;
+  @text({ max: 200 }) title!: string;
+  @text({ optional: true, max: 5000 }) secret?: string;
 }
 ```
 
 Multiple role decorators on the same class are aggregated; conflicting declarations for the
 same role and action produce a warning at generation time.
+
+## Experimental subpath exports
+
+`@microsoft/rayfin-core/experimental` now contains the experimental Storage surface only: `blob`, `StorageObject`, `bytes`, `kb`, `mb`, `gb`, `ContentTypes`, and related storage option types.
+
+Connector-oriented exports that were previously under the core experimental subpath — `Source`, connector-widened `entity` / field decorators, `AutoGenerated`, and the experimental connector schema types — are no longer exported there. Use the connector packages documented under [Connectors](/docs/connectors) for connector models. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
 
 ## Form validation
 

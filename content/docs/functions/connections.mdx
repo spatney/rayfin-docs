@@ -1,44 +1,96 @@
 ---
 title: Connections
-description: Connect a Rayfin function to external services with delegated auth — AudienceType values, the ctx.getToken() pattern, and SQL/Key Vault/OneLake examples.
+description: Give Rayfin functions app-identity tokens for Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, and Azure DevOps.
+appliesTo: "@microsoft/fabric-user-data-functions >= 1.36"
 ---
 
-Functions reach external resources through **delegated authentication**: the runtime
-exchanges the calling user's identity token for a resource-scoped on-behalf-of (OBO) token,
-so your function accesses resources **as the calling user**, not as a shared service
-identity. You declare a connection on the function, and the runtime hands you a scoped token
-at invocation time — you never manage a long-lived credential yourself.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-See [Delegated access](/docs/auth/delegated-access) for the overview of every
-delegated-auth surface. For the connector equivalent, see
-[Connector authentication](/docs/connectors/auth).
+Use a function connection when server-side code needs to call an external Azure or Fabric resource. In deployed Functions, these external calls use **application authentication**: Rayfin supplies resource-scoped tokens for the Fabric app identity through `ctx.Tokens`.
 
-> [!WARNING]
-> Functions and delegated authentication are experimental and are not available in every
-> Fabric region or tenant. See [Functions](/docs/functions) before you depend on them.
+> [!NOTE]
+> Functions and function connections are generally available in Rayfin 1.36 and are not available in every Fabric region or tenant.
 
-## The connection pattern
+## Declare audiences in `RayfinContext`
 
-Declare a connection in the third argument to `udf.func()`, and read the token inside the
-handler with `ctx.getToken(audienceType)`:
+Add the resource audience as the second generic parameter of `RayfinContext`, then read the token from `ctx.Tokens`:
 
 ```typescript title="rayfin/functions/src/function_app.ts"
-import { AudienceType } from '@microsoft/fabric-user-data-functions';
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
 
 udf.func(
-  'myFunction',
-  async (ctx: RayfinContext /*, ...user params */): Promise<T> => {
-    const token = ctx.getToken(AudienceType.X);
-    // Use the token with the appropriate SDK client.
+  'checkFabricAccess',
+  async (
+    ctx: RayfinContext<AppSchema, AudienceType.Fabric>,
+  ): Promise<string> => {
+    const token = ctx.Tokens.Fabric;
+    return token.length > 0 ? 'ready' : 'missing';
   },
-  [udf.connection({ audienceType: AudienceType.X })],
+  [],
 );
 ```
 
-For Azure SDK clients that expect a `TokenCredential` rather than a raw string, wrap it:
+The annotation is the declaration. Keep the third argument to `udf.func()` as `[]`.
+
+## Supported audiences
+
+`AudienceType` in 1.36.2 contains only these members. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+| Audience | Use for |
+| --- | --- |
+| `AudienceType.Sql` | Fabric Lakehouse SQL analytics, Warehouse, SQL Database, Mirrored Database, and Azure SQL. |
+| `AudienceType.Storage` | Fabric OneLake files and Azure Blob, Table, or Queue Storage. |
+| `AudienceType.Fabric` | Microsoft Fabric REST APIs. |
+| `AudienceType.AzureAI` | Azure AI Foundry endpoints. |
+| `AudienceType.ADO` | Azure DevOps APIs. |
+
+`CosmosDB`, `KeyVault`, `EventGrid`, `Kusto`, and `WorkIQ` are not public `AudienceType` members in 1.36.2. A Power BI semantic model is not reached through function connections; use the `fabric-semanticmodel` connector instead.
+
+## Tokens are typed and bounded
+
+`ctx.Tokens` exposes only declared audiences:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+async (
+  ctx: RayfinContext<AppSchema, AudienceType.Sql | AudienceType.Storage>,
+) => {
+  const sqlToken = ctx.Tokens.Sql;
+  const storageToken = ctx.Tokens.Storage;
+  return { sqlTokenLength: sqlToken.length, storageTokenLength: storageToken.length };
+};
+```
+
+A direct read of a declared-but-unminted token throws:
+
+```text
+No token available for audience '<Audience>'. Ensure a connection with this audience type is declared.
+```
+
+Declaring an audience does not grant resource permissions. Grant the external resource to the Fabric app identity. For current Fabric apps, that identity is the owner of the Fabric app item.
+
+## Rayfin data remains caller-scoped
+
+`services.functions.auth.type: application` does not make `ctx.getDataClient()` use the app identity. Rayfin DB access uses the invocation's Rayfin token and preserves the signed-in caller's data permissions.
+
+| Code path | Identity |
+| --- | --- |
+| `ctx.getDataClient()` | Signed-in caller. |
+| `ctx.Tokens.Sql`, `ctx.Tokens.Storage`, `ctx.Tokens.Fabric`, `ctx.Tokens.AzureAI`, `ctx.Tokens.ADO` | Fabric app identity. |
+
+## Wrap a token for Azure SDK clients
+
+Many Azure SDK clients expect a `TokenCredential`. Wrap the context token:
 
 ```typescript title="rayfin/functions/src/ContextTokenCredential.ts"
-import type { TokenCredential, AccessToken } from '@azure/identity';
+import type { AccessToken, TokenCredential } from '@azure/identity';
 
 export class ContextTokenCredential implements TokenCredential {
   constructor(private readonly token: string) {}
@@ -49,146 +101,313 @@ export class ContextTokenCredential implements TokenCredential {
 }
 ```
 
-## Available `AudienceType` values
+## Find Fabric resource coordinates
 
-| `AudienceType` | Resource | Ask the user for |
+Every connection needs a real endpoint. Resolve Fabric coordinates from the Fabric portal, a Fabric CLI/MCP tool when one is already available, or the Fabric REST API. Do not guess endpoints or use `process.env` as the primary source for resource coordinates.
+
+| You need | Fabric item | Where to read it |
 | --- | --- | --- |
-| `CosmosDB` | Azure Cosmos DB | The account endpoint plus database/container names |
-| `KeyVault` | Azure Key Vault | The vault URL, e.g. `https://my-vault.vault.azure.net/` |
-| `EventGrid` | Azure Event Grid | The topic endpoint |
-| `Sql` | Fabric Lakehouse/Warehouse/SQL DB/Mirrored DB, Azure SQL | The SQL analytics endpoint or connection string from the Fabric portal |
-| `Storage` | OneLake (DFS), Azure Blob/Table/Queue | The file URL from Lakehouse properties, or a storage account URL |
-| `Fabric` | Fabric platform APIs | The workspace and item IDs the function should act on |
-| `AzureAI` | Azure AI Foundry | The project endpoint URL and the model deployment name |
-| `ADO` | Azure DevOps | The organization and project names |
-| `Kusto` | Azure Data Explorer (Kusto) | The cluster URI and database name |
-| `WorkIQ` | WorkIQ | The service endpoint |
+| Lakehouse SQL server | Lakehouse | `properties.sqlEndpointProperties.connectionString` from `GET /workspaces/{workspaceId}/lakehouses/{lakehouseId}`. |
+| Lakehouse OneLake path | Lakehouse | `properties.oneLakeFilesPath` or `properties.oneLakeTablesPath` from the same Lakehouse `GET`. |
+| Warehouse SQL server | Warehouse | `properties.connectionString` from `GET /workspaces/{workspaceId}/warehouses/{warehouseId}`. |
+| SQL Database server and database | SQL Database | `properties.serverFqdn` and `properties.databaseName` from `GET /workspaces/{workspaceId}/sqlDatabases/{sqlDatabaseId}`. |
+| Item GUID | Any item | `id` from `GET /workspaces/{workspaceId}/items?type={Type}`. |
 
-`AzureAI`, `Kusto`, `ADO`, and `WorkIQ` are audiences the Fabric host does not yet resolve
-natively, so the SDK supplies the OBO scope for them. They work the same way from your
-code — declare the connection and call `ctx.getToken()`.
+Authoring-time lookup is separate from runtime access. Use your developer credentials to look up coordinates while writing the function; at runtime the deployed function uses `ctx.Tokens.<Audience>` from the app identity.
 
-## SQL connections
+## Call Fabric SQL
 
-All Fabric SQL resources (Lakehouse SQL analytics, Warehouse, SQL Database, Mirrored
-Database) share the same requirements:
+All Fabric SQL resources share the same requirements:
 
-- **Package:** `mssql@^12.6.0` (which pulls in `tedious >= 19.2.2`). Older `tedious`
-  (`<= 19.1.2`) has a LOGIN7 FeatureExt bug that causes "socket hang up" errors on Fabric
-  endpoints.
-- **Encryption:** `encrypt: true` — not `'strict'`. This matches ODBC's `Encrypt=yes`.
-- **Auth:** `azure-active-directory-access-token`, using `ctx.getToken(AudienceType.Sql)`.
+- Install `mssql@^12.6.0` in the functions package. That version pulls a `tedious` release with the Fabric LOGIN7 fixes.
+- Use `encrypt: true`, not `encrypt: 'strict'`.
+- Use `azure-active-directory-access-token` with `ctx.Tokens.Sql`.
+- Ask for the actual SQL endpoint and database or item GUID from Fabric. Do not invent endpoints.
 
 | Resource | What to ask for | `database` value |
 | --- | --- | --- |
-| Lakehouse (SQL analytics) | SQL analytics endpoint + item GUID (Portal → Settings) | Item GUID (Initial Catalog) — **required** |
-| Warehouse | SQL endpoint + item GUID (Portal → Settings) | Item GUID |
-| SQL Database | Full connection string (Portal → Connection strings) | Database name from the connection string |
-| Mirrored Database | SQL analytics endpoint + item GUID (Portal → Settings) | Item GUID |
+| Lakehouse SQL analytics | SQL analytics endpoint and item GUID from the Fabric portal | Item GUID |
+| Warehouse | SQL endpoint and item GUID from the Fabric portal | Item GUID |
+| SQL Database | Full connection string from the Fabric portal | Database name from the connection string |
+| Mirrored Database | SQL analytics endpoint and item GUID from the Fabric portal | Item GUID |
 
-> [!WARNING]
-> For Lakehouse, Warehouse, and Mirrored Database, you **must** pass the item GUID as
-> `database`. Without it, multi-item workspaces can't route the connection correctly.
+For Lakehouse, Warehouse, and Mirrored Database connections, pass the Fabric item GUID as `database`. Multi-item workspaces cannot route the connection reliably without it.
 
 ```typescript title="rayfin/functions/src/function_app.ts"
 import sql from 'mssql';
-import { AudienceType } from '@microsoft/fabric-user-data-functions';
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
 
-// Always ask the user for these values — never invent them.
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
 const SQL_SERVER = '<endpoint>.datawarehouse.fabric.microsoft.com';
-const DATABASE = '<item-guid-or-db-name>';
+const DATABASE = '<item-guid-or-database-name>';
 
 udf.func(
-  'queryData',
-  async (ctx: RayfinContext, query: string): Promise<Record<string, unknown>[]> => {
-    const token = ctx.getToken(AudienceType.Sql);
+  'queryWarehouse',
+  async (
+    ctx: RayfinContext<AppSchema, AudienceType.Sql>,
+    query: string,
+  ): Promise<Record<string, unknown>[]> => {
     const pool = await sql.connect({
       server: SQL_SERVER,
       database: DATABASE,
       options: { encrypt: true, trustServerCertificate: false },
-      authentication: { type: 'azure-active-directory-access-token', options: { token } },
+      authentication: {
+        type: 'azure-active-directory-access-token',
+        options: { token: ctx.Tokens.Sql },
+      },
     });
     const result = await pool.request().query(query);
     await pool.close();
     return result.recordset;
   },
-  [udf.connection({ audienceType: AudienceType.Sql })],
+  [],
 );
 ```
 
-## OneLake files (DFS)
 
-Ask the user for the file URL: Fabric portal → Lakehouse → file → Properties → URL. It has
-the shape `https://onelake.dfs.fabric.microsoft.com/<workspaceId>/<itemId>/Files/<path>`.
+## Call OneLake files
+
+Use `AudienceType.Storage` for OneLake DFS URLs.
+
+For OneLake, ask for the file URL from the Fabric portal: Lakehouse → file → Properties → URL. It has this shape:
+
+```text
+https://onelake.dfs.fabric.microsoft.com/<workspaceId>/<itemId>/Files/<path>
+```
+
+A OneLake example:
 
 ```typescript title="rayfin/functions/src/function_app.ts"
-import { AudienceType } from '@microsoft/fabric-user-data-functions';
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
 
 udf.func(
-  'readFile',
-  async (ctx: RayfinContext, fileUrl: string): Promise<string> => {
-    const token = ctx.getToken(AudienceType.Storage);
-    const res = await fetch(fileUrl, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`OneLake read failed: ${res.status}`);
-    return res.text();
+  'readOneLakeFile',
+  async (
+    ctx: RayfinContext<AppSchema, AudienceType.Storage>,
+    fileUrl: string,
+  ): Promise<string> => {
+    const response = await fetch(fileUrl, {
+      headers: { Authorization: ['Bearer', ctx.Tokens.Storage].join(' ') },
+    });
+    if (!response.ok) {
+      throw new Error(`OneLake read failed: ${response.status}`);
+    }
+    return await response.text();
   },
-  [udf.connection({ audienceType: AudienceType.Storage })],
+  [],
 );
 ```
 
-## Azure Key Vault
 
-Ask the user for the vault URL (e.g. `https://my-vault.vault.azure.net/`). Install
-`@azure/keyvault-secrets` and `@azure/identity` in `rayfin/functions/`:
+## Call Fabric REST APIs
+
+Use `AudienceType.Fabric` for Microsoft Fabric REST APIs.
+
+Grant the app identity access to the workspace, item, or Fabric API you call. Check the specific API because not every Fabric endpoint supports application identities.
 
 ```typescript title="rayfin/functions/src/function_app.ts"
-import { SecretClient } from '@azure/keyvault-secrets';
-import { AudienceType } from '@microsoft/fabric-user-data-functions';
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
+const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
+
+udf.func(
+  'listWorkspaceItems',
+  async (
+    ctx: RayfinContext<AppSchema, AudienceType.Fabric>,
+    workspaceId: string,
+  ): Promise<unknown> => {
+    const response = await fetch(`${FABRIC_API}/workspaces/${workspaceId}/items`, {
+      headers: { Authorization: ['Bearer', ctx.Tokens.Fabric].join(' ') },
+    });
+    if (!response.ok) {
+      throw new Error(`Fabric API returned ${response.status}`);
+    }
+    return await response.json();
+  },
+  [],
+);
+```
+
+## Call Azure Blob Storage
+
+Use `AudienceType.Storage` for Azure Blob, Table, or Queue Storage.
+
+Grant the app identity the Azure Storage data role required by your operation, such as **Storage Blob Data Reader** for listing and reading blobs or **Storage Blob Data Contributor** for writes. Install SDK packages in the functions package:
+
+```bash
+cd rayfin/functions
+npm install @azure/storage-blob @azure/identity
+```
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import { BlobServiceClient } from '@azure/storage-blob';
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
 import { ContextTokenCredential } from './ContextTokenCredential.js';
 
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
+
 udf.func(
-  'getSecret',
-  async (ctx: RayfinContext, kvUrl: string, secretName: string): Promise<string> => {
-    const credential = new ContextTokenCredential(ctx.getToken(AudienceType.KeyVault));
-    const client = new SecretClient(kvUrl, credential);
-    const secret = await client.getSecret(secretName);
-    return secret.value ?? '';
+  'listBlobContainers',
+  async (
+    ctx: RayfinContext<AppSchema, AudienceType.Storage>,
+    accountUrl: string,
+  ): Promise<string[]> => {
+    const credential = new ContextTokenCredential(ctx.Tokens.Storage);
+    const service = new BlobServiceClient(accountUrl, credential);
+    const names: string[] = [];
+    for await (const container of service.listContainers()) {
+      names.push(container.name);
+    }
+    return names;
   },
-  [udf.connection({ audienceType: AudienceType.KeyVault })],
+  [],
 );
 ```
 
-## Other resources
+Pass an account URL such as `https://<account>.blob.core.windows.net`.
 
-Cosmos DB and Blob Storage follow the same `ContextTokenCredential` pattern — ask the user
-for the resource endpoint, wrap `ctx.getToken(AudienceType.X)`, and pass the credential to
-the relevant Azure SDK client:
+## Call Azure AI Foundry
 
-- **Cosmos DB** (`AudienceType.CosmosDB`) — `new CosmosClient({ endpoint, aadCredentials: credential })`, from `@azure/cosmos`.
-- **Blob Storage** (`AudienceType.Storage`) — `new BlobServiceClient(url, credential)`, from `@azure/storage-blob`.
+Use `AudienceType.AzureAI` for Azure AI Foundry or Azure OpenAI APIs.
+
+Grant the app identity the role required by the Azure AI resource and API. Use the endpoint from Azure AI Foundry or the Azure portal, then send the token as a bearer token. Fill in the path and body for the specific API you call.
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
+const AI_ENDPOINT = 'https://<resource>.services.ai.azure.com';
+
+udf.func(
+  'callAzureAi',
+  async (
+    ctx: RayfinContext<AppSchema, AudienceType.AzureAI>,
+    prompt: string,
+  ): Promise<unknown> => {
+    const response = await fetch(`${AI_ENDPOINT}/<api-path>`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + ctx.Tokens.AzureAI,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!response.ok) {
+      throw new Error(`Azure AI returned ${response.status}`);
+    }
+    return await response.json();
+  },
+  [],
+);
+```
+
+## Call Azure DevOps
+
+Use `AudienceType.ADO` for Azure DevOps REST APIs.
+
+Grant the app identity access to the Azure DevOps organization, project, and resource you call. Provide the organization URL, such as `https://dev.azure.com/<org>`.
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
+const ADO_ORG = 'https://dev.azure.com/<org>';
+
+udf.func(
+  'listAdoProjects',
+  async (ctx: RayfinContext<AppSchema, AudienceType.ADO>): Promise<unknown> => {
+    const response = await fetch(`${ADO_ORG}/_apis/projects?api-version=7.1`, {
+      headers: { Authorization: ['Bearer', ctx.Tokens.ADO].join(' ') },
+    });
+    if (!response.ok) {
+      throw new Error(`Azure DevOps returned ${response.status}`);
+    }
+    return await response.json();
+  },
+  [],
+);
+```
 
 ## Rules
 
-- Always ask the user for real endpoint URLs — never invent them, and never fall back to
-  `process.env` as your primary source for a resource endpoint.
-- Declare connections in the third argument to `udf.func()`.
-- Use `ctx.getToken(AudienceType.X)` — never acquire tokens manually.
-- Install SDK packages (`mssql`, `@azure/identity`, etc.) in `rayfin/functions/package.json`,
-  not the project root.
-- For SQL, use `mssql@^12.6.0` with `encrypt: true`.
+- Declare generic audiences in the `RayfinContext` annotation and read tokens from `ctx.Tokens.<Audience>`.
+- Keep the third argument to `udf.func()` as `[]` in new code.
+- Use real endpoints from Fabric or Azure. Do not use `process.env` as the primary source for resource coordinates.
+- Never return `ctx.Tokens.*` values to the frontend.
+- Grant external resource access to the Fabric app identity before testing deployed functions.
+- Install resource SDK packages in the functions package, not the project root.
 
-```prompt title="Add a connection to a Rayfin function"
-In my Rayfin project's rayfin/functions/src/function_app.ts, add a function that connects to
-an external resource (tell me which one — SQL, Key Vault, OneLake, Cosmos DB, or Blob
-Storage) using a delegated-auth connection.
+## Migrate from `udf.connection()` and `ctx.getToken()`
 
-Ask me for the real endpoint URL, connection string, or vault URL rather than inventing one.
-Declare the connection with udf.connection({ audienceType: AudienceType.<X> }) in the third
-argument to udf.func, and get the token inside the handler with
-ctx.getToken(AudienceType.<X>) — do not acquire tokens any other way. If the target is a SQL
-resource, use the mssql package (^12.6.0) with encrypt: true and
-azure-active-directory-access-token auth, and make sure I've given you the item GUID to use
-as the database value.
+`udf.connection({ audienceType })` and `ctx.getToken(audienceType)` still work at runtime, but they no longer give the preferred type-safe authoring model. Move the audience into the context annotation and read `ctx.Tokens`. [Deprecated in 1.36](/docs/reference/changelog#rayfin-136)
 
-Install any needed SDK packages in rayfin/functions/package.json, not the project root.
+```typescript title="rayfin/functions/src/function_app.ts"
+// Before
+udf.func(
+  'before',
+  async (ctx: RayfinContext): Promise<string> => {
+    return ctx.getToken(AudienceType.Sql);
+  },
+  [udf.connection({ audienceType: AudienceType.Sql })],
+);
+
+// After
+udf.func(
+  'after',
+  async (ctx: RayfinContext<AppSchema, AudienceType.Sql>): Promise<string> => {
+    return ctx.Tokens.Sql;
+  },
+  [],
+);
+```
+
+Both halves matter: the annotation registers the binding and narrows `ctx.Tokens`.
+
+## Local token identity
+
+During `npx rayfin dev` and `npx rayfin dev functions apply`, external-resource tokens use the account the local Functions host signs in with. Deployed Functions use the application identity. Test deployed permissions even if local debugging works.
+
+```prompt title="Add an app-identity connection to a Rayfin function"
+In my Rayfin project, add a function connection to <Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, or Azure DevOps>.
+
+Use Rayfin 1.36 style. Declare the audience in the handler's context type, for example `RayfinContext<AppSchema, AudienceType.Sql>`, and read the token from `ctx.Tokens.Sql`. Keep the third argument to `udf.func()` as `[]`. Do not use `ctx.getToken()` or `udf.connection({ audienceType })` in new code. Use real resource endpoints from Fabric or Azure; do not invent URLs. Install resource SDK packages in rayfin/functions/package.json. Explain which identity must be granted access in deployed Functions and how local development differs.
 ```

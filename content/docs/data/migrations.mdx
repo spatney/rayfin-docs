@@ -23,13 +23,22 @@ npx rayfin up
 Running it again after the first deploy updates the same deployment rather than creating
 a new one, so it is safe to run repeatedly as you iterate.
 
+## `rayfin dev` applies declared schema on start
+
+Every scaffolded template's `npm run dev` script runs `rayfin dev`, not plain Vite.
+
+`rayfin dev` provisions or reuses the Fabric backend, applies runtime settings and declared data schema, writes framework environment files, then starts the frontend locally.
+
+Restart `npm run dev` after editing files under `rayfin/data/` so the startup apply sees the new model.
+
 ## `rayfin up db apply`: the schema-only escape hatch
 
 `npx rayfin up db apply` generates and applies **only** the database schema, without
 touching runtime settings or static content. It is an advanced subcommand — reach for it
 when you specifically want to push a schema change without re-running the full `rayfin up`
-flow (for example, while iterating locally with `npm run dev` serving your frontend and
-the backend already deployed).
+flow.
+
+In 1.36 the apply path retries transient failures and threads the configured dialect through the operation. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
 ```bash
 npx rayfin up db apply
@@ -74,7 +83,9 @@ npx rayfin up status --json
 ```bash
 # 1. Edit rayfin/data/Todo.ts, add a field or a new entity
 
-# 2. Apply the change
+# 2. Apply the change during development or deployment
+npm run dev
+# or
 npx rayfin up
 
 # 3. Verify the deployment is healthy
@@ -104,8 +115,5 @@ once you have confirmed the data loss is acceptable.
 `services.data.enabled` is `true`. Omitting it causes a 400 error at apply time.
 
 ```prompt title="Apply and verify a schema change"
-I just added a new field to an entity in my Rayfin project's rayfin/data/ folder. Run
-`rayfin up` to apply the change, then run `rayfin up status` to confirm the deployment is
-healthy. If querying the changed entity still fails after that, run
-`rayfin up db apply --force` and check again.
+I just added a new field to an entity in my Rayfin project's rayfin/data/ folder. If I am in the development loop, restart `npm run dev` so `rayfin dev` applies the declared schema on startup. If I am deploying, run `rayfin up`. Then run `rayfin up status` to confirm the deployment is healthy. If querying the changed entity still fails after that, run `rayfin up db apply --force` and check again.
 ```

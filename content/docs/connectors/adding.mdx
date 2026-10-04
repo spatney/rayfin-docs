@@ -1,5 +1,6 @@
 ---
 title: Adding a connector
+appliesTo: "@microsoft/rayfin-connectors >= 1.36"
 description: Discover Fabric sources, add a connector to rayfin.yml, install its pinned packages, and manage connector entries safely.
 ---
 
@@ -7,9 +8,9 @@ Add a connector when a Rayfin app needs to reach existing Fabric data. Start wit
 `connector search` if you do not already have the workspace ID, item ID, and connector
 type. See [Connectors](/docs/connectors) for the connector-type catalog.
 
-> [!WARNING]
-> Connectors are in private preview. The `rayfin connector` command group is hidden until
-> the project opts in, and the APIs may change between releases.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+`rayfin connector` is always registered in 1.36 and no longer needs a connector opt-in gate.
 
 ## Find a source
 
@@ -68,7 +69,7 @@ npx rayfin connector add --type <type> --workspace-id <ws-id> --item-id <item-id
 
 | Flag | Required | Purpose |
 | --- | --- | --- |
-| `--type <type>` | Yes | Connector type, such as `fabric-warehouse`, `fabric-sqldatabase`, `fabric-sqlanalytics`, `fabric-semanticmodel`, or `kusto`. |
+| `--type <type>` | Yes | Connector type, such as `fabric-warehouse`, `fabric-sqldatabase`, `fabric-sqlanalytics`, or `fabric-semanticmodel`. New `kusto` authoring is held in 1.36.2. |
 | `--workspace-id <id>` | Yes | Fabric workspace ID. It must be a literal value; `${VAR}` placeholders are rejected. |
 | `--item-id <id>` | Yes | Fabric item ID. It must be a literal value. |
 | `--name <name>` | No | Connector name. When omitted, the CLI derives it from the Fabric item display name. |
@@ -79,15 +80,18 @@ npx rayfin connector add --type <type> --workspace-id <ws-id> --item-id <item-id
 
 Connector names must match `/^[a-zA-Z0-9\-_]+$/` and can be at most 256 characters.
 
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+`connector add` normalizes connector names to lowercase. A supplied `--name SalesDW` is written as `salesdw`. Use the same lowercase name in `rayfin.yml`, `AppConnectorsSchema`, `connectorConfigs`, and the runtime map.
+
 ## Know what the command writes
 
 `connector add` verifies the Fabric item, writes a `connectors:` entry in
 `rayfin/rayfin.yml`, and scaffolds `rayfin/connectors/<name>/schema.ts`.
 
-For Category A connectors, it also runs schema discovery and writes
-`rayfin/connectors/<name>/metadata.json`. For `kusto`, it resolves the KQL Database's
-cluster query endpoint and database name from `(workspaceId, itemId)`, then bakes
-`queryServiceUri` and `databaseName` into the generated `schema.ts`.
+For Category A connectors, it also runs schema discovery and writes `rayfin/connectors/<name>/metadata.json`.
+
+For `fabric-semanticmodel`, it writes a complete generated `schema.ts`.
 
 The `rayfin.yml` entry uses an array. Operations are objects, not bare strings:
 
@@ -99,21 +103,20 @@ connectors:
       workspaceId: <ws-id>
       itemId: <item-id>
     auth:
-      type: delegated
+      type: application
     operations:
       - name: read
       - name: update
-  - name: telemetry
-    type: kusto
+  - name: salesmodel
+    type: fabric-semanticmodel
     version: '1'
     config:
       workspaceId: <ws-id>
-      itemId: <kql-database-item-id>
+      itemId: <semantic-model-item-id>
     auth:
       type: delegated
     operations:
       - name: executeQuery
-      - name: executeCommand
 ```
 
 ## Scope operations
@@ -141,17 +144,38 @@ version-pinned install command:
 
 ```text
 📦 Install the packages this connector needs:
-   npm install @microsoft/rayfin-connector-kusto@1.35.0-alpha
+   npm install @microsoft/rayfin-connector-fabric-semanticmodel@1.36.2 @microsoft/rayfin-connectors@1.36.2
 ```
 
 Run the command verbatim. Do not drop the version.
 
-Connector packages ship in lockstep with the CLI, but their npm `latest` and `preview`
-tags lag. An unversioned install can pull an older connector that hard-pins its own
+Connector packages ship in lockstep with the CLI, but their npm `latest` and `preview` tags can lag.
+
+An unversioned install can pull an older connector that hard-pins its own
 `@microsoft/rayfin-data`, leaving two Rayfin version lines in one app.
 
 `rayfin connector types --json` carries the same `packages` array, so an agent can rebuild
 the exact install list from the live catalog when needed.
+
+## Review generated app wiring
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+After it writes the connector files, `connector add` regenerates `src/lib/connectors.ts` when that file exists and is safe for the CLI to update.
+
+The file exports the `connectorConfigs`, `connectorRuntimes`, and `AppConnectorsSchema` that the frontend client imports.
+
+The generator is conservative:
+
+- It wires only connectors whose `rayfin/connectors/<name>/schema.ts` exports `connectorConfig`.
+- Category A placeholders are skipped until you generate entity files and replace `schema.ts` with the aggregate schema.
+- It preserves the app-owned section of an already generated file.
+- It prunes imports for connectors you removed.
+- If the file has manual edits, the CLI prints the content to merge instead of overwriting it.
+
+If `connector add` warns that no `src/lib/connectors.ts` exists, your app template owns connector wiring another way.
+
+Wire the same `connectorConfig` and runtime maps manually as shown in [Wiring connectors into your app](/docs/connectors/client-setup).
 
 ## List and remove connectors
 
@@ -192,6 +216,5 @@ default.
 
 After the add command succeeds, run the exact version-pinned `npm install` command it
 prints; do not drop package versions. Then list the configured connectors with
-`npx rayfin connector list` and prepare to wire the connector through
-`ConnectorsRayfinClient` from `@microsoft/rayfin-client/experimental`.
+`npx rayfin connector list` and prepare to wire the connector through `ConnectorsRayfinClient` from `@microsoft/rayfin-client`.
 ```

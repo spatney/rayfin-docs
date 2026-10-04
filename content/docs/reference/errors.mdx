@@ -1,11 +1,11 @@
 ---
 title: Errors and troubleshooting
-description: A symptom-to-fix index of the errors Rayfin builders hit most — deployment, schema apply, secrets, static hosting, and Fabric auth.
+description: A symptom-to-fix index of the errors Rayfin builders hit most — deployment, capacity, static hosting, schema apply, secrets, functions, connectors, and Fabric auth.
 ---
 
-This page consolidates the troubleshooting sections scattered across the Rayfin guide into
-one symptom → cause → fix index. Search it by the error text you're seeing, then jump to
-the matching heading for the full fix.
+This page is a symptom → cause → fix index across every area of Rayfin. Search it by the
+error text you're seeing, then jump to the matching heading — or to the area's own
+troubleshooting section — for the full fix.
 
 ## Quick reference
 
@@ -13,13 +13,22 @@ the matching heading for the full fix.
 | --- | --- | --- |
 | "Internal server error" from the data API, after a deploy that reported success | `@text()` field with no `max` produced `NVARCHAR(MAX)` on MSSQL | Add `@text({ max: N })` to every string field, then reapply the schema |
 | `Dialect is required when Data module is enabled` (400 at deploy time) | `services.data.enabled: true` with no `dialect` in `rayfin.yml` | Set `dialect: mssql` |
-| `Failed to acquire authentication token` | Not signed in, or no OS credential storage available | `rayfin login`; on restricted systems set `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` |
+| `Entity name 'Date' is a built-in GraphQL scalar type reserved by the platform` | The entity name collides with a GraphQL built-in type | Rename the class, or pass another name with `@entity('EventDate')` |
+| `Failed to acquire authentication token` | Not signed in, or no OS credential storage available | `rayfin login`; on machines without a keychain add `--encryption-fallback-enabled` |
 | `rayfin up db apply` refuses to run, warns of data loss | The pending change drops a column/table or alters a type | Review the change; re-run with `--force` only once you accept the loss |
 | A newly added entity isn't readable right after a deploy that reported success | The schema migration step hadn't finished applying, or the client/cache is stale | Run `rayfin up status`; confirm schema apply completed before querying the new entity |
 | Deployment fails with `401` or `403` | Your Fabric session expired | `rayfin login`, then retry `rayfin up` |
+| `The Fabric capacity assigned to this workspace is exhausted and cannot create another Rayfin item.` | The workspace has no room for another item | Target another workspace with `--workspace-id`, or pass `--capacity-id`; see [Deployment troubleshooting](/docs/deploy/troubleshooting) |
+| `Static hosting is enabled but services.staticHosting.assetAccess is not set in rayfin.yml` | The static-hosting access posture is missing | Set `assetAccess: protected` or `public`; see [Static hosting posture](#static-hosting-posture-is-missing) |
 | `No remote endpoint configured` from `staticapp deploy` | No full deployment has happened yet | Run `rayfin up` once, then use `staticapp deploy` for subsequent updates |
-| Static deploy exceeds the size limit | Build output includes source maps or dev-only assets | Exclude dev artifacts from the production build, or move binaries to storage |
-| `rayfin secret set` exits without prompting | stdin is not a TTY, or `CI=true` — the command is interactive only | Run it from an interactive terminal; there is no CI path today |
+| Static deploy exceeds the size limit | Build output includes source maps or dev-only assets | Exclude dev artifacts from the production build |
+| `rayfin secret set` exits without prompting | stdin is not a TTY, or `CI=true` | Pass the value with `--stdin`, or many values with `--env-file` |
+| `Invalid services.functions.auth: authentication is required when Functions are enabled.` | Rayfin 1.36 requires application auth for enabled Functions | Set `services.functions.auth.type: application` |
+| `No value available for secret '<NAME>'.` in a function | The secret isn't declared in `rayfin.yml` or has no value | Declare and set it with `rayfin secret set <NAME>` |
+| HTTP 502 from a function call while `npm run dev` is running | The local Functions host is not running | Restart `npm run dev`; see [Run functions locally](/docs/functions/local-development) |
+| `Connector type "kusto" is not available in this release.` | Rayfin 1.36 holds new Kusto connectors back | Keep existing Kusto connectors; choose another connector type for new sources |
+| `SELECTION_REQUIRED` from a connector query | The chain has no explicit selection | Add `.select([...])`, or list the entity in `connectorConfig.entities` |
+| `FEATURE_NOT_ENABLED` or 404 from `/connector-invoke/<name>` | Connector invocation is not enabled for the Fabric workspace | Ask your Fabric admin to enable it; app changes do not help |
 | Popup blocked during Fabric sign-in | `ensureSignedInWithFabric` was called outside a user-gesture handler | Call it directly from a button's `onClick` |
 
 ## Deployment and schema apply
@@ -101,19 +110,25 @@ stale schema.
 CI runner) has no OS-backed credential storage for the CLI's token cache.
 
 **Fix:** run `npx rayfin login` — the account picker is always shown, so you can choose a
-different account. On systems without OS credential storage, set
-`RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` (development environments only — this stores the
-token cache in plaintext).
+different account. On systems without OS credential storage, pass
+`--encryption-fallback-enabled` (or set `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true`) —
+development environments only, because the token cache is then stored in plaintext.
 
 ### `rayfin secret set` refuses to prompt
 
 **Symptom:** `rayfin secret set <NAME>` exits without asking for a value.
 
-**Cause:** stdin is not a TTY, or `CI=true` is set. The command reads the value from a
-masked prompt and has no non-interactive mode.
+**Cause:** stdin is not a TTY, or `CI=true` is set, so the masked prompt can't run.
 
-**Fix:** run it from an interactive terminal. There is no supported way to set secrets
-from CI today. See [Secrets](/docs/deploy/secrets).
+**Fix:** pipe the value in with `--stdin`, or set several secrets at once from a dotenv
+file with `--env-file`:
+
+```bash
+printf '%s' "$API_KEY" | npx rayfin secret set API_KEY --stdin
+npx rayfin secret set --env-file .env.secrets
+```
+
+See [Secrets](/docs/deploy/secrets) for CI usage and rotation.
 
 ### Permission denied setting or listing secrets
 
@@ -147,8 +162,29 @@ wrong, or `buildCommand` didn't actually produce output.
 source maps or unoptimized assets.
 
 **Fix:** exclude development artifacts (source maps, unminified assets) from the production
-build, or move large binary files to a storage service instead of bundling them as static
-content.
+build, and serve large media from outside the static bundle.
+
+### Static hosting posture is missing
+
+**Symptom:** `rayfin up` stops with
+`Static hosting is enabled but services.staticHosting.assetAccess is not set in rayfin.yml`,
+or the deployed app reports that the access posture has not been recorded.
+
+**Cause:** since Rayfin 1.35.1, a static-hosted app must declare who can load it.
+
+**Fix:** set the posture explicitly, then redeploy with `npx rayfin up`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  staticHosting:
+    enabled: true
+    assetAccess: protected # or: public
+```
+
+`protected` requires Fabric sign-in before the app loads; `public` serves anyone with the
+link. A non-interactive `rayfin up` writes `protected` for you when the value is missing.
+See [Hosting](/docs/hosting) and [Deployment troubleshooting](/docs/deploy/troubleshooting)
+for the related posture errors.
 
 ### "No remote endpoint configured"
 
@@ -159,6 +195,76 @@ exists — it can't create one.
 
 **Fix:** run `npx rayfin up` once to provision the remote deployment, then use
 `npx rayfin up staticapp deploy` for subsequent static-only updates.
+
+## Functions
+
+See [Run functions locally](/docs/functions/local-development) and
+[Deploying functions](/docs/functions/deploying) for the full lists.
+
+### "authentication is required when Functions are enabled"
+
+**Symptom:** `rayfin up` or `rayfin dev` fails with
+`Invalid services.functions.auth: authentication is required when Functions are enabled.`
+
+**Cause:** Rayfin 1.36 requires enabled Functions to declare application authentication.
+
+**Fix:** add the `auth` block:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  functions:
+    enabled: true
+    auth:
+      type: application
+```
+
+### "No value available for secret"
+
+**Symptom:** a function throws
+`No value available for secret 'API_KEY'. Ensure it is declared in rayfin.yml and set with 'rayfin secret set'.`
+
+**Cause:** the function reads `ctx.Secrets.API_KEY`, but the secret is not declared, or it
+has no value in the deployed item.
+
+**Fix:** run `npx rayfin secret set API_KEY --describe="What the key is for"`, then
+redeploy. See [Secrets in functions](/docs/functions/secrets).
+
+### HTTP 502 from a function call during development
+
+**Symptom:** while `npm run dev` is running, `client.functions.<name>.invoke()` fails with
+HTTP 502.
+
+**Cause:** the Vite dev server proxies function calls to the local Functions host, and that
+host is not running. The proxy never falls back to the deployed function.
+
+**Fix:** restart `npm run dev`, or run `npx rayfin dev functions apply` and read its output.
+
+## Connectors
+
+See [Connectors](/docs/connectors) and the [`rayfin connector`](/docs/reference/cli/connector)
+reference for per-command errors.
+
+### `SELECTION_REQUIRED`
+
+**Cause:** a query chain with `.where()`, `.orderBy()`, or `.first()` has no explicit
+selection, or the entity is missing from `connectorConfig.entities`.
+
+**Fix:** add `.select([...])` to the chain, and list the entity in
+`connectorConfig.entities`.
+
+### `FEATURE_NOT_ENABLED` or 404 from `/connector-invoke/<name>`
+
+**Cause:** connector invocation is disabled for the Fabric workspace. The message comes
+from the service, not from your app.
+
+**Fix:** ask your Fabric administrator to enable it for the workspace. Changing the app
+does not help.
+
+### `Connector type "kusto" is not available in this release.`
+
+**Cause:** Rayfin 1.36 holds new Kusto (Eventhouse) connectors back.
+
+**Fix:** existing Kusto connectors keep working; see [KQL databases](/docs/connectors/kusto).
 
 ## Fabric brokered auth
 

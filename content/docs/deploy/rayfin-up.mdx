@@ -1,47 +1,41 @@
 ---
 title: Deploying with rayfin up
-description: Deploy a Rayfin project to Microsoft Fabric with rayfin up, covering login, useful flags, deployment metadata, and redeploys.
+description: Deploy a Rayfin project with rayfin up, including login, capacity readiness, targeting flags, dry runs, and deployment metadata.
 ---
 
-`rayfin up` is the canonical command for shipping a Rayfin project to a Fabric app. It
-builds your static content, deploys it, syncs your `rayfin.yml` settings, and applies any
-pending database schema changes — all in one step. Use it for the first deploy and for
-every change after that, including schema-only changes.
+Use `rayfin up` to publish a Rayfin project to Microsoft Fabric. It is the full production deploy command: it syncs backend settings, applies schema changes, builds static content, and deploys enabled Functions. Use `rayfin dev` for local iteration.
 
 > [!NOTE]
-> This page walks through the deploy workflow end to end. For the exhaustive flag and
-> subcommand reference, see [`up`](/docs/reference/cli/up) and
-> [`login`](/docs/reference/cli/login) in the CLI reference.
+> For the exhaustive command reference, see [`rayfin up`](/docs/reference/cli/up) and [`rayfin login`](/docs/reference/cli/login).
 
 ## Prerequisites
 
-- A Rayfin project with a `rayfin/rayfin.yml` configuration file.
-- A Microsoft account with access to a Fabric workspace.
+- A Rayfin project with `rayfin/rayfin.yml`.
+- A Microsoft account or service principal with access to a Fabric workspace.
+- Fabric apps enabled for the tenant.
+- Usable Fabric capacity on the target workspace, or permission for Rayfin to prepare one.
 
-## Sign in
-
-Authenticate with your Microsoft Entra ID account before deploying:
+## Sign in interactively
 
 ```bash
 npx rayfin login
 ```
 
-The CLI opens a browser window for interactive sign-in — the MSAL account picker is always
-shown, so you can pick a different signed-in account without passing any extra flag. After
-authentication, tokens are stored securely in the OS keychain under `~/.rayfin/`.
-
-Check your sign-in status at any time:
+The CLI opens a browser for Microsoft Entra ID sign-in and stores tokens with the operating system keychain. Check the current session at any time:
 
 ```bash
 npx rayfin login status
 ```
 
-See [`rayfin login`](/docs/reference/cli/login) for the full set of login flags.
+If the keychain is unavailable in a development container or similar environment, opt in explicitly:
 
-### Non-interactive login
+```bash
+npx rayfin login --encryption-fallback-enabled
+```
 
-Authenticate as a service principal using client credentials when interactive browser
-login is not available or wanted — for example, in a CI/CD pipeline:
+## Sign in for CI
+
+Use service principal credentials when a browser prompt is not available:
 
 ```bash
 npx rayfin login --service-principal \
@@ -50,153 +44,159 @@ npx rayfin login --service-principal \
   --tenant <tenant-id>
 ```
 
-Credentials persist to `~/.rayfin/`, so every subsequent command in the same pipeline job
-authenticates automatically without a browser or user interaction.
+Credentials persist for later commands in the same job.
 
-Alternatively, set the `RAYFIN_TOKEN` shell environment variable to a pre-acquired token to
-bypass interactive login entirely. See
-[Environments and configuration](/docs/deploy/environments) for the full set of
-shell-only variables.
+You can also set `RAYFIN_TOKEN` to a pre-acquired bearer token for headless automation. Use this only when an external system already owns token acquisition; otherwise prefer `rayfin login --service-principal` so the CLI can manage tenant and audience details.
 
-## Deploy with rayfin up
-
-Run this from your project root:
+## Run a full deploy
 
 ```bash
 npx rayfin up
 ```
 
-If you are not signed in, the CLI launches the interactive login flow automatically.
+If you are not signed in, the command starts the interactive login flow.
 
 ### What rayfin up does
 
-1. **Creates a Fabric app** in your workspace on the first deploy, or reuses the existing
-   one on subsequent deploys.
-2. **Retrieves the publishable key** from the remote service.
-3. **Syncs runtime settings** from `rayfin.yml` to the remote service, including auth
-   configuration and which services are enabled.
-4. **Applies the database schema** generated from your TypeScript data model decorators.
-5. **Builds and deploys static content**, if `staticHosting` is enabled — runs your build
-   command, packages the output, and uploads it.
-6. **Persists deployment details** to `rayfin/.deployments.json` and merges the matching
-   `RAYFIN_PUBLIC_*` values into `rayfin/.env`.
+1. Reads `rayfin/rayfin.yml`, interpolates env values, and validates local service inputs.
+2. Resolves the target Fabric workspace from flags, `RAYFIN_WORKSPACE_ID`, recorded deployments, or interactive selection.
+3. Checks Fabric capacity readiness and prepares a workspace when needed.
+4. Chooses the Fabric item display name from `--item-name` or `id` in `rayfin.yml`.
+5. Creates the App (preview) item on first deploy, or reuses the recorded item.
+6. Retrieves the publishable key.
+7. Resolves package versions (`packageVersions`) for the deploy client and installed auth SDK. [New in 1.35.1](/docs/reference/changelog#rayfin-1351)
+8. Syncs runtime settings from `rayfin.yml`, including auth, static hosting access, Functions, storage flags, and connectors.
+9. Generates connector configuration and function metadata required by enabled services.
+10. Applies the data schema generated from decorated entities.
+11. Builds and packages static content when `services.staticHosting.enabled` is true and not excluded.
+12. Uploads the static archive and records the hosting URL.
+13. Deploys Functions when `services.functions.enabled` is true and not excluded.
+14. Writes `rayfin/.deployments.json`, merges `RAYFIN_PUBLIC_*` values into `rayfin/.env`, and regenerates the frontend `.env.local` when possible.
 
-After it finishes, the CLI prints the **hosting URL** where your app is live, a **Fabric
-portal link** to manage the deployment, and the **deployment ID**.
+When it finishes, the CLI prints the hosting URL when static content is deployed, a Fabric portal link, and deployment identifiers.
 
 > [!NOTE]
-> Fabric brokered authentication (Entra SSO) is the only supported sign-in method. Make
-> sure `services.auth.fabric.enabled` is `true` in `rayfin.yml` before deploying if your
-> app needs sign-in. See [Fabric SSO](/docs/auth/fabric-sso).
+> Fabric brokered authentication with Microsoft Entra ID is the supported browser sign-in path. If your app needs sign-in, keep `services.auth.fabric.enabled: true` and include your local and deployed origins in `allowedRedirectUris`.
 
-### Useful flags
+## Target a workspace or item
 
-| Flag | What it does |
+| Flag | Description |
 | --- | --- |
-| `-t, --tenant <id>` | Target a specific Entra ID tenant, when your account spans multiple tenants. |
-| `-w, --workspace <name>` | Target a specific Fabric workspace by display name. Defaults to "My Workspace" when omitted. |
-| `--workspace-id <id>` | Target a specific Fabric workspace by GUID instead of by display name. |
-| `--workspace-uri <uri>` | Target a workspace by its Fabric portal URL — the CLI derives the workspace ID and target environment from it. |
-| `--force` | Allow destructive schema changes (dropping a column or table, for example) that may cause data loss. |
-| `-n, --dry-run` | Preview what the CLI would do without creating or modifying any resources. |
-| `--env-file <path>` | Path to the `.env` file to read. Defaults to `rayfin/.env`. |
-| `-v, --verbose` | Print detailed output, useful when diagnosing a failed deploy. |
-| `--json` | Print the deployment result as JSON, for scripting or automation. |
-| `-y, --yes` | Auto-accept all confirmation prompts — for non-interactive use. |
-| `--exclude-services <names>` | Comma-separated services to skip. Only `staticHosting` is currently supported — runtime settings are still synced, so the backend is never silently out of date. The scaffolded `npm run dev` script uses this so a local Vite dev server can serve the frontend while the backend stays deployed. |
-| `--encryption-fallback-enabled` | Allow plaintext token storage on systems without OS credential storage — some Linux distros, dev containers, and Codespaces. Only pass this when login fails with a keychain error. |
+| `-w, --workspace <name>` | Fabric workspace display name. |
+| `--workspace-id <id>` | Fabric workspace GUID. |
+| `--workspace-uri <uri>` | Fabric portal workspace URL; Rayfin derives the workspace ID and environment. |
+| `--item-name <name>` | Fabric item display name, defaulting to `id` in `rayfin.yml`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `-t, --tenant <id>` | Entra tenant GUID. |
+| `--env-file <path>` | Env file used for interpolation and deployment values; defaults to `rayfin/.env`. |
 
-`-w/--workspace`, `--workspace-id`, and `--workspace-uri` are three ways to target the same
-thing — pass at most one.
+Pass at most one workspace selector. `--item-name` changes the Fabric item display name for the deployment; runtime settings still come from `rayfin.yml`. After the item is recorded, later deploys reuse that item.
+
+## Prepare workspace capacity
+
+Rayfin 1.36 can prepare a workspace and assign capacity during first deploys. [New in 1.36](/docs/reference/changelog#rayfin-136)
+
+### Readiness flow
+
+1. If the selected workspace already has usable capacity, Rayfin uses it and does not change the assignment.
+2. If no target is recorded or passed and the terminal is interactive, Rayfin asks: `Choose a Fabric workspace for this deployment:` with `Use new workspace [Recommended]` and `Select existing workspace`.
+3. If a new workspace is selected, Rayfin creates a uniquely named workspace for the project and assigns capacity.
+4. If an existing workspace is selected, Rayfin uses the accessible-workspace picker.
+5. If a trial capacity is required, Rayfin may start or reuse an eligible Fabric trial capacity.
+6. If assigning a selected or trial capacity requires consent, Rayfin prompts with `Assign capacity <name> (<id>) to workspace <workspace>?`.
+7. With `--yes`, deterministic assignment prompts are approved automatically.
+8. With `--json` or another non-interactive mode, Rayfin cannot ask questions. Provide explicit workspace targeting, or pass `--capacity-id` when capacity selection is required.
+
+### Capacity outcomes and exact messages
+
+| Message | What to do |
+| --- | --- |
+| `--capacity-id must be a GUID.` | Pass the Fabric capacity GUID shown in the Fabric portal. |
+| `--workspace-id and --capacity-id cannot be used together.` | Remove one option so Rayfin resolves either the workspace or the capacity. The same rule applies to `--workspace` and `--workspace-uri`. |
+| `RAYFIN_WORKSPACE_ID and --capacity-id cannot be used together.` | Unset `RAYFIN_WORKSPACE_ID` or remove `--capacity-id`. |
+| `No workspace targeting context. Pass --workspace <name> (or --workspace-id <id> / --workspace-uri <url>), or run \`rayfin up\` once interactively to record a deployment.` | Provide a workspace target for non-interactive deployment. |
+| `Provisioning and assigning Fabric trial capacity to workspace <name> requires confirmation.` | Rerun with `--yes`, run interactively, or pass a workspace that already has capacity. |
+| `Multiple premium Fabric capacities are available and require interactive selection.` | Run interactively to choose a capacity, or pass `--capacity-id <id>` without a workspace option. |
+| `Ignoring --capacity-id because an existing deployment keeps its current workspace capacity.` | Omit `--capacity-id`, or deploy to a different workspace if you need a different capacity. |
+
+Do not combine `--capacity-id` with `--workspace`, `--workspace-id`, `--workspace-uri`, or `RAYFIN_WORKSPACE_ID`; the CLI validates this in the shared capacity option checker before deployment.
+
+## Preview without deploying
 
 ```bash
-npx rayfin up -n -v
-npx rayfin up --workspace-id 8b17cf64-3c12-46ac-a572-192732c32641
+npx rayfin up --dry-run --workspace-id <workspace-guid>
+```
+
+Dry run validates local inputs and resolves the workspace without deploying or modifying resources. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Dry run does:
+
+- Validate static-hosting paths and access posture; reports that a non-interactive deploy would default missing static-hosting posture to `assetAccess: protected` and write it to `rayfin.yml`. [New in 1.35.1](/docs/reference/changelog#rayfin-1351)
+- Resolve package versions that a deploy would declare.
+- Authenticate and make read-only Fabric requests needed to resolve the workspace.
+- Print the planned operations and target workspace.
+
+Dry run does not:
+
+- Run build commands.
+- Create Fabric items.
+- Apply runtime settings or schemas.
+- Upload static content.
+- Deploy Functions.
+- Write `rayfin/.deployments.json`, `rayfin/.env`, or `.env.local`.
+
+## Skip specific deployment phases
+
+Use `--exclude-services <names>` for scripts that intentionally run the deploy workflow while skipping selected build/package/deploy phases.
+
+| Value | Effect |
+| --- | --- |
+| `staticHosting` | Skips static build, package, and upload. Runtime settings still sync. |
+| `functions` | Skips Functions deployment. Runtime settings still sync. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+
+```bash
 npx rayfin up --exclude-services staticHosting
+npx rayfin up --exclude-services functions
 ```
 
-```prompt title="Build and deploy my app"
-Build and deploy my Rayfin project to Microsoft Fabric. Sign me in if needed with `npx
-rayfin login`, then run `npx rayfin up` to build the static app, sync settings, and apply
-any pending schema changes. Once it finishes, run `npx rayfin up status` to confirm the
-deployment is healthy and tell me the live hosting URL.
-```
+This is not the normal local development loop. Use `npm run dev` for that.
 
-## Subsequent deployments
-
-After the first deploy, `rayfin/.deployments.json` records the deployment and the matching
-`RAYFIN_PUBLIC_*` values are merged into `rayfin/.env`. Running `npx rayfin up` again
-updates that same deployment rather than creating a new one.
-
-For targeted updates, use the subcommands instead of a full redeploy:
+## Deploy schema, static content, or Functions only
 
 | Command | What it updates |
 | --- | --- |
-| `npx rayfin up` | Everything — settings, database, and static content. |
-| `npx rayfin up db apply` | Database schema only. |
+| `npx rayfin up db apply` | Data schema only. |
+| `npx rayfin up db apply --force` | Allows destructive schema changes after review. |
 | `npx rayfin up staticapp deploy` | Static content only. |
+| `npx rayfin up staticapp deploy --skip-build` | Uploads existing static output without running the build command. |
+| `npx rayfin up functions deploy` | Functions only. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 
-### Apply database changes remotely
+Enabled Functions require application authentication in `rayfin.yml` before deploy:
 
-After changing an entity under `rayfin/data/`, push the schema change to the remote
-database without redeploying the full stack:
-
-```bash
-npx rayfin up db apply
+```yaml title="rayfin/rayfin.yml"
+services:
+  functions:
+    enabled: true
+    auth:
+      type: application
 ```
 
-If the change could be destructive (dropping a column or table, for example), the CLI
-warns you and refuses to proceed. Use `--force` only after confirming you accept the data
-loss:
+See [Functions](/docs/functions) for authoring and authentication details.
 
-```bash
-npx rayfin up db apply --force
-```
+## Deployment metadata
 
-### Redeploy static content
-
-When you have only changed frontend code, redeploy static content on its own for a faster
-iteration cycle:
-
-```bash
-npx rayfin up staticapp deploy
-```
-
-This runs your configured `buildCommand`, packages the output, and uploads it. To skip the
-build step and deploy existing output:
-
-```bash
-npx rayfin up staticapp deploy --skip-build
-```
-
-## Check deployment status
-
-```bash
-npx rayfin up status
-```
-
-Add `--json` for machine-readable output:
-
-```bash
-npx rayfin up status --json
-```
-
-## Deployment metadata: rayfin/.deployments.json
-
-Each deployment is recorded in `rayfin/.deployments.json` — a registry of every workspace
-you have deployed this project to:
+`rayfin/.deployments.json` records deployments by workspace and is not committed to source control:
 
 ```json title="rayfin/.deployments.json"
 {
-  "active": "myworkspace",
+  "active": "team-apps",
   "deployments": {
-    "myworkspace": {
+    "team-apps": {
       "fabricItemId": "7db00cb9-f630-4ecf-8fc9-942e60af5d78",
-      "fabricApiUrl": "https://...",
+      "itemName": "my-team-app",
       "fabricWorkspaceId": "8b17cf64-3c12-46ac-a572-192732c32641",
-      "fabricTenantId": "...",
+      "fabricTenantId": "00000000-0000-0000-0000-000000000000",
       "publishableKey": "pk-nua-EHihY2jz71V65YB4",
-      "fabricPortalUrl": "https://dxt.fabric.microsoft.com/",
+      "fabricPortalUrl": "https://app.fabric.microsoft.com/",
       "hostingUrl": "https://silky-sand-4924b3ad1f-centraluseuap.webapp.rayfingwdev.com",
       "deployedAt": "2026-04-28T01:15:50.514Z"
     }
@@ -204,33 +204,77 @@ you have deployed this project to:
 }
 ```
 
-The three fields you'll reach for most often:
+The matching `RAYFIN_PUBLIC_*` values are merged into `rayfin/.env`, and `rayfin env` maps them into framework-specific names such as `VITE_RAYFIN_API_URL`.
 
-- **`fabricItemId`** — the Fabric item ID for this deployment.
-- **`hostingUrl`** — the public URL your static content is served from.
-- **`publishableKey`** — the public key `RayfinClient` uses to authenticate. It cannot be
-  modified; it is retrieved from the remote service on first deploy.
+## Manage multiple deployments
 
-This file is not committed to source control (it's gitignored, like `rayfin/.env`) — it's
-regenerated per machine and per deployment target.
+Use separate workspaces for dev, test, and production. A single checkout can record multiple deployments:
 
-### Redirect URIs are updated automatically
+```bash
+npx rayfin up list
+npx rayfin up switch team-apps
+npx rayfin up switch --workspace-id <workspace-guid>
+```
 
-When static hosting is enabled, deploying registers your hosting URL's bare origin in
-`allowedRedirectUris` in `rayfin.yml` automatically — this is required for the
-Fabric-brokered auth handoff. You do not need to add it by hand. See
-[Redirect URIs](/docs/hosting/redirect-uris) for the full mechanics.
+`up switch` rewrites `rayfin/.env` for the selected deployment and regenerates the frontend `.env.local` unless `--no-emit-env` is set. If the active sign-in tenant differs from the deployment tenant, the command warns so you can run `npx rayfin login` with the right account.
+
+## Check deployment status
+
+```bash
+npx rayfin up status
+npx rayfin up status --json
+```
+
+The status check verifies authenticated management access to the Fabric item. It does not validate every application route or function.
+
+When static content is deployed, human-readable output includes:
+
+```text
+Static app:      https://silky-sand-4924b3ad1f-centraluseuap.webapp.rayfingwdev.com
+```
+
+JSON output exposes the same value as `deployment.hostingUrl`:
+
+```json
+{
+  "deployment": {
+    "hostingUrl": "https://silky-sand-4924b3ad1f-centraluseuap.webapp.rayfingwdev.com"
+  }
+}
+```
+
+When no static app URL is recorded, the line is omitted and `deployment.hostingUrl` is `null`.
 
 ## Sign out
-
-Clear cached credentials when you're done, or need to switch accounts:
 
 ```bash
 npx rayfin logout
 ```
 
+## Common flags
+
+This table covers the flags used most often in guides and automation. See [`rayfin up`](/docs/reference/cli/up) for the exhaustive list.
+
+| Flag | Use it when |
+| --- | --- |
+| `-w, --workspace <name>` | Target a Fabric workspace by display name. |
+| `--workspace-id <id>` | Target a Fabric workspace by GUID. |
+| `--workspace-uri <uri>` | Target a workspace from a Fabric portal URL. |
+| `--item-name <name>` | Use a Fabric item display name other than `id` from `rayfin.yml`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `--capacity-id <id>` | Assign a specific Fabric capacity when the target workspace has no usable capacity. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `-n, --dry-run` | Validate local inputs and resolve the workspace without deploying or modifying resources. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `--exclude-services <names>` | Skip supported deploy phases (`staticHosting`, `functions`) while runtime settings still sync. |
+| `--env-file <path>` | Use a file other than `rayfin/.env` for interpolation and deployment values. |
+| `--force` | You reviewed destructive schema operations and accept the data loss. |
+| `--json` | A script needs structured deployment output. |
+| `-y, --yes` | A non-interactive run should accept deterministic prompts such as capacity assignment and item reuse. |
+| `-v, --verbose` | You need detailed logs for a failed deploy. |
+| `--encryption-fallback-enabled` | The OS keychain is unavailable in a development environment. |
+
+```prompt title="Run the right rayfin up command"
+Inspect my Rayfin project and decide whether to run a full `npx rayfin up`, `npx rayfin up db apply`, `npx rayfin up staticapp deploy`, or `npx rayfin up functions deploy`. Explain the target workspace and item from rayfin/.deployments.json, run the chosen command, and finish with `npx rayfin up status --json`.
+```
+
 ## Troubleshooting
 
-See [Deployment troubleshooting](/docs/deploy/troubleshooting) for fixes to the most
-common deploy failures — expired sessions, keychain errors, blocked schema changes, and
-more.
+See [Deployment troubleshooting](/docs/deploy/troubleshooting) for exact CLI error text.

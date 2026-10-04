@@ -1,95 +1,107 @@
 ---
 title: Functions
-description: Run server-side TypeScript in Rayfin — when to use functions instead of client-side data access, and how to enable and scaffold them.
+description: Run server-side TypeScript in Rayfin with typed frontend calls, typed secrets, and app-identity connections to Azure and Fabric resources.
+appliesTo: "@microsoft/rayfin-cli >= 1.36"
 ---
 
-Rayfin functions are server-side TypeScript user-defined functions (UDFs) that run in the
-Fabric runtime and are invocable from your frontend through `RayfinClient` with full type
-safety, the same way `client.data.<Entity>` is typed.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-> [!WARNING]
-> Functions are experimental and are not available in every Fabric region or tenant.
-> `@microsoft/rayfin-functions` may change substantially between releases. Confirm the
-> service deploys in your own workspace before you design an app around it.
+Rayfin functions are server-side TypeScript user-defined functions (UDFs) authored with `@microsoft/fabric-user-data-functions`, run in the Fabric runtime, and invoked from your frontend through `RayfinClient`. Use them for trusted backend logic, secrets, and external resource calls that must not run in the browser.
 
-## When to use functions
+> [!NOTE]
+> Functions are generally available in Rayfin 1.36 and no longer use a `RAYFIN_FEATURE_FLAGS=functions` gate. They are not available in every Fabric region or tenant; confirm deployment in the target workspace before you depend on them.
 
-Reach for a function whenever logic needs to run on the backend rather than the frontend:
+## Use a function for trusted server work
 
-- **Sensitive operations** — secrets, API keys, or privileged access to external resources
-  that must never reach client-side code.
-- **Business logic that must not be tampered with** — anything a client could otherwise
-  bypass or forge by calling your data API directly.
-- **Server-side validation** — checks that have to be trustworthy, not just present in the
-  UI.
-- **Aggregation or transformation** — computing or reshaping data before it reaches the
-  client, instead of shipping raw rows and doing the work in the browser.
+Use a function when code needs a server boundary:
 
-If a frontend feature needs trusted server-side behavior, implement it as a function rather
-than adding an ad hoc backend service. For everything else — reading and writing your own
-entities — use [`client.data.<Entity>`](/docs/data/querying) directly; it's already
-authenticated and type-safe, and a function would only add a hop.
+- **Secrets and API keys** — read values with `ctx.Secrets`, never from client code.
+- **Business logic users must not edit** — enforce rules that a browser client could bypass.
+- **Server-side validation** — validate before writing data or calling external services.
+- **Aggregation and transformation** — combine data before returning it to the frontend.
+- **External resources** — call Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, or Azure DevOps with server-side tokens.
 
-## How functions fit the architecture
+For normal reads and writes against your Rayfin entities, call [`client.data.<Entity>`](/docs/data/querying) from the frontend instead of adding a function hop.
 
-A function is registered with `udf.func(name, handler, [])` in your functions project. Inside
-the handler, `RayfinContext.getDataClient()` gives you the same typed data client used on the
-frontend (`.select().where().execute()`), so a function can read and write your entities with
-the same query chain you already know. Functions can also declare **connections** to external
-services — see [Connections](/docs/functions/connections) — so they can call out to
-Fabric-managed resources like SQL, Key Vault, or OneLake using delegated auth instead of
-long-lived secrets.
+## Enable and scaffold functions
 
-From the frontend, a function is just another typed call: `client.functions.<name>.invoke()`.
-See [Calling functions from your app](/docs/functions/calling-functions) for the client side.
-
-## Enable functions
-
-Set the `functions` flag in `rayfin/rayfin.yml`:
-
-```yaml title="rayfin/rayfin.yml"
-services:
-  functions:
-    enabled: true
-```
-
-## Scaffold a functions project
+Run `functions init` from an existing Rayfin project:
 
 ```bash
 npx rayfin functions init
 ```
 
-This scaffolds `rayfin/functions/`, installs its dependencies, and generates the initial
-`types.ts` schema. Pass `--force` to re-scaffold, overwriting existing files:
+The command creates the functions package, enables the service in `rayfin/rayfin.yml`, installs dependencies, builds, and generates the initial `types.ts` schema.
 
-```bash
-npx rayfin functions init --force
+```yaml title="rayfin/rayfin.yml"
+services:
+  functions:
+    enabled: true
+    path: rayfin/functions
+    auth:
+      type: application
+    buildCommand: npm run build
 ```
 
-See [Writing a function](/docs/functions/writing-functions) for the project layout and how
-to register your first function.
+`auth.type: application` is required when Functions are enabled. New 1.36 scaffolds write it automatically; existing apps must add it explicitly and run a full `npx rayfin up` to apply the remote setting. Standalone commands such as `npx rayfin up functions deploy` upload code but do not migrate the remote auth mode.
+
+## Understand the two identities
+
+Deployed functions use two authentication paths:
+
+| Access path | API | Identity used |
+| --- | --- | --- |
+| Rayfin data | `ctx.getDataClient()` | The signed-in caller's Rayfin token and database permissions. |
+| External resources | `ctx.Tokens.<Audience>` | The Fabric app's application identity. For current Fabric apps, this is the owner of the Fabric app item. |
+
+Grant external resources to the app identity. Declaring an audience or deploying the function does not grant SQL, Storage, Fabric REST, Azure AI, or Azure DevOps permissions.
+
+## Project structure
+
+```text
+rayfin/
+  data/
+  functions/
+    src/
+      function_app.ts
+      types.ts
+      secrets.generated.ts
+    host.json
+    local.settings.json
+    package.json
+    tsconfig.json
+```
+
+- `function_app.ts` registers handlers with `udf.func(...)`.
+- `types.ts` is generated for frontend calls; never hand-edit it.
+- `secrets.generated.ts` is generated from the top-level `secrets:` list in `rayfin.yml`; never hand-edit it.
+- `local.settings.json` is local-only and can contain local development secrets.
+
+## Development and deployment loop
+
+Prefer `npx rayfin dev` during development. It provisions or reuses the Fabric backend, emits frontend environment files, starts the frontend, and starts the local Functions host when `services.functions.enabled` is true.
+
+Use these focused commands when needed:
+
+| Task | Command |
+| --- | --- |
+| Scaffold or refresh the functions package | `npx rayfin functions init` |
+| Run only the local Functions host | `npx rayfin dev functions apply` |
+| Deploy everything, including functions | `npx rayfin up` |
+| Deploy only function code | `npx rayfin up functions deploy` |
+| Skip function deployment in a full deploy | `npx rayfin up --exclude-services functions` |
 
 ## In this section
 
-- **[Writing a function](/docs/functions/writing-functions)** — project layout,
-  `function_app.ts`, `RayfinContext`, and generated types.
-- **[Connections](/docs/functions/connections)** — delegated auth to external services like
-  SQL, Key Vault, and OneLake.
-- **[Calling functions from your app](/docs/functions/calling-functions)** — the typed
-  `FunctionClient` and error handling.
-- **[Deploying functions](/docs/functions/deploying)** — how functions ship alongside the
-  rest of your app.
+- [Writing a function](/docs/functions/writing-functions) — register handlers, use `RayfinContext`, and keep generated types current.
+- [Secrets in functions](/docs/functions/secrets) — declare secrets with the CLI and read them through `ctx.Secrets`.
+- [Connections](/docs/functions/connections) — use application-auth tokens for Fabric and Azure resources.
+- [Calling functions from your app](/docs/functions/calling-functions) — invoke functions through `RayfinClient`.
+- [Run functions locally](/docs/functions/local-development) — start, route, debug, and troubleshoot the local host.
+- [Deploying functions](/docs/functions/deploying) — deploy functions with `rayfin up` or `rayfin up functions deploy`.
 
 ```prompt title="Add a Rayfin function for server-side logic"
-I need a piece of logic in my Rayfin app to run on the server instead of the client (explain
-what it does and why it shouldn't run in the browser).
+In my Rayfin project, add a server-side function for this task: <describe the trusted backend logic>.
 
-In rayfin/rayfin.yml, enable services.functions. Then run `npx rayfin functions init` if
-rayfin/functions/ doesn't exist yet, and add a new function in
-rayfin/functions/src/function_app.ts using udf.func(name, handler, []). Use
-RayfinContext<AppSchema> if the function needs typed access to my entities via
-ctx.getDataClient().
-
-After adding it, deploy it with `npx rayfin up` (or `npx rayfin up functions deploy` to push
-just the functions change) and tell me how to call it from the frontend.
+Use Rayfin 1.36 or later. If rayfin/functions/ does not exist, run `npx rayfin functions init`. Ensure rayfin/rayfin.yml has services.functions.enabled: true and services.functions.auth.type: application. Register the handler in rayfin/functions/src/function_app.ts with `udf.func(name, handler, [])`. Use `RayfinContext<AppSchema>` for typed data access, `ctx.Secrets.<NAME>` for declared secrets, and `RayfinContext<AppSchema, AudienceType.X>` plus `ctx.Tokens.X` for external resources. Do not expose secrets or tokens to the frontend. Run the smallest build or typegen command that validates the change, then tell me how to call the function from the frontend.
 ```

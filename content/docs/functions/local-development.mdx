@@ -1,0 +1,165 @@
+---
+title: Run functions locally
+description: Start the local Rayfin Functions host with rayfin dev, route frontend calls, attach a debugger, and troubleshoot local host errors.
+appliesTo: "@microsoft/rayfin-cli >= 1.36"
+---
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Run functions locally when you need fast edits, local logs, and a Node debugger while the managed Rayfin backend stays deployed in Fabric.
+
+> [!NOTE]
+> Functions are generally available in Rayfin 1.36 and are not available in every Fabric region or tenant.
+
+## Choose the local command
+
+| Command | Use it when |
+| --- | --- |
+| `npx rayfin dev` | You want the normal development loop: Fabric backend, local frontend, and local Functions host together. |
+| `npx rayfin dev functions apply` | You want to run only the local Functions host and start the frontend yourself. |
+
+Both commands use `services.functions.path` from `rayfin.yml`, run the configured `buildCommand`, keep a typegen watcher running, and start Azure Functions Core Tools.
+
+## Prerequisites
+
+- `services.functions.enabled: true` in `rayfin/rayfin.yml`.
+- An active Fabric deployment from at least one `npx rayfin up`.
+- Node.js 20 or later.
+- Azure Functions Core Tools on `PATH`.
+- A local functions `host.json` whose `extensionBundle.version` floor is `[4.49.0, 5.0.0)` when using Rayfin 1.36.2. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
+
+`rayfin dev functions apply` checks Node and Core Tools. If Core Tools is missing and the session is interactive, it asks for consent before installing. In non-interactive mode it prints the commands to run and stops.
+
+## Start only the Functions host
+
+```bash
+npx rayfin dev functions apply
+```
+
+Common options:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--port <port>` | `7071` | Port for the local function host. If the requested port is in use, the CLI uses the nearest free port. |
+| `--inspect-port <port>` | `9229` | Node inspector port used by the generated VS Code attach configuration. |
+| `--no-debug` | Debugging enabled | Disable the Node inspector. |
+| `--no-emit-env` | Emits env files | Do not regenerate framework `.env.local` from `rayfin/.env`. |
+| `--verbose` | `false` | Show detailed diagnostic output. |
+| `--json` | `false` | Emit JSON output. |
+| `-y, --yes` | `false` | Run without interactive prompts. |
+
+The command does not start the frontend. Start Vite separately, or use `npx rayfin dev` to start both.
+
+## What the CLI writes
+
+`rayfin dev functions apply` merges CLI-managed values into `rayfin/functions/local.settings.json`:
+
+```json title="rayfin/functions/local.settings.json"
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AZURE_FUNCTIONS_ENVIRONMENT": "Development",
+    "RAYFIN_API_URL": "https://<deployed-app>",
+    "RAYFIN_PUBLISHABLE_KEY": "pk_...",
+    "RAYFIN_FABRIC_WORKSPACE_ID": "<workspace-id>",
+    "RAYFIN_FABRIC_ITEM_ID": "<item-id>",
+    "languageWorkers__node__arguments": "--inspect=9229"
+  }
+}
+```
+
+It also writes `RAYFIN_PUBLIC_FUNCTIONS_URL=http://localhost:<port>` to `rayfin/.env` and regenerates the framework `.env.local` unless `--no-emit-env` is passed.
+
+## Debug with VS Code
+
+With debugging enabled, the CLI writes or updates a `.vscode/launch.json` configuration named **Functions: Attach**. Attach to the inspector port shown in the command output. Pass `--inspect-port <port>` to choose a different port, or `--no-debug` to run without an inspector.
+
+When the requested inspector port is unavailable and the CLI slides to another port, Rayfin 1.36.1 and later keep an existing **Functions: Attach** entry in sync with the selected inspector port. JSONC launch files and `--no-debug` runs are left untouched. [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
+
+## Use local automatic sign-in
+
+When a Vite app uses `rayfinLocalDev()` and a backend URL resolves, the adapter can seed local authentication from the developer's `rayfin login` session.
+
+Protected static sites (`services.staticHosting.assetAccess: protected`) enable this automatically. Public sites enable it only when the adapter is configured with `rayfinLocalDev({ autoLogin: true })`. The adapter exposes a loopback-only `/.rayfin/dev/session-token` endpoint, obtains a delegated Entra token through the Rayfin CLI sign-in session, exchanges it for a Rayfin token response, and frontend code can install that response with `signInWithBrokeredToken()` from `@microsoft/rayfin-auth-provider-fabric`. The exchange requires `services.auth.fabric.externalEntraExchange: true`; see [Develop locally](/docs/start/develop-locally).
+
+Use `isRayfinLocalAutoLoginEnabled()` from `@microsoft/rayfin-local-dev` when frontend code needs to know whether that local-only flow is active. The behavior is for local development only; deployed Fabric sign-in still follows the app's normal auth configuration.
+
+## Use local secrets
+
+Local functions do not receive the deployed secret bag. Add local-only secret values under `Values` in `local.settings.json`; `ctx.Secrets.<NAME>` falls back to `process.env[NAME]`.
+
+```json title="rayfin/functions/local.settings.json"
+{
+  "IsEncrypted": false,
+  "Values": {
+    "THIRD_PARTY_API_KEY": "local-development-value"
+  }
+}
+```
+
+The CLI preserves keys you add when it merges its own values.
+
+## Use hot reload
+
+Fresh 1.36 scaffolds include a `build:watch` script. During `rayfin dev` or `rayfin dev functions apply`, the CLI:
+
+1. Runs the initial functions build.
+2. Starts the package's `build:watch` script when present.
+3. Starts a `[typegen]` watcher for `src/types.ts`.
+4. Starts `func start` against compiled output.
+
+If `build:watch` is missing, the CLI warns and starts the host without a compiler watcher. Rebuild manually after source edits. If the compiler watcher exits, the local session stops rather than serving stale code.
+
+Rayfin 1.36.1 and later condense Azure Functions host restart noise to a single `Functions host restarted.` line. [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
+
+## Upgrade an existing functions host.json
+
+[Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
+
+`rayfin functions init` writes the local functions `host.json` used by Azure Functions Core Tools. Existing apps are not migrated when the scaffold changes, and Core Tools can reuse a cached extension bundle within the configured version range without checking for a newer bundle.
+
+For Rayfin 1.36.2, update the functions package's local `host.json` to require the Fabric extension bundle floor `[4.49.0, 5.0.0)`. The package is under `services.functions.path` in `rayfin.yml`; the default is `rayfin/functions/`.
+
+```json title="rayfin/functions/host.json"
+{
+  "version": "2.0",
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle.Preview",
+    "version": "[4.49.0, 5.0.0)"
+  }
+}
+```
+
+This local file affects `npx rayfin dev` and `npx rayfin dev functions apply`. Deployment is unaffected: `rayfin up` substitutes the CLI's deploy-time `host.deploy.json`, which uses the stable `Microsoft.Azure.Functions.ExtensionBundle` range for the target Rayfin release.
+
+## Troubleshoot local runs
+
+### `Functions service is not enabled. Set 'services.functions.enabled: true' in rayfin.yml and re-run.`
+
+Run `npx rayfin functions init`, or add `services.functions.enabled: true` and `services.functions.auth.type: application` to `rayfin/rayfin.yml`.
+
+### `No active deployment found. Run 'rayfin up' to deploy your Rayfin item first.`
+
+Run a full `npx rayfin up`. Local Functions need the deployed endpoint and publishable key.
+
+### `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.`
+
+Install or select Node.js 20 or later before starting the local host.
+
+### `Missing Functions prerequisites. Run the following commands, then retry:`
+
+Install the listed prerequisites. In an interactive terminal, rerun without `--json` and without `-y` if you want the CLI to ask for consent and install Core Tools.
+
+### Azure Functions Core Tools still not detected after install
+
+Open a new terminal so the installer-updated `PATH` is visible, then rerun the command.
+
+### HTTP 502 from `/.rayfin/api/<name>`
+
+The Vite adapter is active, but the local Functions host is unavailable. Start or restart `npx rayfin dev functions apply` or `npx rayfin dev`. The adapter does not fall back to deployed function code while local routing is enabled; this applies to both the default `/functions/<name>/invoke` proxy and the legacy `/.rayfin/api/<name>` proxy.
+
+```prompt title="Run and debug Rayfin functions locally"
+In my Rayfin project, start a local Rayfin Functions debugging session.
+
+Confirm services.functions.enabled is true and services.functions.auth.type is application in rayfin/rayfin.yml. Confirm the app has been deployed at least once with `npx rayfin up`. If this project was created before Rayfin 1.36.2, update the local functions host.json extensionBundle.version floor to `[4.49.0, 5.0.0)` before starting Core Tools. Run `npx rayfin dev functions apply` with the default port and debugger unless I ask for different ports. If Azure Functions Core Tools is missing, ask for terminal consent through the CLI flow rather than installing silently. Verify that RAYFIN_PUBLIC_FUNCTIONS_URL is written to rayfin/.env, explain how the Vite frontend reaches local functions through the adapter's default `/functions/<name>/invoke` proxy, or through `/.rayfin/api/<name>` when `functionsBaseUrl` is set, and tell me how to attach VS Code using the "Functions: Attach" configuration.
+```

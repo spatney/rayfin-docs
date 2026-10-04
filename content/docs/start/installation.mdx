@@ -1,70 +1,71 @@
 ---
 title: Installation
-description: Install Node.js 20+ and the GitHub CLI on Windows, macOS, or Linux, then verify and update the Rayfin CLI.
+description: Install Node.js 20+, the GitHub CLI, and the Rayfin project CLI workflow before scaffolding or deploying a Fabric app.
 ---
 
-Rayfin needs the same prerequisites whether you're scaffolding a new project or deploying
-to Microsoft Fabric: **Node.js 20 or later** and the **GitHub CLI**. Install these before
-you scaffold a project.
+Install the tools Rayfin needs on your development machine, then use the project-local CLI that `npm create @microsoft/rayfin@latest` installs. Rayfin deploys managed backends to Microsoft Fabric; the development loop also signs in to Fabric because `npm run dev` runs `rayfin dev`.
+
+## Prerequisites
+
+| Tool | Minimum | Why Rayfin needs it |
+| --- | --- | --- |
+| Node.js | 20 | Runs npm, Vite, the Rayfin CLI, and TypeScript tooling. |
+| npm | Bundled with Node.js | Installs templates and project dependencies. |
+| GitHub CLI | Latest stable | Required by the Fabric app authoring flow and repository-based templates. |
+| Fabric account | Workspace access | `rayfin login`, `rayfin dev`, and `rayfin up` target Microsoft Fabric. |
 
 ## Windows
 
-Install the latest LTS Node.js:
+Install the latest LTS Node.js and the GitHub CLI:
 
 ```powershell
 winget install -e --id OpenJS.NodeJS.LTS
+winget install -e --id GitHub.cli
 ```
 
-Install the GitHub CLI:
+Open a new terminal and verify both tools:
 
 ```powershell
-winget install --id GitHub.cli -e
-```
-
-Add it to `PATH` if it is not already there:
-
-```powershell
-where gh
-# If there are no results, add the GitHub CLI to your PATH:
-$env:PATH += ";C:\Program Files\GitHub CLI"; [Environment]::SetEnvironmentVariable("PATH", $env:PATH, "User")
-```
-
-Sign in and verify every tool:
-
-```powershell
-gh auth login
 node --version
+npm --version
 gh --version
 ```
 
-> [!NOTE]
-> If prompted during `gh auth login`, authorize GitHub to access Microsoft.
+If `gh` is not on `PATH`, add the install directory and reopen the terminal:
+
+```powershell
+where gh
+$env:PATH += ";C:\Program Files\GitHub CLI"
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH, "User")
+```
+
+Sign in to GitHub when your workflow needs repository access:
+
+```powershell
+gh auth login
+```
 
 ## macOS
+
+Install Node.js and the GitHub CLI with Homebrew:
 
 ```bash
 brew install node@lts
 brew install gh
 ```
 
-Verify the GitHub CLI is on `PATH`, sign in, and check versions:
+Verify the tools and sign in to GitHub when needed:
 
 ```bash
-which gh
-gh auth login
 node --version
+npm --version
 gh --version
+gh auth login
 ```
-
-> [!NOTE]
-> If prompted during `gh auth login`, authorize GitHub to access Microsoft.
 
 ## Linux (Ubuntu or Debian)
 
-Install the latest LTS Node.js using the
-[official Node.js download instructions](https://nodejs.org/en/download).
-
-Install the GitHub CLI:
+Install the latest LTS Node.js from the [official Node.js download instructions](https://nodejs.org/en/download), then install the GitHub CLI:
 
 ```bash
 type -p curl >/dev/null || sudo apt install -y curl
@@ -75,70 +76,71 @@ sudo apt update
 sudo apt install -y gh
 ```
 
-Verify the GitHub CLI is on `PATH`, sign in, and check versions:
+Verify the tools and sign in to GitHub when needed:
 
 ```bash
-which gh
-gh auth login
 node --version
+npm --version
 gh --version
+gh auth login
 ```
 
-## Install the Rayfin CLI
+## Install the Rayfin CLI in a project
 
-You do not usually install `@microsoft/rayfin-cli` directly — scaffolding a project
-installs it for you as a dev dependency.
+You usually do not install `@microsoft/rayfin-cli` globally. New projects include it as a dev dependency and run it through `npx` or npm scripts.
 
-**New project:**
+Create a new project:
 
 ```bash
 npm create @microsoft/rayfin@latest my-app
 cd my-app
+npm install
+npx rayfin --version
 ```
 
-**Existing project** — install the CLI, then run the interactive setup to create the
-`rayfin/` directory with starter configuration files:
+Add Rayfin to an existing project:
 
 ```bash
 npm install --save-dev @microsoft/rayfin-cli
 npx rayfin init
-```
-
-## Verify the installation
-
-```bash
-npx rayfin --version
-```
-
-List every available command:
-
-```bash
 npx rayfin --help
 ```
 
-## Update the CLI
+## Sign in to Fabric
+
+Use Microsoft Entra ID for Fabric operations:
+
+```bash
+npx rayfin login
+npx rayfin login status
+```
+
+The CLI stores tokens with the OS keychain. If a dev container, Codespace, or Linux environment has no keychain, opt in to plaintext fallback only for that development environment:
+
+```bash
+npx rayfin login --encryption-fallback-enabled
+```
+
+For CI, use [service principal login](/docs/deploy/rayfin-up#sign-in-for-ci) instead of an interactive browser flow.
+
+## Update project dependencies
+
+Rayfin packages ship in lockstep. Update the project dependency graph, not a global CLI:
 
 ```bash
 npm update --save
 npm install
-```
-
-Confirm the update:
-
-```bash
 npx rayfin --version
 ```
 
-```prompt title="Install Rayfin's prerequisites"
-Check whether this machine has Node.js 20 or later and the GitHub CLI installed, and
-install or update whichever are missing for this operating system. Then run `gh auth
-login` to sign in, and print the output of `node --version` and `gh --version` so I can
-confirm everything is ready before I scaffold a Rayfin project.
+If the CLI reports a static-hosting or auth SDK compatibility problem during deploy, update all `@microsoft/rayfin-*` packages together.
+
+```prompt title="Prepare this machine for Rayfin"
+Check this machine for Node.js 20 or later and the GitHub CLI. Install or update missing prerequisites for the current operating system, then run `node --version`, `npm --version`, `gh --version`, and `npx rayfin --version` inside my Rayfin project. If `npx rayfin login` fails because there is no OS keychain, retry with `--encryption-fallback-enabled` and explain that the fallback is for this development environment only.
 ```
 
 ## Next
 
-- [Quickstart](/docs/start/quickstart) — scaffold your first project.
-- [Project structure](/docs/start/project-structure) — what the scaffold generates.
-- [CLI installation reference](/docs/reference/cli/installation) — every install-related
-  command and flag.
+- [Quickstart](/docs/start/quickstart) — scaffold and run a Rayfin app.
+- [Develop locally](/docs/start/develop-locally) — understand the `rayfin dev` loop.
+- [Deploy to Fabric](/docs/start/deploy-to-fabric) — publish a static build with `rayfin up`.

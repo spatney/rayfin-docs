@@ -1,16 +1,16 @@
 ---
 title: Sessions
-description: How Rayfin's opaque session object works — subscribe with onSessionChange, gate UI on isAuthenticated, and let Rayfin manage tokens for you.
+description: "Use Rayfin's opaque auth session safely: read documented fields, subscribe with onSessionChange, refresh, and sign out."
 ---
 
-Every Rayfin session comes from signing in with Fabric SSO — the popup and embedded flows
-both produce the same opaque session object. Once you know how to read it, it doesn't
-matter which flow completed it.
+Every supported Rayfin sign-in path installs the same opaque session on `client.auth`.
+Fabric SSO popup, Fabric embedded auth, direct Entra token sign-in, and external embed host differ in how the session is acquired, not in how your app reads it.
 
 ## Sessions are opaque
 
-`client.auth.getSession()` returns an `OpaqueSession`. Treat it as opaque: read the fields
-below, but don't infer meaning from anything else it might contain internally.
+`client.auth.getSession()` returns an `OpaqueSession` synchronously.
+Treat it as opaque: read the fields below, but do not infer meaning from internal fields or storage shape.
+Raw Rayfin access and refresh tokens are intentionally hidden.
 
 ```typescript
 interface OpaqueSession {
@@ -24,18 +24,17 @@ interface OpaqueSession {
 
 | Field | Description |
 | --- | --- |
-| `user` | The signed-in user, or `null` if there isn't one. |
-| `isAuthenticated` | `true` once a user has a valid session. |
-| `isAnonymous` | `true` for an anonymous/unauthenticated session. |
-| `role` | The user's role, if your project assigns one. |
-| `expiresAt` | When the current access token expires. |
+| `user` | The signed-in user, or `null` when no user is signed in. |
+| `isAuthenticated` | `true` when a valid authenticated session is installed. |
+| `isAnonymous` | `true` for an anonymous or signed-out session. |
+| `role` | The user's role when known. |
+| `expiresAt` | When the current Rayfin access token expires. |
 
 > [!WARNING]
-> Gate UI logic on `isAuthenticated` or the presence of `user` — not on internal session
-> fields. Rayfin's session shape is intentionally opaque so it can change without breaking
-> your app, as long as you only depend on the documented fields above.
+> Gate UI logic on `isAuthenticated` or the presence of `user`.
+> Do not depend on session internals. Rayfin can change those without breaking apps that use only the documented fields.
 
-```typescript
+```typescript title="src/auth/checkSession.ts"
 const session = client.auth.getSession();
 
 if (session.isAuthenticated && session.user) {
@@ -45,16 +44,22 @@ if (session.isAuthenticated && session.user) {
 }
 ```
 
-## Subscribing to session changes: `onSessionChange`
+## Read the current session once
 
-> [!WARNING]
-> The method is `onSessionChange`. **`onAuthStateChange` does not exist** on the Rayfin auth
-> client — code that calls it will throw at runtime, not just fail a type check.
+`getSession()` reflects whatever Rayfin currently has in memory.
+Call it once on startup, then rely on `onSessionChange` for updates.
 
-`onSessionChange` fires whenever the session changes — sign-in, sign-out, token refresh, user
-update, or expiration — and returns an unsubscribe function:
+```typescript title="src/auth/currentSession.ts"
+const session = client.auth.getSession();
+console.log('Authenticated:', session.isAuthenticated);
+```
 
-```typescript
+## Subscribe with onSessionChange
+
+`onSessionChange` fires after sign-in, sign-out, token refresh, user updates, and expiration.
+It returns an unsubscribe function.
+
+```typescript title="src/auth/subscribe.ts"
 const unsubscribe = client.auth.onSessionChange((session) => {
   if (session?.isAuthenticated) {
     console.log('Signed in as', session.user?.email);
@@ -63,86 +68,113 @@ const unsubscribe = client.auth.onSessionChange((session) => {
   }
 });
 
-// Later, e.g. on component unmount:
+// Later, for example on component unmount:
 unsubscribe();
 ```
 
-See [React integration](/docs/auth/react) for wiring this into a `useAuth()` hook.
+> [!WARNING]
+> The method is `onSessionChange`.
+> `onAuthStateChange` does not exist on the Rayfin auth client.
 
-## Reading the current session once
+See [React integration](/docs/auth/react) for a complete `AuthProvider` and `useAuth()` hook.
 
-`getSession()` returns synchronously and reflects whatever Rayfin currently has in memory —
-call it once on startup, then rely on `onSessionChange` for updates:
+## Let Rayfin handle tokens
 
-```typescript
-const session = client.auth.getSession();
-```
+Rayfin attaches the current session to `client.data.*` and `client.functions.*` calls.
+Application code should not read, store, or forward Rayfin tokens.
 
-## Token handling
+| Method | Description |
+| --- | --- |
+| `hasRefreshToken()` | Returns whether a Rayfin refresh token is available. |
+| `refreshSession()` | Refreshes the current session using the stored Rayfin refresh token. Concurrent calls share one in-flight request. |
+| `startAutoRefresh()` | Re-enables scheduled refresh when `autoRefreshToken: false` was used. |
+| `stopAutoRefresh()` | Cancels scheduled refresh when `autoRefreshToken: false` was used. |
+| `destroy()` | Removes listeners and timers. Use it when a standalone `Auth` instance is no longer needed. |
 
-In normal use, Rayfin manages access tokens internally and attaches them to
-`client.data.*` and `client.functions.*` calls automatically — your code never reads,
-stores, or forwards a token itself.
+`refreshSession()` exists to satisfy the refresh contract, not as a supported way to extract a token for reuse elsewhere.
+A Node.js script that constructs `Auth` with `storage: false` does not have a stored browser refresh token until a provider installs a session.
+See [Seeding data](/docs/data/seeding#what-a-seed-script-can-authenticate-as) for what a script can authenticate as.
 
-- `hasRefreshToken()` reports whether the session has a refresh token available.
-- `refreshSession()` refreshes the session using the stored refresh token and resolves with
-  the new token response; it rejects with an `AuthError` if there's no refresh token or the
-  refresh fails. This exists to satisfy the refresh contract, not as a supported way to
-  extract a token for reuse elsewhere — it still requires an existing browser session with
-  a stored refresh token, which is exactly what a Node.js script never has. See
-  [Seeding data](/docs/data/seeding#what-a-seed-script-can-authenticate-as) for what a
-  script can do without one.
-- Rayfin schedules a refresh automatically as the access token approaches expiry when a
-  refresh token is available, so you generally don't need to call `refreshSession()`
-  yourself.
+Rayfin schedules a refresh automatically as the access token approaches expiry when a refresh token is available.
+Most browser apps do not need to call `refreshSession()` directly.
 
-```typescript
+```typescript title="src/auth/refresh.ts"
 if (client.auth.hasRefreshToken()) {
   try {
     await client.auth.refreshSession();
   } catch {
-    // Refresh failed — the user needs to sign in again.
+    await client.auth.signOut();
   }
 }
 ```
 
-## Signing out
+Direct Entra token sign-in stores a Rayfin session, not the supplied Entra token.
+Later refreshes use the Rayfin refresh token.
+If refresh can no longer establish a Rayfin session, acquire another delegated Entra token and sign in again.
 
-```typescript
-await client.auth.signOut();       // End the current session.
-await client.auth.signOutAll();    // Revoke every session for this user across every
-                                    // device, returning the number revoked.
+## Sign out
+
+`signOut()` revokes the current access token and clears the local session.
+
+```typescript title="src/auth/signOut.ts"
+await client.auth.signOut();
+```
+
+`signOutAll()` revokes every active session for the current user across devices and returns `{ count }`.
+
+```typescript title="src/auth/signOutAll.ts"
+const result = await client.auth.signOutAll();
+console.log(`Revoked ${result.count} sessions`);
 ```
 
 ## Auth events
 
-`onSessionChange` covers most UI needs. For finer-grained handling, subscribe to individual
-events with `on(event, handler)`:
+Use `onSessionChange` for most UI.
+For narrower lifecycle handling, subscribe to a named event with `on(event, handler)`:
 
 | Event | Fires when |
 | --- | --- |
-| `AUTH_LOGIN` | A session is established via Fabric SSO. |
+| `AUTH_LOGIN` | A session is established. |
 | `AUTH_LOGOUT` | The user signs out. |
-| `AUTH_REFRESH` | The session is refreshed. |
-| `AUTH_SESSION_EXPIRED` | The access token expires with no refresh token available. |
+| `AUTH_REFRESH` | The session refreshes. |
+| `AUTH_SESSION_EXPIRED` | The access token expires and no refresh token can recover the session. |
 
-```typescript
+```typescript title="src/auth/expired.ts"
 const unsubscribe = client.auth.on('AUTH_SESSION_EXPIRED', () => {
   redirectToSignIn();
 });
+
+unsubscribe();
+```
+
+## Server or script cleanup
+
+When you construct `Auth` directly for Node.js or a short-lived server operation, use memory-only storage and call `destroy()` in `finally`.
+Use a separate `Auth` instance per user session in server code.
+
+```typescript title="scripts/authCleanup.ts"
+import { Auth } from '@microsoft/rayfin-auth';
+import { ApiClient } from '@microsoft/rayfin-lib';
+
+const apiClient = new ApiClient({
+  baseUrl: process.env.RAYFIN_API_URL!,
+  publishableKey: process.env.RAYFIN_PUBLISHABLE_KEY!,
+});
+
+const auth = new Auth(apiClient, { storage: false });
+auth.attachToClient(apiClient);
+
+try {
+  await runWork(auth);
+} finally {
+  auth.destroy();
+}
 ```
 
 ```prompt title="Gate a page behind authentication"
-In my Rayfin React app, gate the main app route behind authentication:
+In my Rayfin React app, gate the main app route behind authentication.
 
-- On mount, read client.auth.getSession() once, then subscribe with
-  client.auth.onSessionChange(...) to keep it in sync. Do not use onAuthStateChange — it
-  does not exist on the Rayfin auth client.
-- Show a loading state until the first session check completes, then render the app if
-  session.isAuthenticated and session.user are both present, or redirect to a sign-in page
-  otherwise.
-- Do not introspect any session fields beyond isAuthenticated, isAnonymous, user, role, and
-  expiresAt — treat the session object as opaque.
+On mount, read client.auth.getSession() once, then subscribe with client.auth.onSessionChange(...) to keep it in sync. Do not use onAuthStateChange; it does not exist on the Rayfin auth client.
 
-Show me the resulting component.
+Show a loading state until the first session check completes, then render the app if session.isAuthenticated and session.user are present, or redirect to a sign-in page otherwise. Do not introspect any session fields beyond isAuthenticated, isAnonymous, user, role, and expiresAt.
 ```

@@ -1,54 +1,54 @@
 ---
 title: Environment variable interpolation
-description: The ${VAR} and ${VAR:-default} syntax Rayfin supports inside rayfin.yml — usage, .env file location, resolution priority, type coercion, and error handling.
+description: Use ${VAR} and ${VAR:-default} in rayfin.yml with Rayfin's .env resolution, type coercion, and missing-variable errors.
 ---
 
-`rayfin.yml` supports environment variable interpolation using `${VAR}` /
-`${VAR:-default}` shell-style syntax, so you can keep environment-specific values
-(connection strings, API keys, URLs) out of the committed config file.
+`rayfin.yml` supports shell-style interpolation so environment-specific values stay out of
+committed configuration.
 
 ## Syntax
 
-- `${VAR}` — simple substitution. Fails if the variable is unset or empty.
-- `${VAR:-default}` — substitution with a default if the variable is unset or empty.
+| Syntax | Meaning |
+| --- | --- |
+| `${VAR}` | Substitute `VAR`; error if unset or empty. |
+| `${VAR:-default}` | Substitute `VAR`, or `default` when unset or empty. |
 
-By convention, `:-` treats both an undefined variable and an empty string the same way —
-both fall through to the default.
-
-```bash
-# .env
+```bash title="rayfin/.env"
 DEFINED=value
 EMPTY=
-# UNDEFINED is not set
 ```
 
-```yaml
-# rayfin.yml — results:
-config1: ${DEFINED}             # → "value" (uses the variable)
-config2: ${EMPTY:-fallback}     # → "fallback" (empty, uses default)
-config3: ${UNDEFINED:-fallback} # → "fallback" (unset, uses default)
-config4: ${DEFINED:-fallback}   # → "value" (defined, ignores default)
-config5: ${EMPTY}               # → Error! (empty without default)
-config6: ${UNDEFINED}           # → Error! (unset without default)
+```yaml title="rayfin/rayfin.yml"
+config1: ${DEFINED}
+config2: ${EMPTY:-fallback}
+config3: ${UNDEFINED:-fallback}
 ```
 
 ## Usage
 
 ### Basic substitution
 
-```yaml title="rayfin.yml"
+```yaml title="rayfin/rayfin.yml"
 services:
   data:
-    dialect: ${DB_DIALECT}
+    enabled: true
+    dialect: ${DB_DIALECT:-mssql}
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+    allowedRedirectUris:
+      - https://${APP_HOSTNAME}/callback
 ```
 
-```bash title="rayfin/.env"
+```bash title="rayfin/.env.example"
 DB_DIALECT=mssql
+APP_HOSTNAME=example.contoso.com
 ```
 
 ### Default values
 
-```yaml title="rayfin.yml"
+```yaml title="rayfin/rayfin.yml"
 services:
   data:
     dialect: ${DB_DIALECT:-mssql}
@@ -56,9 +56,7 @@ services:
 
 ### Partial interpolation
 
-Combine static text with a variable:
-
-```yaml title="rayfin.yml"
+```yaml title="rayfin/rayfin.yml"
 services:
   auth:
     allowedRedirectUris:
@@ -67,84 +65,73 @@ services:
 
 ## `.env` file location
 
-By default, Rayfin loads variables from `rayfin/.env`. Override this three ways, highest
-priority first:
+By default, Rayfin loads `rayfin/.env`. Override it with a command flag or shell variable:
 
-1. **CLI flag**:
+```bash
+npx rayfin up --env-file .\deploy\production.env
+```
 
-   ```bash
-   npx rayfin up --env-file /production.env
-   ```
-
-2. **Environment variable**:
-
-   ```bash
-   export RAYFIN_ENV_FILE='/staging.env'
-   npx rayfin up
-   ```
-
-3. **Default**: `rayfin/.env`.
+```bash
+set RAYFIN_ENV_FILE=.\deploy\staging.env
+npx rayfin up
+```
 
 ## Resolution priority
 
-1. Shell environment variables (if non-empty).
-2. Variables from the resolved `.env` file (if non-empty).
-3. Default values, when specified with `:-` syntax and the variable is unset or empty.
-4. Error, if the variable is unset or empty and no default is given.
+1. Shell environment variables, when non-empty.
+2. Variables from `--env-file <path>` or `RAYFIN_ENV_FILE`, when non-empty.
+3. Variables from `rayfin/.env`, when non-empty.
+4. Default values from `${VAR:-default}`.
+5. Error when no value or default exists.
 
-This is the same priority order used everywhere else Rayfin resolves environment values —
-see [Environment variables](/docs/reference/config/environment-variables#resolution-priority)
-for the canonical reference, including how it composes with `--env-file`.
+See [Environment variables](/docs/reference/config/environment-variables) for the broader
+CLI environment reference.
 
 ## Type coercion
 
-Interpolated values are coerced to the matching YAML type **only when the entire value is
-a single variable reference**:
+When the entire YAML value is one interpolation expression, Rayfin coerces strings to the
+matching YAML scalar type:
 
-```yaml title="rayfin.yml"
+```yaml title="rayfin/rayfin.yml"
 services:
-  auth:
-    expiryInMinutes: ${TOKEN_EXPIRY}   # becomes the number 60, not the string "60"
   data:
-    enabled: ${DATA_ENABLED}           # becomes the boolean true, not the string "true"
+    enabled: ${DATA_ENABLED}
+    dialect: ${DB_DIALECT:-mssql}
+  auth:
+    expiryInMinutes: ${TOKEN_EXPIRY_MINUTES:-60}
 ```
 
 ```bash title="rayfin/.env"
-TOKEN_EXPIRY=60
 DATA_ENABLED=true
+TOKEN_EXPIRY_MINUTES=60
 ```
 
-Partial interpolation always produces a string, even when the referenced variable looks
-numeric:
+Partial interpolation always returns a string:
 
-```yaml
-folder: build-${BUILD_NUMBER}  # → the string "build-42"
+```yaml title="rayfin/rayfin.yml"
+services:
+  staticHosting:
+    folder: dist-${BUILD_NUMBER}
 ```
-
-## Security best practices
-
-1. **Never commit `.env` files** — they hold secrets and environment-specific values.
-   `rayfin/.env` is gitignored by default.
-2. **Provide `rayfin/.env.example`** — document required variables for other developers
-   with placeholder values.
-3. **Use shell environment variables in CI/CD** — override `.env` with build and deployment
-   secrets rather than checking a CI-specific `.env` file into the repo.
-4. **Omit default values for required configuration** — a variable with no `:-` default
-   fails fast instead of silently deploying with a wrong value.
 
 ## Error handling
 
-A missing required variable fails with a specific, actionable message rather than a
-silent fallback:
+A required missing variable fails before deployment:
 
 ```text
 ❌ Environment variable 'DB_HOST' referenced in rayfin.yml (services.data.host) is not defined.
    Set it in .env file or shell environment.
 ```
 
-```prompt title="Parameterize a rayfin.yml value per environment"
-Update my rayfin/rayfin.yml so services.data.dialect reads from a DB_DIALECT variable with
-mssql as the default, add DB_DIALECT to rayfin/.env.example with a comment explaining it,
-and confirm the actual value in rayfin/.env still resolves correctly with
-`npx rayfin up --dry-run`.
+## Security best practices
+
+- Do not commit `rayfin/.env`; it is gitignored by scaffolded projects.
+- Commit `rayfin/.env.example` with placeholders for required variables.
+- Use CI secret variables for deployment secrets.
+- Omit defaults for values that must be supplied intentionally.
+
+```prompt title="Parameterize a rayfin.yml value"
+Update rayfin/rayfin.yml so `services.data.dialect` reads from `${DB_DIALECT:-mssql}`.
+Add `DB_DIALECT=mssql` to rayfin/.env.example, then run `npx rayfin up --dry-run` to
+confirm interpolation resolves.
 ```

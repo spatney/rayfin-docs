@@ -1,5 +1,6 @@
 ---
 title: Connectors
+appliesTo: "@microsoft/rayfin-connectors >= 1.36"
 description: Read and write existing Microsoft Fabric data — warehouses, SQL databases, Lakehouse SQL endpoints, semantic models, and KQL databases — from a Rayfin app.
 ---
 
@@ -9,11 +10,11 @@ somewhere else in Microsoft Fabric — a Warehouse, a SQL Database, a Lakehouse 
 endpoint, a Power BI semantic model, or a KQL database — and exposes it through the same
 client.
 
-> [!WARNING]
-> Connectors are in private preview. The `rayfin connector` command group is hidden until
-> you opt in, `ConnectorsRayfinClient` ships from an `/experimental` subpath, and the API may
-> change between releases. Confirm the feature is available in your own tenant before you
-> design an app around it.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Connectors are stable in Rayfin 1.36. `rayfin connector` is always registered.
+
+`rayfin up connector apply` remains [Preview](/docs/reference/changelog#feature-status).
 
 ## The two categories
 
@@ -22,12 +23,12 @@ category.
 
 | | Category A — entity connectors | Category B — query connectors |
 | --- | --- | --- |
-| **Types** | `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase` | `fabric-semanticmodel`, `kusto` |
+| **Types** | `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase` | `fabric-semanticmodel`; existing `kusto` entries only |
 | **App surface** | `client.connectors.<name>.<Entity>` — typed CRUD | `client.connectors.<name>.executeQuery(...)` |
 | **You write** | Entity classes with `@role()` policies | A DAX or KQL query string |
 | **Row-level security** | Yes, via `@role()` policies | No — the source enforces its own |
 | **Schema discovery** | Yes — `metadata.json` | No |
-| **Auth** | `delegated` or `application` | `delegated` only |
+| **Auth** | `application` by default; `delegated` allowed | `delegated` only |
 
 Category A turns Fabric SQL into typed entities that behave like your own — see
 [Fabric SQL sources](/docs/connectors/sql-sources). Category B hands a raw query to a
@@ -38,40 +39,33 @@ and [KQL databases](/docs/connectors/kusto).
 
 | Type | Fabric item | Category | Operations | Auth |
 | --- | --- | --- | --- | --- |
-| `fabric-sqlanalytics` | Lakehouse | A | `read` | `delegated`, `application` |
-| `fabric-warehouse` | Warehouse | A | `read`, `create`, `update`, `delete` | `delegated`, `application` |
-| `fabric-sqldatabase` | SQL Database | A | `read`, `create`, `update`, `delete` | `delegated`, `application` |
+| `fabric-sqlanalytics` | Lakehouse SQL analytics endpoint | A | `read` | Default `application`; allows `delegated` [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `fabric-warehouse` | Warehouse | A | `read`, `create`, `update`, `delete` | Default `application`; allows `delegated` [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `fabric-sqldatabase` | SQL Database | A | `read`, `create`, `update`, `delete` | Default `application`; allows `delegated` [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 | `fabric-semanticmodel` | Semantic model | B | `executeQuery` | `delegated` |
-| `kusto` | KQL Database | B | `executeQuery`, `executeCommand` | `delegated` |
+| `kusto` | KQL Database | B | `executeQuery`, `executeCommand` | Existing connectors only; new authoring is held in 1.36 [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 
-Lakehouse SQL analytics endpoints are read-only at the source, so `fabric-sqlanalytics`
-allows only `read`. Category B types are pinned to an adapter version (`version: '1'` today)
-and are delegated-only — `rayfin up` rejects `auth.type: application` on them. See
+Lakehouse SQL analytics endpoints are read-only at the source, so `fabric-sqlanalytics` allows only `read`. Category B types are pinned to an adapter version (`version: '1'` today) and are delegated-only. `rayfin up` rejects `auth.type: application` on them.
+
+In 1.36.2, `connector add --type kusto` fails with this exact message:
+
+```text
+Connector type "kusto" is not available in this release. Supported types: [fabric-sqlanalytics, fabric-warehouse, fabric-sqldatabase, fabric-semanticmodel].
+```
+
+Existing Kusto connector entries still validate and deploy. See
 [Connector authentication](/docs/connectors/auth).
 
 Run `npx rayfin connector types --json` to print the live catalog, including the exact client
 packages and version to install for each type.
 
-## Enable connectors
+## Connector commands are always available
 
-The `connector` command group is registered only when the project opts in. Prefer the
-declarative setting:
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-```yaml title="rayfin/rayfin.yml"
-services:
-  connectors:
-    enabled: true
-```
+Run `npx rayfin connector types --json` to print the live authoring catalog. The JSON includes exact package names, roles, and the Rayfin version to install.
 
-Two other things also turn it on: a non-empty `connectors:` block in `rayfin.yml` (which
-`connector add` writes, so the feature is self-sustaining after the first connector), and the
-environment variable for a single command:
-
-```bash
-RAYFIN_FEATURE_FLAGS=connectors npx rayfin connector types
-```
-
-With none of the three, the CLI reports an unknown command.
+New projects do not need an opt-in gate; connectors graduated in 1.36.
 
 ## How a connector reaches your app
 
@@ -91,7 +85,7 @@ flowchart LR
   end
 
   User(["Signed-in user"]) ==> Web
-  Web -.->|"delegated token"| SQL
+  Web -.->|"app identity or delegated"| SQL
   Web -.->|"delegated token"| Model
   Web -.->|"delegated token"| KQL
 
@@ -168,18 +162,17 @@ Expose the connector as `client.connectors.<name>` through `ConnectorsRayfinClie
 
 ```prompt title="Connect a Rayfin app to existing Fabric data"
 In my Rayfin project, connect to an existing Microsoft Fabric data source (ask me which one —
-a Warehouse, SQL Database, Lakehouse SQL analytics endpoint, semantic model, or KQL database,
-and ask me for its workspace ID and item ID rather than inventing them).
+a Warehouse, SQL Database, Lakehouse SQL analytics endpoint, or semantic model,
+and ask me for its workspace ID and item ID rather than inventing them. If I ask for a KQL database on Rayfin 1.36.2, stop and report that new Kusto connector authoring is held in this release).
 
-First enable the feature by adding services.connectors.enabled: true to rayfin/rayfin.yml.
-Then run `npx rayfin connector add --type <type> --workspace-id <id> --item-id <id>` and run
+Run `npx rayfin connector add --type <type> --workspace-id <id> --item-id <id>` and run
 the version-pinned npm install command it prints, verbatim — do not drop the version.
 
 If it is a Category A type (fabric-sqlanalytics, fabric-warehouse, fabric-sqldatabase),
 generate entity files from rayfin/connectors/<name>/metadata.json and overwrite the
-placeholder schema.ts with the aggregate schema. If it is Category B (fabric-semanticmodel,
-kusto), the generated schema.ts is already complete — do not edit it.
+placeholder schema.ts with the aggregate schema. If it is fabric-semanticmodel, the
+generated schema.ts is already complete — do not edit it.
 
 Finally, wire it up as client.connectors.<name> with ConnectorsRayfinClient imported from
-@microsoft/rayfin-client/experimental, and deploy with `npx rayfin up`.
+@microsoft/rayfin-client, and deploy with `npx rayfin up`.
 ```

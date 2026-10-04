@@ -1,71 +1,166 @@
 ---
-title: Delegated access
-description: Understand how Fabric SSO, function connections, connectors, and entity permissions use the signed-in user's identity.
+title: Delegated and application access
+description: Which identity each server-side Rayfin surface uses — the signed-in user or the app — and what access to grant at each data source.
 ---
 
-Use delegated access when server-side Rayfin code needs to reach a Microsoft resource
-without a long-lived credential. Rayfin starts from the [Fabric SSO](/docs/auth/fabric-sso)
-session, exchanges the signed-in user's identity for a resource-scoped token, and runs the
-server-side call **as the caller** rather than as a shared service account.
+Server-side Rayfin code reaches three kinds of data: entities your app owns, data that
+already lives in Fabric (through connectors), and other Microsoft resources (through
+function connections). Every one of those calls runs as one of two identities:
 
-Everything on this page builds on Fabric SSO. The user signs in once, Rayfin manages the
-session, and delegated surfaces use that caller identity when they reach functions,
-connectors, or Rayfin-owned data.
+- **Delegated — the signed-in user.** Rayfin starts from the user's Microsoft Entra ID
+  session ([Fabric SSO](/docs/auth/fabric-sso), [direct Entra token
+  sign-in](/docs/auth/entra-token), or an [embed host](/docs/auth/embed-host)) and acts on
+  that user's behalf. The source decides what that user may read and write.
+- **Application — the app itself.** For current Fabric apps, the app identity is the owner
+  of the Fabric app item. Every user of the app gets the same access, so the app identity —
+  not each user — needs permission on the source.
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Rayfin 1.36 moved two surfaces to the app identity. Function connections now run only as
+the app identity, and `rayfin connector add` configures SQL connectors to run as the app
+identity. In 1.35, both ran as the signed-in user.
+
+## Which identity each surface uses
+
+| Surface | You declare | Runs as, once deployed | Who needs access at the source |
+| --- | --- | --- | --- |
+| [Your own data](/docs/data/permissions) from the browser — `client.data.<Entity>` | `@role()` / `@authenticated()` policies on the entity | Signed-in user | Nobody — entity policies decide |
+| Your own data from a function — `ctx.getDataClient()` | The same entity policies | Signed-in caller | Nobody — entity policies decide |
+| [Function connections](/docs/functions/connections) — `ctx.Tokens.<Audience>` | `RayfinContext<Schema, AudienceType.X>` and `services.functions.auth.type: application` | App identity | The app identity |
+| [SQL connectors](/docs/connectors/auth) — warehouse, SQL database, Lakehouse SQL endpoint | `auth.type` in `rayfin.yml`; `connector add` writes `application` | App identity, or the signed-in user with `delegated` | The app identity, or each user |
+| [Semantic model connectors](/docs/connectors/semantic-models) | `auth.type: delegated` (the only allowed value) | Signed-in user | Each user |
+
+## Your own data always runs as the caller
+
+Entities in `rayfin/data/` are protected by [permission decorators](/docs/data/permissions).
+A `policy` callback compares the caller's claims to fields on each row, so
+`client.data.<Entity>` returns only the rows that caller may see.
+
+The same is true inside a function. `ctx.getDataClient()` uses the invocation's Rayfin token,
+so entity policies apply to the user who invoked the function. Setting
+`services.functions.auth.type: application` does **not** switch your Rayfin data to the app
+identity.
+
+## Function connections run as the app
+
+Since Rayfin 1.36, enabled Functions must declare application authentication:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  functions:
+    enabled: true
+    auth:
+      type: application
+```
+
+A deployed function that declares an audience on its `RayfinContext` receives a token for
+the app identity in `ctx.Tokens`. In this function, the Rayfin data query runs as the caller,
+and the Fabric REST call runs as the app:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  AudienceType,
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = {
+  Todo: { id: string; title: string };
+};
+
+const udf = new UserDataFunctions();
+
+udf.func(
+  'todoCountAndWorkspaceCount',
+  async (
+    ctx: RayfinContext<AppSchema, AudienceType.Fabric>,
+  ): Promise<{ todos: number; workspaces: number }> => {
+    // Runs as the signed-in caller: the Todo entity's policies apply.
+    const todos = await ctx.getDataClient().Todo.select(['id']).execute();
+
+    // Runs as the app identity: it must have access in Fabric.
+    const response = await fetch('https://api.fabric.microsoft.com/v1/workspaces', {
+      headers: { Authorization: `Bearer ${ctx.Tokens.Fabric}` },
+    });
+    if (!response.ok) {
+      throw new Error(`Fabric API returned ${response.status}`);
+    }
+    const body = (await response.json()) as { value: unknown[] };
+
+    return { todos: todos.length, workspaces: body.value.length };
+  },
+  [],
+);
+```
+
+Grant the app identity the permission each resource needs — for example a workspace role
+for Fabric REST calls, or a data-plane role for Azure Storage — and check that the Fabric
+API you call supports application identities. [Connections](/docs/functions/connections)
+lists the five supported audiences and what to grant for each.
+
+Signing in to the app and being allowed to invoke a function work as before; application
+authentication only changes which identity the function uses for external resources.
 
 > [!WARNING]
-> Function connections and connectors are preview features. Confirm they are available in
-> your tenant before you design a production workflow around them.
+> During local development, the Functions host started by `rayfin dev` gets tokens for the
+> account you signed in with, not for the app identity. A call that works on your machine
+> can fail after `rayfin up` if the app identity lacks access. Grant the app identity
+> access before you deploy.
 
-## Choose the delegated surface
+## Connectors choose per connector
 
-| Surface | You declare | You get | Runs as |
-| --- | --- | --- | --- |
-| [Function connections](/docs/functions/connections) | `udf.connection({ audienceType })` | `ctx.getToken(AudienceType.X)` | The signed-in user |
-| [Connectors](/docs/connectors/auth) | `auth.type` in `rayfin.yml` | A typed client on `client.connectors.<name>` | The signed-in user (`delegated`) or the app (`application`) |
-| [Your own data](/docs/data/permissions) | `@role()` / `@authenticated()` policies | `client.data.<Entity>` | The signed-in user |
+Each connector entry in `rayfin.yml` carries its own `auth.type`:
 
-## Call Microsoft resources from functions
+- `delegated` runs every query as the signed-in user, through an on-behalf-of token
+  exchange. The user needs their own permission on the Fabric workspace and item, and
+  `@role()` policies on generated connector entities can compare `claims` to the caller.
+- `application` runs every query as the app identity. All users see the same data, so
+  claims-based policies no longer distinguish users. It is allowed only for
+  `fabric-sqlanalytics`, `fabric-warehouse`, and `fabric-sqldatabase`.
 
-Use a [function connection](/docs/functions/connections) when custom server-side code needs
-to call a Microsoft resource. You declare `udf.connection({ audienceType })` on the
-function, then read the scoped token inside the handler with
-`ctx.getToken(AudienceType.X)`.
-
-The function still runs inside your deployed Fabric app. The token identifies the signed-in
-user, so the target resource decides whether that user can read or write.
-
-## Query existing Fabric sources
-
-Use a [connector](/docs/connectors/auth) when you want to query an existing Fabric data
-source through `client.connectors.<name>`. Category A connectors expose typed entities for
-Fabric SQL sources. Category B connectors expose DAX or KQL query operations.
-
-Connector auth is explicit in `rayfin.yml`. `auth.type: delegated` runs every query as the
-signed-in user. `auth.type: application` runs as the app identity and is available only for
-the Category A Fabric SQL connector types.
-
-## Secure data Rayfin owns
-
-Use [entity permissions](/docs/data/permissions) when the data lives in Rayfin-managed
-entities. `@role()` and `@authenticated()` policies compare the signed-in user's claims to
-fields on each row, so `client.data.<Entity>` returns only rows the policy allows.
+`rayfin connector add` writes `auth.type: application` for those three SQL types. To keep
+per-user access, change the value to `delegated` before you deploy — and again after you
+re-add the connector, because re-adding resets it. Semantic model connectors accept only
+`delegated`. See [Connector authentication](/docs/connectors/auth).
 
 ## Grant access at the source
 
-Delegated auth passes the user's identity through; it does not grant access by itself. The
-signed-in user must already have permission on the target Fabric workspace and item. If the
-user lacks that permission, the source rejects the request with an authorization failure.
+Neither identity grants access by itself. Rayfin passes the identity through, and the
+target resource decides:
 
-```prompt title="Choose a delegated-auth surface"
-In my Rayfin project, help me decide which delegated-auth surface to use for a Microsoft
-resource integration.
+1. For **delegated** calls, give each user — or a group they belong to — access to the
+   Fabric workspace and item. A user without access gets an authorization error.
+2. For **application** calls, give the app identity — the owner of the Fabric app item —
+   access to the resource.
+3. For **your own entities**, write permission decorators. No source grant is involved.
 
-Start from Fabric SSO as the identity source. If I need custom server-side code to call a
-Microsoft resource, use a function connection with udf.connection({ audienceType }) and
-ctx.getToken(AudienceType.X). If I need to query an existing Fabric source through typed
-entities or DAX/KQL, use a connector and set auth.type in rayfin/rayfin.yml. If the data is
-owned by my Rayfin app, use @role() or @authenticated() policies on rayfin/data entities.
+## Choose a surface
 
-Explain which signed-in user or app identity each call runs as, what permissions the caller
-needs on the target Fabric item, and which Rayfin files I should edit.
+| You need | Use |
+| --- | --- |
+| Per-user rows from entities your app owns | Entity policies on [your own data](/docs/data/permissions) |
+| Per-user rows from an existing warehouse or SQL database | A SQL connector with `auth.type: delegated` |
+| One shared view of an existing Fabric source | A SQL connector with `auth.type: application` |
+| DAX over a semantic model, scoped to each user | A [semantic model connector](/docs/connectors/semantic-models) |
+| Custom server-side calls to Fabric, OneLake, Azure Storage, Azure AI Foundry, or Azure DevOps | A [function connection](/docs/functions/connections) |
+| Any other HTTPS API | A function that reads an API key from [`ctx.Secrets`](/docs/functions/secrets) |
+
+```prompt title="Choose the identity for a Rayfin integration"
+In my Rayfin project, help me decide which identity each server-side integration should use,
+then configure it.
+
+For data my app owns in rayfin/data, keep access caller-scoped with @role() or
+@authenticated() policies — this also applies to ctx.getDataClient() inside functions.
+For an existing Fabric warehouse, SQL database, or Lakehouse SQL endpoint, add a connector
+and set auth.type in rayfin/rayfin.yml: delegated when each user should see only what they
+are allowed to see at the source, application when every user should see the same data
+through the app identity. Semantic model connectors must use delegated. For custom calls to
+Fabric REST, OneLake, Azure Storage, Azure AI Foundry, or Azure DevOps, write a function
+that declares the audience on RayfinContext and reads ctx.Tokens, with
+services.functions.auth.type: application in rayfin.yml — those calls run as the app
+identity, which is the owner of the Fabric app item.
+
+Tell me exactly which permissions to grant to which identity on each resource, and which
+files you changed.
 ```

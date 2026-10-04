@@ -14,8 +14,8 @@ Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Befo
 Then do the work yourself rather than printing steps for me:
 1. Scaffold a project with \`npm create @microsoft/rayfin@latest my-app\` and install dependencies.
 2. Sign in with \`npx rayfin login\`.
-3. Deploy the backend with \`npx rayfin up\` and confirm it with \`npx rayfin up status\`.
-4. Start the frontend with \`npm run dev\` and tell me the URL to open.
+3. Start the development session with \`npm run dev\` — it runs \`rayfin dev\`, which provisions or reuses the app's backend in Fabric, applies the data model, and serves the frontend locally. Run it in the background and tell me the local URL to open.
+4. When I'm ready to publish, deploy with \`npx rayfin up\`, confirm it with \`npx rayfin up status\`, and tell me the hosted URL.
 
 Then explain what the starter app does and where the data model lives.`;
 

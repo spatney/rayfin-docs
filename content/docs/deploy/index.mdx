@@ -1,39 +1,28 @@
 ---
 title: Deploy
-description: Deploy a Rayfin project to a managed Fabric app with the rayfin up CLI workflow, then manage secrets, environments, and billing.
+description: Deploy Rayfin projects to managed Fabric apps, manage deployment targets, and understand capacity and static hosting.
 ---
 
-Deploying ships your Rayfin project to a **Fabric app** — a managed, Microsoft
-Fabric-hosted instance of your backend and frontend. Fabric provisions the database,
-authentication, static hosting, and API endpoints; one CLI command builds and ships all of
-it.
+Deploying ships a Rayfin project to a managed **Fabric app**. The deploy workflow syncs backend settings, applies schema changes, builds and uploads static assets, and records the Fabric target.
 
 ```bash
 npx rayfin login
 npx rayfin up
-```
-
-`rayfin up` builds your static content, deploys it, pushes your `rayfin.yml` settings to
-the remote service, and applies any pending database schema changes — all in one step. Run
-it again for every change you want to ship, including schema-only changes.
-
-Confirm the deployment is healthy:
-
-```bash
 npx rayfin up status
 ```
 
+Use [Develop locally](/docs/start/develop-locally) for the inner loop. `npm run dev` runs `rayfin dev` and never publishes static content; `rayfin up` publishes a production build.
+
 ## In this section
 
-- **[Fabric apps](/docs/deploy/fabric-apps)** — what a managed Fabric app is, its
-  prerequisites, and how to create one in the Fabric portal.
-- **[Deploying with rayfin up](/docs/deploy/rayfin-up)** — the full deploy workflow, useful
-  flags, and what gets written to `rayfin/.deployments.json`.
-- **[Secrets](/docs/deploy/secrets)** — store and apply secret values your deployed app
-  needs at runtime.
-- **[Environments and configuration](/docs/deploy/environments)** — every environment
-  variable Rayfin tooling reads and writes, and where each one lives.
-- **[Capacity and billing](/docs/deploy/pricing)** — how Fabric capacity billing works for
-  a deployed app.
-- **[Deployment troubleshooting](/docs/deploy/troubleshooting)** — symptom-to-fix
-  reference for the most common deploy failures.
+- **[Fabric apps](/docs/deploy/fabric-apps)** — item model, prerequisites, child services, permissions, and capacity readiness.
+- **[Deploying with rayfin up](/docs/deploy/rayfin-up)** — full deploy workflow, flags, dry-run behavior, and deployment metadata.
+- **[Deployment pipelines](/docs/deploy/deployment-pipelines)** — promote pre-built Fabric AppBackend artifacts between Fabric stages.
+- **[Secrets](/docs/deploy/secrets)** — store and apply secret values.
+- **[Environments and configuration](/docs/deploy/environments)** — files, variables, and active deployments.
+- **[Capacity and billing](/docs/deploy/pricing)** — which Fabric operations consume CUs.
+- **[Deployment troubleshooting](/docs/deploy/troubleshooting)** — exact errors and fixes.
+
+```prompt title="Check my Rayfin deployment setup"
+Inspect my Rayfin project before deployment. Read rayfin/rayfin.yml, package.json, and rayfin/.deployments.json if present. Tell me which Fabric workspace and item `npx rayfin up` will target, whether static hosting and Functions are enabled, and whether I should use `npm run dev`, `npx rayfin up`, or a narrower subcommand for the change I am making.
+```

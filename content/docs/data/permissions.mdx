@@ -205,16 +205,17 @@ Rayfin generates a storage policy instead of a database policy, using the same
 `policy` / `include` / `exclude` options:
 
 ```typescript title="rayfin/storage/ProfileImage.ts"
-import { blob, authenticated } from '@microsoft/rayfin-core';
+import { authenticated } from '@microsoft/rayfin-core';
+import { blob, StorageObject } from '@microsoft/rayfin-core/experimental';
 
-@blob('avatars')
+@blob({ name: 'avatars' })
 @authenticated('*', {
   policy: (claims, item) => claims.sub.eq(item.owner_id),
 })
-export class ProfileImage {
-  owner_id!: string;
-}
+export class ProfileImage extends StorageObject {}
 ```
+
+Storage folders require at least one authenticated permission rule; anonymous storage permissions are not supported.
 
 ## Multi-tenant patterns
 

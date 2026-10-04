@@ -1,32 +1,23 @@
 ---
 title: Testing a Rayfin app
-description: Test a Rayfin app's data and auth logic in Vitest without a live backend, using a swappable auth service and an in-memory fallback.
+description: Test Rayfin data and auth logic in Vitest with injectable auth stubs and the todo template's in-memory data seam.
 ---
 
-A Rayfin frontend can be fully tested — data operations and auth-gated UI included —
-without a deployed backend or network access. This walkthrough uses two seams already
-present in a scaffolded app: an injectable auth service, and a local-mode fallback in the
-data layer.
+A Rayfin frontend can be tested without calling Fabric from the test process.
+The 1.36.2 todo template already has two useful seams:
 
-```prompt title="Test Rayfin data and auth logic without a live backend"
-In my Rayfin + React + Vite project, set up Vitest with jsdom (environment: 'jsdom') and a
-setup file that shims localStorage on globalThis so the Rayfin auth client doesn't throw in
-tests. My data service module (e.g. src/services/todos.ts) reads a getRayfinClient() plus
-an isLocalBackend() flag from src/services/rayfinClient.ts and falls back to an in-memory
-array when isLocalBackend() is true — in my tests, mock src/services/rayfinClient.ts with
-vi.mock so isLocalBackend always returns true, forcing that in-memory path so no network
-calls happen. My auth layer is injected through an IAuthService interface (signIn,
-signOut, getCurrentUser, initEmbeddedAuth, fabricAuthEnabled) passed into an AuthProvider
-component; in each test, construct a plain object implementing IAuthService with stubbed
-async methods and pass it as the authService prop instead of a real implementation. Write
-component tests with @testing-library/react that render through this stubbed AuthProvider
-and assert on rendered UI and on spies over the data service functions.
+1. `AuthProvider` accepts an `IAuthService`, so tests can pass a stub object instead of opening a Fabric sign-in flow.
+2. `src/services/todos.ts` checks `isLocalBackend()` before every data operation, so tests can mock `src/services/rayfinClient.ts` and force the in-memory branch.
+
+```prompt title="Test Rayfin data and auth logic without Fabric calls"
+In my Rayfin React + Vite project, set up Vitest with jsdom and a setup file that shims localStorage. For data service tests, mock src/services/rayfinClient.ts before importing the service under test so isLocalBackend returns true and getRayfinClient is a vi.fn(), forcing the in-memory branch. For component tests, create a plain object implementing IAuthService and pass it to AuthProvider as authService. Add tests that cover create/list/update/delete service behavior and an AuthProvider render without calling Fabric.
 ```
 
 ## Test runner setup
 
-Vitest runs in `jsdom` so React components can render, with a path alias matching the
-app's own `@/*` imports and a setup file loaded before every test file:
+Vitest runs in `jsdom` so React components can render.
+The config keeps the app's `@/*` import alias and loads a setup file before each test file.
+This file matches the 1.36.2 todo template.
 
 ```typescript title="vitest.config.ts"
 import react from '@vitejs/plugin-react-swc';
@@ -52,9 +43,9 @@ export default defineConfig({
 
 ## Global test setup
 
-`jsdom` doesn't provide a usable `localStorage`, and the Rayfin auth client reads and
-writes session data through it — the setup file shims one so the client doesn't throw, and
-clears it between tests so state doesn't leak across cases:
+`jsdom` does not provide the same `localStorage` behavior as a browser.
+Rayfin auth code reads and writes session state through browser storage, so the setup file provides a minimal implementation and clears it between tests.
+This file matches the 1.36.2 todo template.
 
 ```typescript title="src/__tests__/setup.ts"
 import '@testing-library/jest-dom';
@@ -88,10 +79,12 @@ beforeEach(() => {
 });
 ```
 
-## The auth seam: IAuthService
+## The auth seam: `IAuthService`
 
-Production code never imports `MockAuthService` or `RayfinAuthService` directly — it
-depends on an `IAuthService` interface instead:
+Production code never imports `MockAuthService` or `RayfinAuthService` directly.
+It depends on an `IAuthService` interface instead.
+
+This interface and helper match the 1.36.2 todo template.
 
 ```typescript title="src/services/IAuthService.ts"
 /** Trimmed view of the authenticated user shown in the UI. */
@@ -106,10 +99,9 @@ export interface AuthUser {
  *
  * Two implementations ship with this template:
  *
- * - {@link MockAuthService} — used when the API URL points at localhost. Signs into
- *   a local backend with a fixture email and password — both out of scope for a
- *   Fabric-only app; see "What MockAuthService actually does" below.
- * - {@link RayfinAuthService} — used once deployed. Wraps the Fabric
+ * - {@link MockAuthService} — used when the API URL points at localhost.
+ *   Signs into the bundled local backend with a fixture email/password.
+ * - {@link RayfinAuthService} — used in production. Wraps the Fabric
  *   brokered auth flow from `@microsoft/rayfin-auth-provider-fabric`.
  *
  * `bootstrapAuth()` picks the right one from VITE_* env vars at startup.
@@ -138,12 +130,29 @@ export interface IAuthService {
    */
   initEmbeddedAuth(): Promise<AuthUser | null>;
 }
+
+/** Map the raw session user shape to the trimmed view used in the UI. */
+export function toAuthUser(user: {
+  id: string;
+  email: string;
+  name?: string;
+}): AuthUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name || user.email.split('@')[0],
+  };
+}
 ```
 
-At runtime, `bootstrapAuth()` picks between the two real implementations based on where
-the API URL points:
+## How `bootstrapAuth()` chooses implementations
+
+At runtime, `bootstrapAuth()` reads the generated Vite environment variables, initializes the Rayfin client, and chooses an auth service.
+This file matches the 1.36.2 todo template.
 
 ```typescript title="src/services/bootstrap.ts"
+import { resolveRayfinFunctionsBaseUrl } from '@microsoft/rayfin-local-dev';
+
 import type { IAuthService } from './IAuthService';
 import { MockAuthService } from './MockAuthService';
 import { RayfinAuthService } from './RayfinAuthService';
@@ -165,7 +174,7 @@ function isLocalBackendUrl(url: string): boolean {
  * - Localhost API URL → {@link MockAuthService}
  * - Anything else     → {@link RayfinAuthService} (requires VITE_FABRIC_* vars)
  */
-export function bootstrapAuth(): IAuthService {
+export async function bootstrapAuth(): Promise<IAuthService> {
   const apiUrl = import.meta.env.VITE_RAYFIN_API_URL || 'http://localhost:5168';
   const localDev = isLocalBackendUrl(apiUrl);
   const publishableKey = import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY;
@@ -176,19 +185,27 @@ export function bootstrapAuth(): IAuthService {
     );
   }
 
-  const client = initRayfinClient({
+  const client = await initRayfinClient({
     baseUrl: apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`,
     publishableKey: publishableKey ?? 'local-dev-key',
     localDev,
+    functionsBaseUrl: resolveRayfinFunctionsBaseUrl(),
+    runtimeConfig: {
+      workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+      itemId: import.meta.env.VITE_FABRIC_ITEM_ID,
+      portalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
+    },
   });
 
   if (localDev) {
     return new MockAuthService(client);
   }
 
-  const workspaceId = import.meta.env.VITE_FABRIC_WORKSPACE_ID;
-  const projectId = import.meta.env.VITE_FABRIC_ITEM_ID;
-  const fabricPortalUrl = import.meta.env.VITE_FABRIC_PORTAL_URL;
+  const {
+    workspaceId,
+    itemId: projectId,
+    portalUrl: fabricPortalUrl,
+  } = client.runtimeConfig ?? {};
 
   if (!workspaceId || !projectId || !fabricPortalUrl) {
     throw new Error(
@@ -205,19 +222,22 @@ export function bootstrapAuth(): IAuthService {
 }
 ```
 
-## What `MockAuthService` actually does
+Tests should not call `bootstrapAuth()`.
+They construct the auth service stub directly and pass it to `AuthProvider`.
+That keeps tests independent of generated environment variables, Fabric SSO, local automatic sign-in, and local Functions routing.
 
-`bootstrapAuth()` picks `MockAuthService` whenever the configured API URL's hostname is
-`localhost` or `127.0.0.1` — including the default it falls back to
-(`http://localhost:5168`) when `VITE_RAYFIN_API_URL` is unset. In a fresh scaffold, that is
-the path the app takes until you point it at a deployed Fabric backend.
+## MockAuthService scope caveat
 
-`MockAuthService` is not an inert placeholder. Its `signIn()` authenticates with a fixture
-credential pair — a hardcoded email and a hardcoded password — against whatever backend
-the client was constructed with, and if that account doesn't exist yet on that backend, it
-registers the account first, then retries:
+The 1.36.2 todo template still includes `MockAuthService` for the template's localhost branch.
+That implementation signs into a bundled local backend with fixture credentials.
+The service file is unchanged from 1.35.1, but that credential-based local backend path is outside this documentation site's Fabric-only product scope.
 
-```typescript title="src/services/MockAuthService.ts (scaffolded default)"
+Keep the seam; do not copy the credential sign-in pattern into new application guidance.
+For tests, pass an `IAuthService` stub instead of using `MockAuthService`.
+
+The relevant template constants are:
+
+```typescript title="src/services/MockAuthService.ts (excerpt)"
 // Local-dev fixture credentials. The bundled local backend ships without
 // Fabric/Entra, so this auth service signs in with a shared dev account.
 // These values only ever reach a developer's local machine — never use
@@ -226,102 +246,15 @@ const MOCK_EMAIL = 'dev@contoso.com';
 const MOCK_PASSWORD = 'LocalDev!Pass123';
 ```
 
-That is a credential-based sign-in against a local backend — both out of scope for a
-Fabric-only app (see [Fabric SSO is the only auth method](/docs/auth#fabric-sso-is-the-only-auth-method) —
-Fabric SSO is the only supported authentication method, and a Rayfin app has no local
-backend to sign in against). Leaving this file untouched means the app depends on that
-unsupported path any time `VITE_RAYFIN_API_URL` is unset or resolves to
-`localhost`/`127.0.0.1` — for example, in CI, or on a machine where the env file hasn't
-been set up yet — and a reader who never opens `MockAuthService.ts` has no reason to know
-that.
+## The data seam: `isLocalBackend()`
 
-For a Fabric-only app, do one of:
+`src/services/todos.ts` checks `isLocalBackend()` before every operation.
+When it is `true`, the service uses an in-memory array instead of `client.data.Todo`.
 
-- **Delete it.** Remove `MockAuthService.ts` and the `localDev` branch in `bootstrap.ts` so
-  `bootstrapAuth()` always constructs `RayfinAuthService` (Fabric SSO).
-- **Replace its body with an in-memory double.** Keep the class and the seam, but make it
-  genuinely local — no `RayfinClient`, no request to any backend, just a fixed in-memory
-  user:
+Tests force that branch by mocking `src/services/rayfinClient.ts` before importing `todos.ts`.
+That ordering matters: keep `vi.mock()` visually above the import of the module under test.
 
-```typescript title="src/services/MockAuthService.ts (in-memory replacement — calls no backend)"
-import type { AuthUser, IAuthService } from './IAuthService';
-
-const FAKE_USER: AuthUser = {
-  id: 'local-dev-user',
-  email: 'dev@example.com',
-  name: 'Local Dev',
-};
-
-/**
- * Zero-backend stand-in for local iteration. Never calls a backend — there is
- * no email/password exchange and nothing here points at a server.
- */
-export class MockAuthService implements IAuthService {
-  readonly fabricAuthEnabled = false;
-  private signedIn = false;
-
-  async signIn(): Promise<AuthUser> {
-    this.signedIn = true;
-    return FAKE_USER;
-  }
-
-  async signOut(): Promise<void> {
-    this.signedIn = false;
-  }
-
-  async getCurrentUser(): Promise<AuthUser | null> {
-    return this.signedIn ? FAKE_USER : null;
-  }
-
-  async initEmbeddedAuth(): Promise<AuthUser | null> {
-    return null;
-  }
-}
-```
-
-This keeps the exact seam the rest of this page tests against — `IAuthService` plus the
-constructor injection in `bootstrapAuth()` — without shipping a credentialed sign-in or an
-assumption that a local backend exists. It is the same shape as the ad hoc stub objects
-constructed inline in the tests below; the difference is this one lives in
-`src/services/` and is wired in by `bootstrapAuth()` instead of being constructed per test.
-
-Tests skip `bootstrapAuth()` entirely. Because the app takes its auth service as a prop
-(`<AuthProvider authService={...}>`), a test can construct a third, minimal implementation
-— a plain object with stubbed async methods — and inject that instead:
-
-```tsx
-const stubAuthService: IAuthService = {
-  fabricAuthEnabled: false,
-  async signIn() {
-    return { id: 'u1', email: 'dev@contoso.com', name: 'dev' };
-  },
-  async signOut() {},
-  async getCurrentUser() {
-    return null;
-  },
-  async initEmbeddedAuth() {
-    return null;
-  },
-};
-
-render(
-  <AuthProvider authService={stubAuthService}>
-    <YourComponent />
-  </AuthProvider>
-);
-```
-
-No real sign-in flow, browser popup, or network call happens — `AuthProvider` only ever
-calls the methods on the interface, so a same-shaped stub is indistinguishable from a real
-implementation as far as the component tree is concerned.
-
-## The data seam: isLocalBackend()
-
-`src/services/todos.ts` checks `isLocalBackend()` (from `rayfinClient.ts`) before every
-operation, and falls back to an in-memory array when it's `true` — the same fallback that
-lets the app run locally with no database configured. Tests force this path by mocking the
-`rayfinClient` module itself, so no `RayfinClient` instance is ever constructed and no
-request ever leaves the process:
+The following file matches the 1.36.2 todo template.
 
 ```typescript title="src/__tests__/todos.test.ts"
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -361,14 +294,58 @@ describe('todos service (in-memory mode)', () => {
 });
 ```
 
-`vi.mock('@/services/rayfinClient', ...)` must be declared before the `import` of the
-module under test — Vitest hoists `vi.mock` calls to the top of the file, but keeping the
-mock visually first avoids confusion about ordering.
+## Test `AuthProvider` directly
 
-## Testing a component that uses both seams
+Start with a small provider test before exercising a page.
+This confirms the injected auth service is used and the provider finishes its initial session check.
 
-A component test combines the stub `IAuthService` with the same `rayfinClient` mock, then
-renders through `AuthProvider` and asserts on the UI plus spies over the service functions:
+The following file matches the 1.36.2 todo template.
+
+```tsx title="src/__tests__/AuthProvider.test.tsx"
+import { render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+
+import { AuthProvider } from '@/hooks/AuthContext';
+import type { IAuthService } from '@/services/IAuthService';
+
+const stubAuthService: IAuthService = {
+  fabricAuthEnabled: false,
+  async signIn() {
+    return { id: 'u1', email: 'dev@contoso.com', name: 'dev' };
+  },
+  async signOut() {},
+  async getCurrentUser() {
+    return null;
+  },
+  async initEmbeddedAuth() {
+    return null;
+  },
+};
+
+describe('AuthProvider', () => {
+  it('renders children once initial auth check completes', async () => {
+    render(
+      <AuthProvider authService={stubAuthService}>
+        <div data-testid="content">ready</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('content')).toHaveTextContent('ready');
+    });
+  });
+});
+```
+
+## Test a component that uses both seams
+
+A page-level test combines both replacements:
+
+1. Mock `rayfinClient.ts` so `todos.ts` stays in memory.
+2. Render through `AuthProvider` with an authenticated `IAuthService` stub.
+3. Assert on UI and on spies over the service functions.
+
+The todo template does not ship this `HomePage` test file, but it uses the same seams as the shipped tests.
 
 ```tsx title="src/__tests__/HomePage.test.tsx"
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -459,19 +436,14 @@ describe('HomePage', () => {
 });
 ```
 
-Notice `stubAuthService.signIn` and `getCurrentUser` return a fixed `stubUser` here, rather
-than `null` — that signs the component tree in immediately on mount, so tests can assert on
-the authenticated `HomePage` UI without simulating a sign-in click first. Spying on
-`todosService.createTodo`/`deleteTodo` (rather than re-testing `todos.ts` itself, already
-covered above) confirms `HomePage` calls the service layer correctly and reacts to success
-and failure — the rest of the real test suite covers toggling, inline editing, and more
-failure-rollback cases with the same two seams.
+`stubAuthService.getCurrentUser()` returns `stubUser` in this page test so the component tree starts signed in.
+The provider test above returns `null` because it only verifies initialization.
 
-## Running tests
+## Run tests
 
 ```bash
 npm run test
 ```
 
-This runs `vitest run` — a single pass suitable for CI. Use `npx vitest` directly for
-watch mode during development.
+The scaffolded script runs `vitest run`, which is suitable for CI.
+Use `npx vitest` for watch mode while editing tests.

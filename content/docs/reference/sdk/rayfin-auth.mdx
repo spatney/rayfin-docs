@@ -1,82 +1,104 @@
 ---
 title: "@microsoft/rayfin-auth"
-description: The Auth client surface — signOut, session management, and the OpaqueSession shape — with exact signatures from the SDK.
-appliesTo: "@microsoft/rayfin-auth >= 1.31"
+description: "Auth client reference for sessions, storage options, refresh, sign-out, events, and provider integration points in Rayfin apps."
+appliesTo: "@microsoft/rayfin-auth >= 1.36"
 ---
 
-`@microsoft/rayfin-auth` implements Rayfin's authentication client: session lifecycle
-management, token refresh, and sign-out. You normally reach it through `client.auth` on a
-[`RayfinClient`](/docs/reference/sdk/rayfin-client) rather than constructing it yourself.
-Signing in happens through
-[`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric),
-which operates on this same `Auth` instance — Fabric SSO (Entra ID) is the only supported
-sign-in method.
+`@microsoft/rayfin-auth` manages Rayfin session lifecycle, token refresh, event listeners, and sign-out.
+Most apps access it as `client.auth` on a [`RayfinClient`](/docs/reference/sdk/rayfin-client) rather than constructing it directly.
+
+Microsoft Entra sign-in is provided by [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric), which installs sessions on this same `Auth` instance.
 
 ## Installation
 
 ```bash
-npm install @microsoft/rayfin-auth
+npm install @microsoft/rayfin-auth @microsoft/rayfin-lib
 ```
 
-## The `Auth` class
+## Auth constructor
 
 ```typescript
 class Auth {
-  constructor(apiClient: ApiClient, options?: { storage?: AuthStorage | boolean; storageKeyPrefix?: string });
+  constructor(apiClient: ApiClient, options?: AuthOptions);
+}
+```
+
+Rayfin's auth SDK detects browser and non-browser runtimes.
+When `window` is unavailable, it skips browser-only APIs such as `localStorage` unless you supply custom storage.
+Use `{ storage: false }` for Node.js scripts or server code where no browser storage should be touched.
+
+```typescript title="scripts/createAuth.ts"
+import { Auth } from '@microsoft/rayfin-auth';
+import { ApiClient } from '@microsoft/rayfin-lib';
+
+const apiClient = new ApiClient({
+  baseUrl: 'https://<workload-api-base-url>',
+  publishableKey: '<publishable-key>',
+});
+
+const auth = new Auth(apiClient, { storage: false });
+auth.attachToClient(apiClient);
+```
+
+## AuthOptions
+
+```typescript
+interface AuthOptions {
+  storage?: AuthStorage | boolean;
+  storageKeyPrefix?: string;
+  persistSession?: boolean;
+  autoRefreshToken?: boolean;
+  multiTabSync?: boolean;
 }
 
 interface AuthStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-  clear(): void;
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string): void | Promise<void>;
+  removeItem(key: string): void | Promise<void>;
+  clear?(): void | Promise<void>;
+  keys?(prefix: string): string[] | Promise<string[]>;
 }
 ```
 
-Rayfin's own SDK auto-detects Node.js, React Native, and Electron, skipping browser-only
-APIs (like `localStorage`) when `window` is undefined — the isomorphic design means the
-same `Auth` code runs in any of these environments without crashing.
-
-## Signing out
-
-| Method | Signature | Description |
-| --- | --- | --- |
-| `signOut` | `() => Promise<void>` | Revokes the current access token and clears the local session. |
-| `signOutAll` | `() => Promise<SignOutAllResponse>` | Revokes every active session for the user (all devices). Returns `{ count }`. |
-
-```typescript
-await auth.signOut();
-```
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `storage` | `AuthStorage \| boolean` | Browser `localStorage` when available | Storage implementation, `true` for default storage, or `false` for memory-only sessions. |
+| `storageKeyPrefix` | `string` | Package default | Prefix for stored auth keys. |
+| `persistSession` | `boolean` | `true` | When `false`, skips all storage I/O and keeps sessions in memory. |
+| `autoRefreshToken` | `boolean` | `true` | When `false`, disables refresh timers and automatic refresh on `401`. |
+| `multiTabSync` | `boolean` | Auto-detected in browsers | When `false`, disables `StorageEvent` cross-tab session sync. |
 
 ## Session management
 
 | Method | Signature | Description |
 | --- | --- | --- |
-| `getSession` | `() => OpaqueSession` | Returns the current session **synchronously** — not a `Promise`. |
-| `onSessionChange` | `(callback: (session: OpaqueSession \| null) => void) => () => void` | Subscribes to session changes; returns an unsubscribe function. |
-| `hasRefreshToken` | `() => boolean` | Whether a refresh token is available for `refreshSession()`. |
-| `refreshSession` | `() => Promise<TokenResponse>` | Refreshes using the stored refresh token. Concurrent calls share one in-flight request. |
+| `getSession` | `() => OpaqueSession` | Returns the current public session synchronously. |
+| `onSessionChange` | `(callback: (session: OpaqueSession \| null) => void) => () => void` | Subscribes to session changes and returns an unsubscribe function. |
+| `hasRefreshToken` | `() => boolean` | Returns whether a refresh token is available. |
+| `refreshSession` | `() => Promise<TokenResponse>` | Refreshes the session; concurrent refreshes share one in-flight request. |
+| `attachToClient` | `(client: ApiClient) => void` | Adds authorization injection and refresh handling to another `ApiClient`. |
+| `destroy` | `() => void` | Removes timers and listeners used by the `Auth` instance. |
+| `startAutoRefresh` | `() => Promise<void>` | Restarts scheduled refresh when `autoRefreshToken: false` is used. |
+| `stopAutoRefresh` | `() => void` | Stops scheduled refresh when `autoRefreshToken: false` is used. |
 
 ```typescript
-const session = auth.getSession(); // no await — synchronous
-if (session.isAuthenticated) {
-  console.log(session.user?.email);
-}
+const session = auth.getSession();
 
-const unsubscribe = auth.onSessionChange((session) => {
-  setCurrentSession(session);
+const unsubscribe = auth.onSessionChange((nextSession) => {
+  console.log(nextSession?.isAuthenticated ?? false);
 });
-// later: unsubscribe();
+
+unsubscribe();
 ```
 
 > [!WARNING]
-> The session-change callback is **`onSessionChange`**. `onAuthStateChange` does not exist
-> on the Rayfin auth client — see [Known limitations](/docs/reference/known-limitations).
+> The session-change callback is `onSessionChange`.
+> `onAuthStateChange` is not part of this SDK.
 
-### Session shape
+## OpaqueSession
 
-Session objects are opaque by design — gate UI logic on `isAuthenticated` or the presence
-of `user`, not on internal fields.
+Session objects are opaque by design.
+Gate UI logic on `isAuthenticated` or the presence of `user`, not on internal fields.
 
 ```typescript
 interface OpaqueSession {
@@ -96,31 +118,74 @@ interface User {
 }
 ```
 
-## Verifying tokens
+## TokenResponse
+
+```typescript
+interface TokenResponse {
+  accessToken: string;
+  tokenType: string;
+  expiresIn: number;
+  refreshToken?: string | null;
+  scope?: string | null;
+}
+```
+
+Provider packages consume `TokenResponse` internally to install a public `OpaqueSession`.
+Application code should not copy Rayfin tokens between clients.
+
+## Sign-out methods
 
 | Method | Signature | Description |
 | --- | --- | --- |
-| `getJwks` | `() => Promise<JwksResponse>` | Public keys for verifying Rayfin-issued JWTs, for services that validate tokens themselves. |
+| `signOut` | `() => Promise<void>` | Revokes the current access token and clears the local session. |
+| `signOutAll` | `() => Promise<SignOutAllResponse>` | Revokes every active session for the user and returns `{ count }`. |
+
+```typescript
+await auth.signOut();
+
+const result = await auth.signOutAll();
+console.log(`Revoked ${result.count} sessions`);
+```
+
+## Verification and settings methods
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `getJwks` | `() => Promise<JwksResponse>` | Fetches public signing keys for services that validate Rayfin-issued JWTs themselves. |
+| `getAuthSettings` | `() => Promise<AuthSettingsConfig>` | Fetches public auth settings from the backend. |
 
 ## Events
 
-`on(event, handler)` subscribes to a specific named `AuthEvent` (in addition to the
-general `onSessionChange`), returning an unsubscribe function. Events relevant to session
-lifecycle — independent of how the user signed in — include `'AUTH_LOGIN'`,
-`'AUTH_LOGOUT'`, `'AUTH_REFRESH'`, and `'AUTH_SESSION_EXPIRED'`:
+Use `onSessionChange` for UI state.
+For narrower lifecycle handling, subscribe to session events with `on(event, handler)`.
+The signature uses the exported `AuthEvent` union:
 
 ```typescript
-function on(event: AuthEvent, handler: (session: OpaqueSession) => void): () => void;
+import type { AuthEvent, OpaqueSession } from '@microsoft/rayfin-auth';
 
-auth.on('AUTH_SESSION_EXPIRED', () => redirectToLogin());
+function on(event: AuthEvent, handler: (session: OpaqueSession) => void): () => void;
+```
+
+The exported union contains every auth event emitted by the SDK. Fabric apps usually care
+about these session lifecycle events:
+
+| Event | Fires when |
+| --- | --- |
+| `AUTH_LOGIN` | A session is established. |
+| `AUTH_LOGOUT` | The user signs out. |
+| `AUTH_REFRESH` | The session refreshes. |
+| `AUTH_SESSION_EXPIRED` | The access token expires and no refresh token can recover the session. |
+
+```typescript
+auth.on('AUTH_SESSION_EXPIRED', () => redirectToSignIn());
 ```
 
 ## React usage
 
-```typescript
-import { useState, useEffect } from 'react';
-import { auth } from './lib/rayfin';
+```typescript title="src/hooks/useAuth.ts"
+import { useEffect, useState } from 'react';
 import type { OpaqueSession } from '@microsoft/rayfin-auth';
+import { auth } from './lib/rayfin';
 
 export function useAuth() {
   const [session, setSession] = useState<OpaqueSession | null>(null);
@@ -138,14 +203,51 @@ export function useAuth() {
 }
 ```
 
-Wire up sign-in separately with
-[`ensureSignedInWithFabric`](/docs/reference/sdk/rayfin-auth-provider-fabric), which takes
-this same `auth` instance.
+Wire sign-in separately with [`ensureSignedInWithFabric`](/docs/reference/sdk/rayfin-auth-provider-fabric), [`signInWithEntraToken`](/docs/reference/sdk/rayfin-auth-provider-fabric#signinwithentratoken), or the local development helper that installs a brokered token.
+
+## AuthApi provider integration
+
+`auth.getAuthApi()` returns the lower-level `AuthApi` used by companion provider packages.
+Rayfin 1.36 adds `getBrokeredAuthorizeExternalUrl()` so the external embed flow can tell the parent host which endpoint to call. [New in 1.36](/docs/reference/changelog#rayfin-136)
+
+```typescript
+class AuthApi {
+  getBrokeredAuthorizeExternalUrl(): string;
+  exchangeVerificationCode(request: VerificationCodeExchangeRequest): Promise<TokenResponse>;
+  getAuthSettings(): Promise<AuthSettingsConfig>;
+}
+```
+
+Builders using `ensureSignedInWithFabric()` or `createEmbedHost()` do not call `getBrokeredAuthorizeExternalUrl()` directly.
+The provider SDK includes it in the external-embed handshake.
+
+## Internal provider exports
+
+The package also exposes `@microsoft/rayfin-auth/_internal` for first-party provider packages.
+Do not use these helpers in application code:
+
+```typescript
+function getAuthProviderClient(auth: Auth): ApiClient;
+function runProviderSignIn<T>(auth: Auth, operation: () => Promise<T>): Promise<T>;
+function createSessionFromTokenResponse(
+  auth: Auth,
+  tokenResponse: TokenResponse,
+  options?: { persistBeforeCommit?: boolean }
+): Promise<OpaqueSession>;
+```
+
+## PKCE helper exports
+
+The root package exports PKCE utilities used by auth providers:
+
+```typescript
+function generateCodeVerifier(): string;
+function generateCodeChallenge(verifier: string): Promise<string>;
+function generateState(): string;
+```
 
 ## Configuration and restart behavior
 
-Auth is configured in `rayfin.yml` under `services.auth` (`enabled`, `allowedRedirectUris`,
-`fabric.enabled`). After changing any of these values, restart the backend
-(`npx rayfin up`) so the updated endpoints are exposed — the running server does not pick
-up `rayfin.yml` changes on its own. See
-[Known limitations](/docs/reference/known-limitations).
+Auth is configured in `rayfin.yml` under `services.auth`.
+After changing values such as `enabled`, `allowedRedirectUris`, `fabric.enabled`, or `fabric.externalEntraExchange`, apply the updated runtime settings with `npm run dev` or `npx rayfin up`.
+A running backend does not infer local config changes until they are applied.

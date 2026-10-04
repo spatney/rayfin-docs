@@ -1,0 +1,154 @@
+---
+title: "@microsoft/rayfin-app-state-fabric"
+description: "SDK reference for Fabric-hosted deep-link state: createFabricAppStateClient, state limits, capabilities, listeners, and errors."
+---
+
+`@microsoft/rayfin-app-state-fabric` lets a Rayfin app embedded in Fabric read and write shareable deep-link state through the Fabric host. Use it from browser code, not from Functions or server-side code.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-app-state-fabric
+```
+
+Install the same Rayfin version as the rest of the project's `@microsoft/rayfin-*` packages.
+
+## Exports
+
+```typescript
+import {
+  createFabricAppStateClient,
+  FabricAppStateError,
+  DEFAULT_MAX_ENCODED_BYTES,
+  DEFAULT_MAX_DEPTH,
+} from '@microsoft/rayfin-app-state-fabric';
+
+import type {
+  FabricAppState,
+  FabricAppStateValue,
+  FabricAppStateCapabilities,
+  FabricAppStateClient,
+  FabricAppStateClientOptions,
+  FabricAppStateListener,
+} from '@microsoft/rayfin-app-state-fabric';
+```
+
+## `createFabricAppStateClient()`
+
+```typescript
+function createFabricAppStateClient(options?: FabricAppStateClientOptions): FabricAppStateClient;
+```
+
+Create one client for the lifetime of the app and share it between components. Construction is safe both embedded and standalone.
+
+### `FabricAppStateClientOptions`
+
+```typescript
+interface FabricAppStateClientOptions {
+  target?: Window;
+  targetOrigin?: string;
+  timeoutMs?: number;
+  maxEncodedBytes?: number;
+  maxDepth?: number;
+  launchSearch?: string;
+  scrubLaunchParam?: boolean;
+}
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `target` | `window.parent` | Host window to message. |
+| `targetOrigin` | Omitted | Expected host origin. Leave unset for Fabric because the extension host origin varies. |
+| `timeoutMs` | Bridge default | Per-request timeout. |
+| `maxEncodedBytes` | `4096` | Client-side encoded-size ceiling. |
+| `maxDepth` | `20` | Client-side nesting-depth ceiling. |
+| `launchSearch` | `window.location.search` | Query string used to read seeded launch state. |
+| `scrubLaunchParam` | `true` | Removes the seeded state parameter from the app iframe URL after reading. |
+
+## `FabricAppStateClient`
+
+```typescript
+interface FabricAppStateClient {
+  getLaunchState(): Promise<FabricAppState | undefined>;
+  getLaunchStateSync(): FabricAppState | undefined;
+  isSupported(): Promise<FabricAppStateCapabilities | undefined>;
+  setState(state: FabricAppState): Promise<void>;
+  replaceState(state: FabricAppState): Promise<void>;
+  onStateChange(listener: FabricAppStateListener): () => void;
+  dispose(): void;
+}
+```
+
+| Method | Use |
+| --- | --- |
+| `getLaunchStateSync()` | Read seeded state before first render when startup cannot be async. |
+| `getLaunchState()` | Async launch-state read; resolves from seeded state when available. |
+| `isSupported()` | Resolve host capabilities, or `undefined` when deep linking is unavailable. |
+| `setState(state)` | User-initiated navigation that should add a browser history entry. |
+| `replaceState(state)` | App-initiated, normalizing, restoring, or high-frequency changes. |
+| `onStateChange(listener)` | Subscribe to Back, Forward, or externally opened deep links. |
+| `dispose()` | Remove listeners and release the bridge subscription. |
+
+## State types
+
+```typescript
+type FabricAppStateValue =
+  | string
+  | number
+  | boolean
+  | null
+  | FabricAppStateValue[]
+  | { [key: string]: FabricAppStateValue };
+
+interface FabricAppState {
+  [key: string]: FabricAppStateValue;
+}
+```
+
+`undefined`, functions, symbols, `NaN`, `Infinity`, `Date`, `Map`, `Set`, class instances, and circular references are rejected. The whole object is replaced on every write.
+
+## Capabilities
+
+```typescript
+interface FabricAppStateCapabilities {
+  version: number;
+  maxEncodedBytes: number;
+  maxDepth: number;
+  canPush: boolean;
+}
+```
+
+The host is authoritative. Use `maxEncodedBytes` and `maxDepth` as the real limits after `isSupported()` resolves. When `canPush` is `false`, `setState()` can update the URL but cannot add browser history entries.
+
+## Constants
+
+```typescript
+const DEFAULT_MAX_ENCODED_BYTES = 4096;
+const DEFAULT_MAX_DEPTH = 20;
+```
+
+These are client-side defaults. A host can report different limits through `FabricAppStateCapabilities`.
+
+## Errors
+
+```typescript
+class FabricAppStateError extends SdkError {
+  name: string;
+  constructor(message: string, code: string);
+}
+```
+
+Branch on `code`, not the message.
+
+| Code | Meaning |
+| --- | --- |
+| `INVALID_STATE` | State is not JSON-serializable. |
+| `STATE_TOO_LARGE` | State exceeds the encoded-size budget. |
+| `STATE_TOO_DEEP` | State exceeds the nesting-depth limit. |
+| `UNSUPPORTED_HOST_CAPABILITY` | Host does not implement deep-link state. |
+| `NO_HOST_WINDOW` | App is not embedded in the Fabric portal. |
+| `BRIDGE_TIMEOUT` | Host did not respond in time. |
+
+## Security
+
+State is encoded into a URL owned by Fabric. It can appear in the address bar, history, bookmarks, screenshots, copied links, and proxy logs. Do not store secrets, tokens, or personal data. Treat launch state as untrusted input.

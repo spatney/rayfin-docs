@@ -1,106 +1,193 @@
 ---
 title: rayfin.yml reference
-description: The complete rayfin.yml schema, key by key — id, services.auth, services.data, services.storage, services.staticHosting, services.functions, and connectors.
+description: Complete Rayfin 1.36.2 rayfin.yml schema for services, static hosting, Functions, storage, connectors, and secret declarations.
 ---
 
-`rayfin/rayfin.yml` is a project's committed configuration file: which services are
-enabled, the database dialect, static hosting settings, and Functions settings. The CLI
-reads it on every command and writes back to it during scaffolding, `rayfin init`
-reconfiguration, and (for `allowedRedirectUris` and connector entries) after a deploy.
-
-> [!WARNING]
-> Always declare `services.auth` and `services.data` explicitly, even as `enabled: false`.
-> The CLI reads those keys without guarding and does no defaulting — omitting either block
-> entirely causes a failure rather than falling back to a default. Also: if
-> `services.data.enabled` is `true`, omitting `dialect` causes a 400 at deploy time
-> (`Dialect is required when Data module is enabled`).
+`rayfin/rayfin.yml` is the committed project configuration. The CLI reads it for `rayfin
+dev`, `rayfin up`, `rayfin env`, Functions, connectors, and secret type generation.
 
 ## Top-level keys
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `id` | string | **Required.** Unique project identifier. Used as the Fabric item name when deploying. |
-| `name` | string | **Required.** Human-readable project name. |
-| `version` | string | **Required.** Project version string. |
-| `services` | object | **Required.** See below. |
-| `connectors` | list | Optional. External Fabric data sources. Each entry has its own `name` — see [Connector](/docs/reference/cli/connector). |
-| `frontend` | object | Deprecated. The frontend framework is now auto-detected from `vite.config.*` / `next.config.*` / `package.json` at runtime. Retained only for backward compatibility with older `rayfin.yml` files. |
-| `publishable_key` | string | Legacy. Some projects scaffolded by older CLI versions carry a top-level `publishable_key`. Current CLI versions manage the publishable key through `rayfin/.env` (`RAYFIN_PUBLIC_PUBLISHABLE_KEY`) instead — see [Environment variables](/docs/reference/config/environment-variables). |
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | string | yes | Project identifier. `rayfin up` uses it as the default Fabric item display name. |
+| `name` | string | yes | Human-readable project name. |
+| `version` | string | yes | Project version string written by scaffolding. |
+| `services` | object | yes | Service configuration. |
+| `connectors` | array | no | External data connector entries. The parser also tolerates legacy map shape on read. |
+| `secrets` | array | no | Secret declarations used by Functions typing. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `frontend` | object | no | Deprecated; framework is auto-detected at runtime. |
+| `publishable_key` | string | no | Legacy. Current CLI writes `RAYFIN_PUBLIC_PUBLISHABLE_KEY` to `rayfin/.env`. |
 
 ## `services.auth`
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `enabled` | boolean | **Required.** Turns the Auth service on or off. |
-| `fabric.enabled` | boolean | Fabric SSO (Entra ID). The only supported authentication method. |
-| `allowedRedirectUris` | string[] | Origins allowed to receive auth redirects. `rayfin up` appends the live hosting URL here automatically after a static deploy. |
-| `expiryInMinutes` | number | Session token lifetime. |
-| `customClaims` | map | Additional claims to include in issued tokens. |
-| `scopes` | string[] | Additional OAuth scopes. |
-| `refreshToken.lifetimeInDays` | number | Refresh token lifetime. |
+Microsoft Entra ID through Fabric SSO is the supported identity provider.
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | yes | Turns Auth on or off. |
+| `fabric.enabled` | boolean | when Auth is enabled | Enables Fabric brokered auth. |
+| `fabric.externalEntraExchange` | boolean | no | Allows callers that already hold a delegated Entra token to exchange it for a Rayfin session through external brokered endpoints. Defaults to absent/false. |
+| `allowedRedirectUris` | string[] | no | Redirect origins accepted by Auth. `rayfin dev` and `rayfin up` add local dev and hosted origins. |
+| `expiryInMinutes` | number | no | Session token lifetime. |
+| `customClaims` | `Record<string, string>` | no | Custom claims added to issued tokens. |
+| `scopes` | string[] | no | OAuth scopes. |
+| `refreshToken.lifetimeInDays` | number | no | Refresh token lifetime. |
+
 
 ## `services.data`
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `enabled` | boolean | **Required.** Turns the Data service (Data API Builder) on or off. |
-| `dialect` | `mssql` | **Required if `enabled` is `true`.** Fabric supports `mssql` only. |
-
-## `services.storage`
-
-| Key | Type | Description |
-| --- | --- | --- |
-| `enabled` | boolean | Turns the Storage service (Azure Storage) on or off. Requires the `storage` feature flag to configure interactively — see [Environment variables](/docs/reference/config/environment-variables). |
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | yes | Turns Data on or off. |
+| `dialect` | `mssql` | when enabled | Database dialect. Fabric supports `mssql`. |
+| `allowIntrospection` | boolean | no | Enables GraphQL `__schema` / `__type` introspection. Defaults to false when omitted. |
+| `path` | string | no | Data package directory relative to the project root. |
+| `buildCommand` | string | no | Command to run before entity compilation. |
 
 ## `services.staticHosting`
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `enabled` | boolean | Turns static hosting on or off. |
-| `folder` | string | **Required if `enabled` is `true`.** Build output directory to package and deploy, relative to the project root. |
-| `buildCommand` | string | Command to run before packaging (e.g. `npm run build:fabric`). |
-| `indexDocument` | string | Default document served for directory requests (e.g. `index.html`). |
-| `root` | string | Root directory of the frontend project, relative to the project root. Optional. |
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | yes | Turns static hosting on or off. |
+| `path` | string | no | Frontend package directory relative to the project root. |
+| `root` | string | no | Frontend root relative to `path` or project root. Absolute and parent-traversing values are invalid. |
+| `folder` | string | when enabled | Build output folder relative to `root`. |
+| `buildCommand` | string | no | Command to run before deploy. |
+| `indexDocument` | string | no | Default document, usually `index.html`. |
+| `assetAccess` | `protected` \| `public` | required for static-hosted deploys | Who can load hosted assets: `protected` requires Fabric sign-in, `public` serves anyone with the link. Replaces `anonymousAccess`. New projects scaffold `protected`, and non-interactive `rayfin up` writes `protected` when it is missing. [New in 1.35.1](/docs/reference/changelog#rayfin-1351) |
+| `embedded.only` | boolean | no | Whether the app loads only inside the Fabric portal. |
+
+Older projects may omit `assetAccess`. Choose explicitly before deployment; do not rely on
+implicit access changes.
 
 ## `services.functions`
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `enabled` | boolean | Turns the Functions service on or off. `rayfin functions init` sets this to `true` automatically when scaffolding. |
-| `buildCommand` | string | Command to run before deploying Functions. Optional. |
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Functions no longer need a feature flag, and enabled Functions must declare
+`auth.type: application`.
+
+> [!NOTE]
+> Functions are not available in every Fabric region or tenant.
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | yes | Turns Functions on or off. |
+| `auth.type` | `application` | required when enabled | Artifact-level Functions authentication. No default is applied during validation; `rayfin init --services functions` and `rayfin functions init` scaffold it. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `path` | string | no | Functions package directory relative to the project root. Defaults to `rayfin/functions`. |
+| `buildCommand` | string | no | Build command before local run or deploy. Defaults to `npm run build` in local Functions tooling when omitted. |
+
+Functions that call Rayfin data through `ctx.getDataClient()` remain caller-scoped to the
+invocation's Rayfin token. Functions that use declared external connections through
+`ctx.Tokens.<Audience>` receive app-identity tokens for the configured audience, not the
+signed-in user's delegated token.
+
+Invalid Functions config fails with exact messages such as:
+
+```text
+Invalid services.functions.auth: authentication is required when Functions are enabled. Set services.functions.auth.type to "application".
+```
+
+## `services.storage`
+
+[Experimental](/docs/reference/changelog#feature-status)
+
+> [!WARNING]
+> Storage is experimental and may not be available in every Fabric region or tenant. Enable
+> it with `RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled: true`.
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | yes | Turns Storage on or off. |
+| `path` | string | no | Storage package directory relative to the project root. |
+
+Storage depends on Data; `rayfin init` rejects `storage` without `data`.
 
 ## `services.connectors`
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `enabled` | boolean | Registers the `rayfin connector` command group without needing `RAYFIN_FEATURE_FLAGS=connectors`. |
+| `enabled` | boolean | Deprecated no-op. Connectors are generally available and the CLI command group is always registered. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 
-Set this before adding the first connector:
-
-```yaml title="rayfin/rayfin.yml"
-services:
-  connectors:
-    enabled: true
-```
+Do not add this block to new configs.
 
 ## `connectors`
 
-`connectors:` is a top-level **list** of entries, not a map keyed by connector name.
-`rayfin connector add` writes this block and keeps it in the current list shape. See
-[Adding a connector](/docs/connectors/adding) and
-[Connector authentication](/docs/connectors/auth).
+Top-level `connectors` is an array. See [Connector](/docs/reference/cli/connector) for the
+command reference.
 
-| Field | Type | Required | Notes |
+| Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Unique. Must match `/^[a-zA-Z0-9\-_]+$/` and be at most 256 characters. |
-| `type` | string | yes | One of `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, `fabric-semanticmodel`, or `kusto`. |
-| `version` | string | Category B only | Positive integer string, for example `'1'`. Required for `fabric-semanticmodel` and `kusto`. |
-| `config.workspaceId` | string | yes | Fabric workspace ID. |
-| `config.itemId` | string | yes | Fabric item ID. |
-| `auth.type` | `delegated` \| `application` | yes | Lowercase. `application` is rejected on Category B types. |
-| `operations[].name` | string | no | Operation objects, not bare strings. Must be a subset of the type's allowed operations; defaults to all allowed operations. |
+| `name` | string | yes | Unique connector name, 1–256 chars, alphanumeric plus hyphen and underscore. |
+| `type` | connector type | yes | `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, `fabric-semanticmodel`, or existing `kusto`. |
+| `version` | positive integer string | Category B | Required for `fabric-semanticmodel` and `kusto`, for example `'1'`. |
+| `config.workspaceId` | string | Fabric connectors | Fabric workspace ID. |
+| `config.itemId` | string | Fabric connectors | Fabric item ID. |
+| `auth.type` | `delegated` \| `application` | yes | Required. Category A defaults to `application` when added by CLI in 1.36; Category B supports `delegated` only. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `operations[].name` | operation | no | Subset of allowed operations; omit for all allowed operations. |
+
+| Type | Category | Default auth in 1.36 | Allowed auth | Operations | Authoring status |
+| --- | --- | --- | --- | --- | --- |
+| `fabric-sqlanalytics` | Category A | `application` | `delegated`, `application` | `read` | Released |
+| `fabric-warehouse` | Category A | `application` | `delegated`, `application` | `read`, `create`, `update`, `delete` | Released |
+| `fabric-sqldatabase` | Category A | `application` | `delegated`, `application` | `read`, `create`, `update`, `delete` | Released |
+| `fabric-semanticmodel` | Category B | `delegated` | `delegated` | `executeQuery` | Released |
+| `kusto` | Category B | `delegated` | `delegated` | `executeQuery`, `executeCommand` | Held: existing declarations validate and deploy, but 1.36 authoring commands reject new Kusto connectors. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+
+## `secrets`
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+`rayfin secret set --describe="..."` appends declarations here. Values are never stored in
+`rayfin.yml`; only names and descriptions are committed.
 
 ```yaml title="rayfin/rayfin.yml"
+secrets:
+  - name: STRIPE_API_KEY
+    description: API key used by payment functions
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Secret name used by `ctx.Secrets.<NAME>` and type generation. |
+| `description` | string | no | Human-readable description. When omitted from `rayfin secret set`, the CLI writes `TODO: Add description for this secret`. |
+
+## Complete example
+
+```yaml title="rayfin/rayfin.yml"
+id: universal-app
+name: Universal App
+version: 1.0.0
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+      externalEntraExchange: true
+    allowedRedirectUris:
+      - http://localhost:5173
+  data:
+    enabled: true
+    dialect: mssql
+    allowIntrospection: false
+  staticHosting:
+    enabled: true
+    path: packages/frontend
+    folder: dist
+    buildCommand: npm run build:fabric
+    indexDocument: index.html
+    assetAccess: protected
+    embedded:
+      only: false
+  functions:
+    enabled: true
+    path: packages/functions
+    buildCommand: npm run build
+    auth:
+      type: application
+  storage:
+    enabled: false
 connectors:
   - name: sales_warehouse
     type: fabric-warehouse
@@ -108,76 +195,20 @@ connectors:
       workspaceId: 00000000-0000-0000-0000-000000000000
       itemId: 11111111-1111-1111-1111-111111111111
     auth:
-      type: delegated
-    operations:
-      - name: read
-      - name: create
-      - name: update
-      - name: delete
-  - name: sales_model
-    type: fabric-semanticmodel
-    version: '1'
-    config:
-      workspaceId: 00000000-0000-0000-0000-000000000000
-      itemId: 22222222-2222-2222-2222-222222222222
-    auth:
-      type: delegated
-    operations:
-      - name: executeQuery
+      type: application
+secrets:
+  - name: STRIPE_API_KEY
+    description: API key used by payment functions
 ```
 
-For `kusto`, `queryServiceUri` and `databaseName` are never written into `rayfin.yml`.
-They live only in the generated `rayfin/connectors/<name>/schema.ts`.
+## Environment interpolation
 
-## Complete annotated example
+Any value may use `${VAR}` or `${VAR:-default}`. See
+[Environment variable interpolation](/docs/reference/config/env-interpolation).
 
-This is a real, deployed project's `rayfin.yml` (from a project scaffolded with the
-`todoapp` template):
-
-```yaml title="rayfin/rayfin.yml"
-id: test1
-name: test1
-version: 1.0.0
-services:
-  auth:
-    enabled: true
-    fabric:
-      enabled: true # Fabric SSO — the only supported auth method
-    allowedRedirectUris:
-      - http://localhost:5173 # local Vite dev server
-      - https://clear-gale-6d8b0ba024-westus.webapp.rayfingwdev.com # appended by `rayfin up` after the first static deploy
-  data:
-    enabled: true
-    dialect: mssql # required whenever data.enabled is true
-  storage:
-    enabled: false # declared explicitly even though unused — see the warning above
-  staticHosting:
-    enabled: true
-    folder: dist # Vite's build output directory
-    buildCommand: npm run build:fabric
-    indexDocument: index.html
-  functions:
-    enabled: false
-publishable_key: pk-atYGKKCZi3uykRKndYqX # legacy — current CLI versions keep this in rayfin/.env instead
-```
-
-## Environment variable interpolation
-
-Any value in `rayfin.yml` can reference an environment variable with `${VAR}` or
-`${VAR:-default}`:
-
-```yaml
-services:
-  data:
-    dialect: ${DB_DIALECT:-mssql}
-```
-
-See [Environment variable interpolation](/docs/reference/config/env-interpolation) for the
-full syntax, type coercion rules, and resolution priority.
-
-```prompt title="Audit required service declarations"
-Read my project's rayfin/rayfin.yml and confirm that both services.auth and services.data
-are declared explicitly, even if disabled, and that services.data.dialect is set to mssql
-whenever services.data.enabled is true. Fix anything missing, then run
-`npx rayfin up --dry-run` to confirm the change is valid before deploying for real.
+```prompt title="Fix a Rayfin 1.36 configuration"
+Read rayfin/rayfin.yml and update it for Rayfin 1.36: add
+`services.staticHosting.assetAccess: protected` if static hosting is enabled and missing,
+add `services.functions.auth.type: application` if Functions are enabled, and remove any
+need for `services.connectors.enabled`. Then run `npx rayfin up --dry-run`.
 ```

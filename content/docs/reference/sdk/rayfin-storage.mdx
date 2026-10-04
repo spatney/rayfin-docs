@@ -1,64 +1,160 @@
 ---
 title: "@microsoft/rayfin-storage"
-description: Type-safe blob storage client for Rayfin — what it's for and how to model storage folders today, pending a version-locked API reference.
+description: Type-safe client SDK for experimental Rayfin Storage folders, including client composition, operation options, result shapes, and error codes.
+appliesTo: "@microsoft/rayfin-storage >= 1.36"
 ---
 
-`@microsoft/rayfin-storage` is Rayfin's type-safe blob storage client. Per the package
-catalog, it provides a storage client for Rayfin storage backends (blob upload, download,
-and file management).
+`@microsoft/rayfin-storage` is the typed client for Rayfin Storage folders declared with `@blob()`.
+
+[Experimental](/docs/reference/changelog#feature-status) [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
 > [!WARNING]
-> Storage is experimental and is not available in every Fabric region or tenant.
-> `@microsoft/rayfin-storage` may change substantially between releases.
-
-> [!NOTE]
-> `@microsoft/rayfin-storage` is not installed in the environment this reference was
-> written against, so its method signatures cannot be verified here. Run
-> `rayfin docs search 'storage' --module ts-sdk` (or the MCP server's
-> `search_docs(query: 'storage', module: 'ts-sdk')`) from your project root for the
-> version-locked API surface of the package you actually have installed. See
-> [MCP server](/docs/reference/cli/docs#mcp-server) for how those lookups work.
+> Storage is experimental and is not available in every Fabric region or tenant. Enable it with `services.storage.enabled: true` or `RAYFIN_FEATURE_FLAGS=storage` before relying on storage CLI commands or agent skills.
 
 ## Installation
 
+Install the exact same version as every other `@microsoft/rayfin-*` package in the project:
+
 ```bash
-npm install @microsoft/rayfin-storage
+npm install @microsoft/rayfin-storage@1.36.2
 ```
 
-Storage is also gated behind a CLI feature flag in current builds — set
-`RAYFIN_FEATURE_FLAGS=storage` to expose storage prompts in `rayfin init`.
-
-## What is verifiable today
-
-The one part of the storage model that is verified independently — because it lives in
-`@microsoft/rayfin-core`, which *is* installed — is the `@blob()` class decorator you use
-to declare a storage folder:
+## Exports
 
 ```typescript
-import { blob, role } from '@microsoft/rayfin-core';
+export { StorageFolderClient } from './StorageFolderClient.js';
+export { StorageApi, createStorageClient } from './StorageClient.js';
+export type {
+  StorageClient,
+  StorageCustomFields,
+  StorageDeleteResult,
+  StorageDownloadResult,
+  StorageError,
+  StorageErrorCode,
+  StorageListResult,
+  StorageObjectRef,
+  StorageSchema,
+  StorageUploadResult,
+  UploadOptions,
+  DownloadOptions,
+  DeleteOptions,
+  ListOptions,
+} from '@microsoft/rayfin-storage';
+export { STORAGE_ERROR_CODES, isStorageError } from '@microsoft/rayfin-storage';
+```
 
-@blob('uploads')
-@role('authenticated', '*')
-export class FileModel {
-  owner_id!: string;
+`StorageConflictMode` and `UploadProgressEvent` are not exported in 1.36. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
+
+## Client shape
+
+```typescript
+function createStorageClient<TSchema extends StorageSchema>(apiClient: ApiClient): StorageClient<TSchema>;
+
+class StorageApi<TSchema extends StorageSchema = StorageSchema> extends ServicePlugin {
+  getFolderClient<K extends keyof TSchema & string>(
+    folderName: K
+  ): StorageFolderClient<StorageObjectRef & Partial<StorageCustomFields<TSchema[K]>>>;
+  getInstantiatedFolderNames(): (keyof TSchema)[];
+}
+
+type StorageClient<TSchema extends StorageSchema> = {
+  [K in keyof TSchema]: StorageFolderClient<
+    StorageObjectRef & Partial<StorageCustomFields<TSchema[K]>>
+  >;
+} & StorageApi<TSchema>;
+```
+
+Custom metadata fields declared on the `@blob()` class are optional on returned objects. The SDK omits intrinsic storage fields and `StorageObject` fields from `StorageCustomFields<T>`.
+
+## `StorageObjectRef`
+
+```typescript
+interface StorageObjectRef {
+  id: string;
+  folder: string;
+  path: string;
+  name: string;
+  size: number;
+  sizeBig?: bigint;
+  contentType?: string;
+  contentDisposition?: string;
+  cacheControl?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  lastAccessedAt?: string | null;
+  etag?: string;
 }
 ```
 
-- `@blob(folderName?)` marks a class as a blob storage folder. The name defaults to the
-  kebab-case class name when omitted.
-- Permissions use the same `@role()` / `@authenticated()` / `@anonymous()` decorators as
-  data entities (see [`@microsoft/rayfin-core`](/docs/reference/sdk/rayfin-core)) — a
-  folder is inferred public if the `anonymous` role has any granted permission on it,
-  otherwise private.
+`storedPath` and `userMetadata` are no longer part of `StorageObjectRef`. Custom list metadata is flattened onto the returned item instead. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
 
-`@blob()` is what the Rayfin CLI reads to generate storage configuration when you run
-`rayfin up`. It does not, by itself, give you a client to upload or download files — that
-surface belongs to `@microsoft/rayfin-storage` and is out of scope for this page.
+## Operation signatures
 
-## What this page deliberately omits
+```typescript
+class StorageFolderClient<TObject extends StorageObjectRef = StorageObjectRef> {
+  upload(
+    name: string,
+    data: Blob | ArrayBuffer | Uint8Array | ReadableStream | string,
+    options?: UploadOptions<TObject>
+  ): Promise<StorageUploadResult<TObject>>;
 
-No client construction signature, upload/download method names, or options are documented
-here, because none could be confirmed against either the vendored package docs or an
-installed copy of the package. Documenting a guessed method signature would be worse than
-leaving it out — use the `rayfin docs` lookup above to get the real surface for your
-project's installed version.
+  download(name: string, options?: DownloadOptions): Promise<StorageDownloadResult>;
+  list(options?: ListOptions): Promise<StorageListResult<TObject>>;
+  delete(name: string, options?: DeleteOptions): Promise<StorageDeleteResult>;
+}
+```
+
+| Option type | Properties |
+| --- | --- |
+| `UploadOptions<TObject>` | `prefix?`, `signal?`, `contentType?`, `contentDisposition?`, `cacheControl?`, `expiresInSeconds?`, `fields?: Partial<StorageCustomFields<TObject>>` |
+| `DownloadOptions` | `prefix?`, `signal?`, `expiresInSeconds?` |
+| `ListOptions` | `prefix?`, `limit?`, `continuation?`, `signal?` |
+| `DeleteOptions` | `prefix?`, `signal?` |
+
+`declaredSize`, `onProgress`, `userMetadata`, per-call `onConflict`, download `range`, download content header overrides, and caller-supplied `correlationId` are removed. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
+
+## Results
+
+```typescript
+interface StorageUploadResult<TObject = StorageObjectRef> {
+  object: TObject;
+  correlationId: string;
+}
+
+interface StorageDownloadResult {
+  stream: ReadableStream<Uint8Array>;
+  contentType?: string;
+  contentDisposition?: string;
+  contentLength?: number;
+  etag?: string;
+  correlationId: string;
+}
+
+interface StorageListResult<TObject = StorageObjectRef> {
+  items: TObject[];
+  continuation?: string;
+  correlationId: string;
+}
+
+interface StorageDeleteResult {
+  success: boolean;
+  deleted: number;
+  correlationId: string;
+}
+```
+
+`download().contentDisposition` is the value returned by OneLake when present; the SDK does not synthesize it. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+## Errors
+
+```typescript
+interface StorageError extends Error {
+  code: StorageErrorCode;
+  status: number;
+  correlationId: string;
+  response?: Response;
+  retryable: boolean;
+}
+```
+
+Stable codes are exported as `STORAGE_ERROR_CODES`: `InvalidFolder`, `InvalidPath`, `InvalidName`, `InvalidPrefix`, `InvalidSasExpiry`, `TooLarge`, `UnsupportedContentType`, `Conflict`, `NotFound`, `PermissionDenied`, `Unauthenticated`, `InvalidContinuation`, `UploadSessionExpired`, `CommitFailed`, `RateLimited`, `Unexpected`, `Aborted`, `MissingOrMalformedOperationId`, and `NoStorageEntitiesConfigured`.

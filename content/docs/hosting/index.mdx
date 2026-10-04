@@ -1,190 +1,166 @@
 ---
 title: Static content hosting
-description: Deploy your built frontend alongside your Rayfin backend with staticHosting in rayfin.yml — configuration, deployment, limits, and troubleshooting.
+description: Configure Rayfin static hosting, asset access, package version declarations, deployment commands, and the 100 MB archive limit.
 ---
 
-Rayfin can build, package, and serve your frontend as static content alongside your backend
-APIs. Once static hosting is enabled, `rayfin up` deploys your built assets to the Rayfin
-host, which serves them at a public URL — no separate static-hosting service to configure.
+Static hosting serves your built frontend from the same Fabric app as the Rayfin backend. `rayfin up` publishes static content; `rayfin dev` runs the frontend locally and never publishes static assets.
 
 ## How it works
 
-1. Rayfin runs your configured build command (for example, `npm run build`).
-2. The CLI validates that the output folder exists and contains files.
-3. All files are packaged into a compressed ZIP archive (100 MB maximum).
-4. The archive is uploaded to the Rayfin host, which extracts and serves the content.
-5. The host returns a public hosting URL where your site is accessible.
+1. Rayfin reads `services.staticHosting` from `rayfin/rayfin.yml`.
+2. The CLI resolves the frontend package directory from `path` and `root`.
+3. The CLI refreshes the frontend `.env.local` when it can detect the framework.
+4. Rayfin runs `buildCommand` unless the command is skipped.
+5. The output folder is validated and packaged into a compressed archive.
+6. The archive is uploaded to the Fabric app.
+7. The returned hosting URL is recorded in `rayfin/.deployments.json`.
+8. The hosting origin is registered in `allowedRedirectUris` for Fabric SSO.
 
-## Configuration
-
-Add a `staticHosting` block under `services` in `rayfin.yml`:
+## Configure static hosting
 
 ```yaml title="rayfin/rayfin.yml"
 services:
   staticHosting:
     enabled: true
+    path: packages/frontend
     folder: dist
-    buildCommand: npm run build
+    buildCommand: npm run build:fabric
     indexDocument: index.html
+    assetAccess: protected
 ```
 
 | Option | Required | Default | Description |
 | --- | --- | --- | --- |
-| `enabled` | Yes | — | Set to `true` to enable static hosting. |
-| `folder` | Yes | `"dist"` | Output folder containing built static files, relative to `root`. |
-| `root` | No | Project root | Root directory of the frontend project, relative to the project root. |
-| `buildCommand` | No | — | Shell command to run before packaging, e.g. `npm run build`. |
-| `indexDocument` | No | — | Default document to serve for directory requests, e.g. `index.html`. |
+| `enabled` | Yes | `false` | Enables static hosting. |
+| `path` | No | Project root | Frontend package directory relative to the app root. Use this for npm workspaces such as `packages/frontend`. |
+| `root` | No | `path` or project root | Build working directory relative to `path` when `path` is configured. Kept for older flat layouts. |
+| `folder` | Yes | `dist` | Built asset folder relative to the resolved static-hosting directory. |
+| `buildCommand` | No | — | Command Rayfin runs before packaging, for example `npm run build:fabric`. |
+| `indexDocument` | No | — | Default document for directory requests, for example `index.html`. |
+| `assetAccess` | Yes for new posture-aware deploys | `protected` in new projects | `protected` requires Fabric sign-in before hosted assets load; `public` lets anyone with the link load assets. [New in 1.35.1](/docs/reference/changelog#rayfin-1351) |
 
-### A separate frontend directory
+`assetAccess` replaces the older `anonymousAccess` authoring property. The CLI removes `services.staticHosting.anonymousAccess` when it records the new value. Non-interactive `rayfin up` runs such as `--yes`, `--json`, and CI default a missing posture to `protected` and write it to `rayfin.yml` instead of failing. [New in 1.35.1](/docs/reference/changelog#rayfin-1351)
 
-If your frontend lives in a subdirectory, set `root`:
+## Choose protected or public assets
+
+| Value | Meaning |
+| --- | --- |
+| `protected` | Visitors must sign in with Fabric before hosted assets load. This is the recommended default. |
+| `public` | Anyone with the link can load the hosted static assets. APIs and data permissions still apply. |
+
+Do not combine `assetAccess: public` with `embedded.only: true`. An embedded-only app has no standalone public surface.
+
+## Workspace frontend example
+
+The 1.36 universal app uses an npm workspace and points static hosting at the frontend package:
 
 ```yaml title="rayfin/rayfin.yml"
 services:
   staticHosting:
     enabled: true
-    root: frontend
+    path: packages/frontend
     folder: dist
-    buildCommand: npm run build
+    buildCommand: npm run build:fabric
     indexDocument: index.html
+    assetAccess: protected
 ```
 
-This resolves the output path to `<project-root>/frontend/dist`.
+The archive path is `packages/frontend/dist`, not a root `dist` directory.
 
-## Deploying static content
+## Flat frontend example
 
-### Full deployment with `rayfin up`
+Flat templates can omit `path`:
 
-When you run `rayfin up`, static content deploys automatically as part of the full-stack
-deployment — the CLI builds your frontend, packages the output, and uploads it alongside
-your data and auth configuration.
+```yaml title="rayfin/rayfin.yml"
+services:
+  staticHosting:
+    enabled: true
+    folder: dist
+    buildCommand: npm run build:fabric
+    indexDocument: index.html
+    assetAccess: protected
+```
+
+## Deploy static content
+
+A full deploy builds and uploads static content:
 
 ```bash
 npx rayfin up
 ```
 
-#### Skip static deployment during local dev
-
-When iterating locally with `npm run dev` (Vite serves the frontend directly), pass
-`--exclude-services staticHosting` to deploy the backend without rebuilding and uploading the
-static bundle:
-
-```bash
-npx rayfin up --exclude-services staticHosting
-```
-
-This skips only the static build/package/deploy phase — runtime settings still get posted,
-so previously deployed static content keeps serving from Fabric. Scaffolded templates use
-this flag in their `npm run dev` script.
-
-### Standalone static deployment
-
-Use `staticapp deploy` to redeploy only your static content, without rerunning the full
-`rayfin up` flow — useful when only frontend code changed and you want a faster iteration
-cycle:
+For static-only updates after an initial deploy:
 
 ```bash
 npx rayfin up staticapp deploy
 ```
 
-Skip the build step if you've already built and just want to deploy the existing output:
+Skip the build step only when the output folder already contains the production build you want to publish:
 
 ```bash
 npx rayfin up staticapp deploy --skip-build
 ```
 
-Add `-v` / `--verbose` for detailed logging:
+`staticapp deploy` requires an existing remote deployment. Run `npx rayfin up` once first.
+
+## Develop without publishing static content
+
+Use the development loop for frontend iteration:
 
 ```bash
-npx rayfin up staticapp deploy -v
+npm run dev
 ```
 
-> [!NOTE]
-> `staticapp deploy` requires an existing remote deployment. Run `rayfin up` at least once
-> first to provision the remote endpoint.
+That runs `rayfin dev`, starts Vite locally, and does not publish static assets.
+
+Existing automation can still skip the static phase while running the deploy workflow:
+
+```bash
+npx rayfin up --exclude-services staticHosting
+```
+
+Runtime settings still sync, so the backend remains aligned with `rayfin.yml`.
+
+## Declared package versions
+
+Every runtime-settings write declares `packageVersions` for the deploying CLI, and includes `@microsoft/rayfin-auth` when the frontend package has it installed. [New in 1.35.1](/docs/reference/changelog#rayfin-1351) The control plane uses these declarations to reject static-hosting deployments from a CLI too old to record the asset-access posture.
+
+Run a dry run to see the versions that would be sent:
+
+```bash
+npx rayfin up --dry-run
+```
+
+Static-hosting access control also checks that an installed `@microsoft/rayfin-auth` is at least `1.35.0-alpha.1541`. [New in 1.35.1](/docs/reference/changelog#rayfin-1351) If an older Rayfin auth package is present, the CLI prompts to upgrade Rayfin packages together before anything is published.
 
 ## Redirect URIs
 
-When static hosting is enabled, `rayfin up` automatically registers the hosting URL's bare
-origin in `allowedRedirectUris` — this is required for the Fabric SSO `postMessage` handoff,
-even when interactive Fabric auth is disabled. See
-[Redirect URIs](/docs/hosting/redirect-uris) for the full explanation and what you still need
-to configure yourself.
+When static hosting is enabled, `rayfin up` registers the deployed hosting origin with `services.auth.allowedRedirectUris`. `rayfin dev` separately registers the local frontend origin and retained port aliases. See [Redirect URIs](/docs/hosting/redirect-uris).
 
-## Deployment limits
+## Archive limit
 
-- The compressed ZIP archive must not exceed **100 MB**.
-- The CLI uses maximum compression to minimize upload size.
-- If your build output exceeds the limit, exclude large assets or move binary files to
-  [Storage](/docs/storage) instead of bundling them as static content.
+The compressed static archive must be at most **100 MB**. If the archive is too large:
 
-## Complete example
+- Exclude source maps from production output.
+- Optimize or move large images and binary assets.
+- Store large user-facing files in a service designed for file storage instead of bundling them into the app shell.
+- Re-run `npx rayfin up staticapp deploy` after rebuilding.
 
-A full `rayfin.yml` with static hosting, auth, and data all enabled:
+## Local Vite adapter
 
-```yaml title="rayfin/rayfin.yml"
-id: my-app
-name: my-app
-version: 1.0.0
-services:
-  auth:
-    enabled: true
-    allowedRedirectUris:
-      - http://localhost:5173
-  data:
-    enabled: true
-    dialect: mssql
-  staticHosting:
-    enabled: true
-    folder: dist
-    buildCommand: npm run build
-    indexDocument: index.html
-```
+Templates register `rayfinLocalDev()` from `@microsoft/rayfin-local-dev/vite`. The adapter is for `rayfin dev`, not production builds. It serves local `rayfin.config.json`, proxies backend and Functions routes, and supports local automatic sign-in for protected static assets. See [Develop locally](/docs/start/develop-locally).
 
 ## Troubleshooting
 
-### Static folder not found
+| Symptom or error | Fix |
+| --- | --- |
+| Static folder not found | Check `path`, `root`, and `folder`; run the build command manually. |
+| Empty static folder | Confirm the build command writes files to the configured output folder. |
+| `Compressed package size (...) exceeds the 100 MB limit.` | Reduce the compressed output size and redeploy. |
+| `Static hosting is enabled but services.staticHosting.assetAccess is not set in rayfin.yml` | Add `assetAccess: protected` or `assetAccess: public`, or run `rayfin up` interactively. |
+| `Invalid static hosting posture: 'services.staticHosting.embedded.only: true' cannot be combined with 'services.staticHosting.assetAccess: public' because an embedded app has no standalone surface to make public.` | Use `assetAccess: protected` or set `embedded.only: false`. |
+| No remote endpoint configured | Run `npx rayfin up` once before `npx rayfin up staticapp deploy`. |
 
-Verify that:
-
-- The `folder` path in `rayfin.yml` is correct and relative to `root` (or the project root
-  if `root` isn't set).
-- Your build command ran successfully and produced output in the expected directory.
-
-### Empty static folder
-
-An empty output folder usually means the build command didn't produce output. Run it
-manually to check for errors:
-
-```bash
-npm run build
-```
-
-### Deployment too large
-
-If the ZIP exceeds 100 MB:
-
-- Review your build output for unnecessary files — source maps, unoptimized images.
-- Configure your bundler to exclude development artifacts from the production build.
-- Move large binary assets to [Storage](/docs/storage) instead of bundling them as static
-  content.
-
-### No remote endpoint configured
-
-`rayfin up staticapp deploy` requires an existing remote deployment. Run `rayfin up` first to
-provision it, then use `staticapp deploy` for subsequent updates.
-
-```prompt title="Enable static hosting and deploy the frontend"
-In my Rayfin project, enable static hosting:
-
-- Add a staticHosting block to rayfin/rayfin.yml with enabled: true, folder: dist, a
-  buildCommand matching my project's build script, and indexDocument: index.html. If my
-  frontend lives in a subdirectory, set root accordingly.
-- Deploy with `npx rayfin up` and tell me the resulting hosting URL.
-- Explain that `npx rayfin up --exclude-services staticHosting` is what my dev script should
-  use, since Vite already serves the frontend locally.
-
-If the deploy fails because the static folder is missing or empty, run my build command
-directly first and show me the error.
+```prompt title="Enable and deploy Rayfin static hosting"
+In my Rayfin project, configure `services.staticHosting` with the correct frontend `path`, `folder`, `buildCommand`, `indexDocument`, and `assetAccess: protected` unless I explicitly need public assets. Run `npx rayfin up --dry-run` to validate the static inputs and declared packageVersions, then deploy with `npx rayfin up` and report `deployment.hostingUrl` from `npx rayfin up status --json`.
 ```

@@ -1,5 +1,5 @@
 {
   "title": "Auth",
-  "description": "Sign users in with Fabric SSO (Entra ID).",
-  "pages": ["fabric-sso", "sessions", "delegated-access", "react"]
+  "description": "Sign users in with Microsoft Entra ID.",
+  "pages": ["fabric-sso", "entra-token", "embed-host", "sessions", "delegated-access", "react"]
 }

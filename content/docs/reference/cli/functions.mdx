@@ -1,55 +1,126 @@
 ---
 title: rayfin functions
-description: rayfin functions init scaffolds a serverless TypeScript Functions project under rayfin/functions/ that shares entity types with your Rayfin data model.
+description: Command reference for scaffolding, running, and deploying Rayfin Functions projects with functions init and related dev/up commands.
+appliesTo: "@microsoft/rayfin-cli >= 1.36"
 ---
 
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+`rayfin functions` manages the TypeScript Functions package for a Rayfin project. In 1.36 it is a top-level GA command group; no `RAYFIN_FEATURE_FLAGS=functions` value is required.
+
 > [!NOTE]
-> The `rayfin functions` command group and `rayfin up functions deploy` are only
-> registered when `services.functions.enabled: true` in `rayfin.yml` (or
-> `RAYFIN_FEATURE_FLAGS` includes `functions`).
+> Functions are not available in every Fabric region or tenant.
 
-`rayfin functions` scaffolds and maintains a serverless Functions project that shares
-entity types with your data model.
-
-## `functions init`
+## `rayfin functions init`
 
 ```bash
-npx rayfin functions init [directory]
+npx rayfin functions init [directory] [--force] [--path <relative-path>]
 ```
 
-Scaffolds `rayfin/functions/` with:
+Scaffolds a Functions package, enables the service, installs dependencies, builds, generates types, and installs Rayfin agent files.
 
-- `package.json` and `tsconfig.json` (wired as a TypeScript project reference to the
-  parent `rayfin/` project, so Functions code can `import type` entity types directly from
-  `rayfin/data/`)
-- `host.json` and `local.settings.json`
-- `src/function_app.ts` and `src/types.ts`
-- `.vscode/settings.json` and `.vscode/launch.json` (a Node debugger attach config)
-- `.gitignore` (excludes `host.json`, `local.settings.json`, and build output)
+| Argument or option | Default | Description |
+| --- | --- | --- |
+| `[directory]` | `.` | Project root directory. Run from a directory that already contains `rayfin/`. |
+| `--force` | `false` | Overwrite an existing functions scaffold. Without it, existing function code is preserved and the command refreshes dependencies, build output, and generated types. |
+| `--path <relative-path>` | Auto-detected | Location for the functions package, relative to the project root. Overrides `rayfin.yml` and workspace detection, and is saved to `services.functions.path`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 
-On a fresh scaffold, it also enables `services.functions.enabled: true` in `rayfin.yml`. On
-every run — fresh scaffold or not — it installs dependencies, builds, and regenerates
-`rayfin/functions/src/types.ts` from your function source files. Regeneration is a one-shot
-pass, not a background watcher; re-run `functions init` (without `--force`) any time you
-want to refresh `types.ts` without touching your scaffolded code.
+Path selection order:
 
-| Flag | Description |
+1. `--path <relative-path>`.
+2. Existing `services.functions.path` in `rayfin.yml`.
+3. An npm workspace package when one is detected.
+4. `rayfin/functions/`.
+
+Fresh or forced scaffolds create or overwrite these files under the resolved functions path:
+
+- `package.json` with build and watch scripts.
+- `tsconfig.json` with a project reference to `rayfin/`.
+- `host.json` for the local Azure Functions Core Tools host.
+- `local.settings.json` for local-only runtime settings.
+- `src/function_app.ts`, `src/types.ts`, and `src/secrets.generated.ts`.
+- `.vscode/settings.json` and `.vscode/launch.json` with **Functions: Attach**.
+- `.gitignore` entries for local settings and build output.
+
+Scaffolding installs dependencies from npm, so `functions init` requires network access.
+
+Fresh or forced scaffolds write:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  functions:
+    enabled: true
+    path: rayfin/functions
+    auth:
+      type: application
+    buildCommand: npm run build
+```
+
+On every run, fresh scaffold or not, the command installs dependencies, builds, and regenerates `src/types.ts`. Use it to refresh generated types without overwriting source; pass `--force` only when you want the template files replaced.
+
+The scaffold pins `@microsoft/fabric-user-data-functions` to the exact version of the running CLI. Re-running without `--force` preserves the existing package version.
+
+Fresh Rayfin 1.36.2 scaffolds write `host.json` with `extensionBundle.id: "Microsoft.Azure.Functions.ExtensionBundle.Preview"` and `extensionBundle.version: "[4.49.0, 5.0.0)"`. Existing apps are not migrated; update `<services.functions.path>/host.json` separately when upgrading. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
+
+## `rayfin dev functions apply`
+
+```bash
+npx rayfin dev functions apply [--port <port>] [--inspect-port <port>] [--no-debug] [--no-emit-env] [--verbose] [--json] [-y]
+```
+
+Verifies prerequisites, merges local settings, starts a local Azure Functions Core Tools host, starts watchers, and writes debugger configuration. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Rayfin 1.36.1 and later reduce Functions host restart output to `Functions host restarted.` and update an existing **Functions: Attach** debugger entry when the inspector port changes. [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--port <port>` | `7071` | Port for the local function host. Auto-shifts to the nearest free port if taken. |
+| `--inspect-port <port>` | `9229` | Port for the Node.js inspector when debugging is enabled. |
+| `--no-debug` | Debug on | Disable the Node.js inspector. |
+| `--no-emit-env` | Emit env | Skip auto-regenerating framework `.env.local` from `rayfin/.env`. |
+| `--verbose` | `false` | Show detailed diagnostic output. |
+| `--json` | `false` | Output JSON. |
+| `-y, --yes` | `false` | Run without interactive prompts. |
+
+See [Run functions locally](/docs/functions/local-development).
+
+## `rayfin up functions deploy`
+
+```bash
+npx rayfin up functions deploy [-v | --verbose] [--skip-build] [--json]
+```
+
+Builds, packages, and deploys functions to an existing remote Rayfin item.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `-v, --verbose` | `false` | Enable verbose output. |
+| `--skip-build` | `false` | Skip the build command and deploy existing content. |
+| `--json` | `false` | Output the result as JSON. |
+
+This command uploads code only. It does not validate or apply `services.functions.auth.type` to the remote app; run a full `npx rayfin up` after changing Functions auth settings.
+
+## Related `rayfin up` flags
+
+| Command or flag | Description |
 | --- | --- |
-| `--force` | Overwrite an existing `rayfin/functions/` scaffold. Without it, an existing scaffold is left untouched and the command only reinstalls dependencies, rebuilds, and regenerates `types.ts`. |
+| `npx rayfin up` | Full app deploy. Deploys Functions when enabled and not excluded. |
+| `npx rayfin up --exclude-services functions` | Skip the functions build/package/deploy phase. Runtime settings remain unchanged. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `npx rayfin init --services functions` | Scaffold a new app with Functions enabled. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 
-> [!NOTE]
-> Scaffolding installs `@microsoft/fabric-user-data-functions` from the npm registry, so
-> `functions init` requires network access.
+## Errors
 
-## Deploying
+| Error text | Fix |
+| --- | --- |
+| ``Not inside a Rayfin project (no `rayfin/` folder). Run this command from your project.`` | Run the command from a Rayfin project root or pass the project directory. |
+| `Functions service is not enabled. Set 'services.functions.enabled: true' in rayfin.yml and re-run.` | Run `npx rayfin functions init` or enable the service in `rayfin.yml`. |
+| `Invalid services.functions.auth: authentication is required when Functions are enabled. Set services.functions.auth.type to "application".` | Add `services.functions.auth.type: application` and run full `npx rayfin up`. |
+| `No active deployment found. Run 'rayfin up' to deploy your Rayfin item first.` | Deploy once before running the standalone local Functions host. |
+| `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.` | Use Node.js 20 or later. |
+| ``Azure Functions Core Tools still not detected on PATH. Open a new shell so PATH updates take effect, then re-run `rayfin dev functions apply`.`` | Open a new shell and rerun after installing Core Tools. |
 
-[`rayfin up functions deploy`](/docs/reference/cli/up#up-functions-deploy) (experimental)
-builds, packages, and deploys Functions to the remote Rayfin item. A plain `rayfin up` also
-deploys Functions automatically when the service is enabled.
+```prompt title="Initialize and run Rayfin Functions commands"
+In my Rayfin project, set up Functions with the Rayfin 1.36 CLI.
 
-```prompt title="Scaffold a Functions project"
-Enable Functions in my Rayfin project (set services.functions.enabled: true if not already),
-then run `npx rayfin functions init` to scaffold rayfin/functions/. Show me the generated
-src/function_app.ts and explain how to add a new HTTP-triggered function that reads from one
-of my existing entities.
+Run `npx rayfin functions init` unless a functions package already exists. If this is an npm-workspace layout, use `--path <relative-path>` or confirm the saved `services.functions.path`. Ensure `services.functions.enabled: true`, `services.functions.auth.type: application`, and `services.functions.buildCommand: npm run build` are present in rayfin/rayfin.yml. Start local debugging with `npx rayfin dev functions apply`, and deploy with full `npx rayfin up` after auth changes or `npx rayfin up functions deploy` for a code-only update. Report exact errors if any command fails.
 ```

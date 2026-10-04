@@ -1,0 +1,251 @@
+---
+title: Develop locally
+description: Use rayfin dev to provision or reuse a Fabric backend while running the frontend and Functions locally.
+---
+
+Run the frontend on your machine while Rayfin keeps the backend in Microsoft Fabric. The scaffolded `npm run dev` script runs `rayfin dev`, not plain Vite.
+
+## Prerequisites
+
+- A Rayfin project with `rayfin/rayfin.yml`.
+- A Fabric account signed in with `npx rayfin login`.
+- Dependencies installed with `npm install`.
+- For Functions debugging, the prerequisites on [Functions](/docs/functions) and [Functions local development](/docs/functions/local-development).
+
+If sign-in fails because the operating system keychain is unavailable, use the fallback only in that development environment:
+
+```bash
+npx rayfin login --encryption-fallback-enabled
+```
+
+## Start the development loop
+
+```bash
+npm run dev
+```
+
+Every bundled template's `package.json` contains the same root workflow:
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "rayfin dev",
+    "dev:frontend": "vite"
+  }
+}
+```
+
+The 1.36 universal app keeps the same root `dev` command, but its `dev:frontend` script targets the frontend workspace:
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "rayfin dev",
+    "dev:frontend": "npm run -w @rayfin-app/frontend dev"
+  }
+}
+```
+
+## What rayfin dev does
+
+`rayfin dev` uses the Fabric provider by default. During startup it:
+
+1. Reads `rayfin/rayfin.yml` and resolves service paths.
+2. Signs in with the same auth stack as `rayfin up`.
+3. Provisions or reuses the Fabric AppBackend for the project.
+4. Applies runtime settings from `rayfin.yml`, including auth, static hosting posture, Functions, and connector declarations.
+5. Applies the data schema unless `--skip-db-apply` is set.
+6. Writes backend values to `rayfin/.env` using the `RAYFIN_PUBLIC_*` names.
+7. Regenerates the frontend `.env.local` unless `--no-emit-env` is set.
+8. Starts `dev:frontend`.
+9. Starts the local Functions host when `services.functions.enabled` is true.
+
+`rayfin dev` never builds or uploads static hosting assets. Use `npx rayfin up` when you want to publish the production bundle.
+
+## Stop and restart
+
+Press `Ctrl+C` to stop the local frontend and local Functions processes. The Fabric AppBackend is durable; stopping the dev loop does not delete it.
+
+Restart the dev loop after changing:
+
+- `rayfin/rayfin.yml`.
+- Service `path` or `buildCommand` values.
+- Entity files or schema registration.
+- Functions service configuration.
+- Static hosting access posture.
+
+## Target a workspace
+
+For a first run, choose a workspace explicitly when you do not want the CLI to use the recorded or interactive target:
+
+```bash
+npx rayfin dev --workspace "Team Apps"
+npx rayfin dev --workspace-id <workspace-guid>
+```
+
+For non-interactive tooling, set the workspace in the shell:
+
+```bash
+RAYFIN_WORKSPACE_ID=<workspace-guid> npx rayfin dev
+```
+
+If the target workspace has no usable capacity, pass a capacity ID. [New in 1.36](/docs/reference/changelog#rayfin-136)
+
+```bash
+npx rayfin dev --capacity-id <capacity-guid>
+```
+
+Do not combine `--capacity-id` with `--workspace`, `--workspace-id`, or `RAYFIN_WORKSPACE_ID`. Rayfin reports the conflict before creating or changing resources.
+
+## Use the stable frontend port
+
+Rayfin assigns one stable frontend port per project and writes it to `rayfin/.env` as `RAYFIN_PUBLIC_FRONTEND_PORT`. Vite receives it through `.env.local`.
+
+The preferred port is `5173`. If another process already uses that port, Rayfin searches upward, persists the next available port, and registers both local origins with the backend:
+
+```text
+http://localhost:<port>
+http://127.0.0.1:<port>
+```
+
+When an older dev server is still running, Rayfin keeps its port in `RAYFIN_FRONTEND_DEV_PORT_ALIASES` and keeps that origin allow-listed so in-flight auth redirects continue to work. Remove stale aliases from `rayfin/.env` after those old processes have stopped.
+
+## Route SDK calls through the Vite adapter
+
+Rayfin templates install `@microsoft/rayfin-local-dev` and register its Vite plugin.
+
+```typescript title="vite.config.ts"
+import { rayfinLocalDev } from '@microsoft/rayfin-local-dev/vite';
+import react from '@vitejs/plugin-react-swc';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [react(), rayfinLocalDev()],
+});
+```
+
+The adapter is active only while Vite is serving. When a backend URL resolves from the active `rayfin dev` session or from Vite env values, the adapter serves `rayfin.config.json` from the Vite origin with `apiUrl` set to that same origin. It then proxies the SDK's default backend routes to the selected backend:
+
+| Local route | Proxied to |
+| --- | --- |
+| `/api` | Rayfin backend API route. |
+| `/graphql` | Rayfin data API route. |
+| `/connector-invoke` | Connector invocation route. |
+| `/connectors` | Connector metadata routes. |
+| `/functions/<name>/invoke` | Local Functions host selected by `rayfin dev`. |
+
+If the backend or local Functions host is unavailable, the proxy returns HTTP 502. It does not fall through to deployed code.
+
+### Legacy explicit Functions base URL
+
+Older client code passes an explicit Functions base URL from this helper:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient, resolveRayfinConfig } from '@microsoft/rayfin-client';
+import { resolveRayfinFunctionsBaseUrl } from '@microsoft/rayfin-local-dev';
+
+const resolved = await resolveRayfinConfig({
+  apiUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+});
+
+export const client = new RayfinClient({
+  baseUrl: resolved.baseUrl!,
+  publishableKey: resolved.publishableKey!,
+  functionsBaseUrl: resolveRayfinFunctionsBaseUrl(),
+});
+```
+
+When the adapter registered local Functions routing, `resolveRayfinFunctionsBaseUrl()` returns the same-origin `/.rayfin` base URL. The Functions client then calls the legacy local route `/.rayfin/api/<name>`, and Vite forwards it to the local Functions host. In production, the helper returns `undefined`, so the SDK uses the deployed Rayfin Functions route.
+
+New code can leave `functionsBaseUrl` unset and use the default `/functions/<name>/invoke` route.
+
+## Local automatic sign-in
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+When `services.staticHosting.assetAccess: protected` is configured, the Vite adapter exposes a loopback-only `/.rayfin/dev/session-token` endpoint during local development. Public sites can opt in with `rayfinLocalDev({ autoLogin: true })`.
+
+The endpoint reuses the developer's `rayfin login` session to acquire a delegated Entra token, exchanges it with the backend for a Rayfin token response, and the app installs that response with `signInWithBrokeredToken()` from `@microsoft/rayfin-auth-provider-fabric`.
+
+The exchange uses the external Entra exchange endpoint, so the app must allow it. The Universal App template sets this for you:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+      externalEntraExchange: true
+```
+
+Without it, the adapter reports `External Entra exchange is not enabled.`
+
+The universal app template keeps this code behind `import.meta.env.DEV` and loads the local-dev package dynamically so production bundles do not include the local sign-in endpoint:
+
+```typescript
+if (import.meta.env.DEV) {
+  const localDev = await import('@microsoft/rayfin-local-dev');
+  if (localDev.isRayfinLocalAutoLoginEnabled()) {
+    const sessionToken = await localDev.fetchRayfinLocalSessionToken();
+    if (!sessionToken) {
+      throw new Error(
+        'Local automatic sign-in is enabled, but no session token was returned.'
+      );
+    }
+    return signInWithBrokeredToken(client.auth, sessionToken);
+  }
+}
+```
+
+Use `isRayfinLocalAutoLoginEnabled()` when application code needs to branch on this behavior.
+
+Keep auth guards in the application. Local auto sign-in is for developer convenience; it is not a test of the deployed signed-out experience.
+
+## Develop Functions locally
+
+When `services.functions.enabled` is true, `rayfin dev` starts the local Functions host and routes browser calls to it through the Vite adapter.
+
+> [!NOTE]
+> Functions are not available in every Fabric region or tenant.
+
+Enabled Functions require application authentication in `rayfin.yml`:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  functions:
+    enabled: true
+    auth:
+      type: application
+```
+
+For Functions authoring, the `@microsoft/fabric-user-data-functions` package, local debugging, and deployment behavior, see [Functions](/docs/functions) and [Functions local development](/docs/functions/local-development).
+
+## Useful flags
+
+| Flag | Use it when |
+| --- | --- |
+| `--skip-db-apply` | You know the remote schema is current and want to avoid automatic database apply. |
+| `--no-emit-env` | You manage `.env.local` by hand and want Rayfin to leave it untouched. |
+| `--env-file <path>` | You want interpolation to read a file other than `rayfin/.env`. |
+| `--tenant <id>` | Your account spans multiple Entra tenants. |
+| `--capacity-id <id>` | You want Rayfin to assign a specific Fabric capacity while preparing a target. |
+| `--encryption-fallback-enabled` | The OS keychain is unavailable and you accept plaintext token storage for development. |
+| `--verbose` | You need detailed provisioning, schema, env, or process-start logs. |
+
+See [`rayfin dev`](/docs/reference/cli/dev) for the complete CLI reference.
+
+## Troubleshooting
+
+| Error text | Fix |
+| --- | --- |
+| Missing non-recursive frontend script | Add a `dev:frontend` script, for example `"dev:frontend": "vite"`, so `rayfin dev` can start the frontend without calling itself. |
+| `No available frontend dev-server port was found. Free a local port or set RAYFIN_PUBLIC_FRONTEND_PORT in rayfin/.env and retry.` | Stop local servers or set a known free port in `rayfin/.env`. |
+| Provisioning consent is required | Run `rayfin dev` in an interactive terminal, pass `--yes`, or pass `--capacity-id <id>`. |
+| Functions prerequisites are missing | Run `rayfin dev functions apply` once to install Azure Functions Core Tools with consent, then retry `rayfin dev`. |
+| Browser calls to local Functions return HTTP 502 | Confirm `rayfin dev` started the local Functions host and that `@microsoft/rayfin-local-dev/vite` is registered in `vite.config.ts`. |
+| `External Entra exchange is not enabled.` | Set `services.auth.fabric.externalEntraExchange: true`, then run `rayfin dev` or deploy again. |
+
+```prompt title="Diagnose my Rayfin dev loop"
+In my Rayfin project, inspect package.json, vite.config.ts, and rayfin/rayfin.yml, then run `npx rayfin dev --verbose`. If it fails, use the exact error text to fix the local development loop. Ensure there is a non-recursive `dev:frontend` script, `rayfinLocalDev()` is registered for Vite projects, local Functions routing is not falling back to deployed code, and the frontend port values in rayfin/.env are current.
+```

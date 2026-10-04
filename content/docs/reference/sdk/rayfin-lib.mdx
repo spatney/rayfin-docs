@@ -33,6 +33,9 @@ class ApiClient {
   constructor(config: ApiClientConfig);
   setAccessTokenCallback(callback: () => string | null): void;
   setRefreshCallback(callback: () => Promise<void>): void;
+  setAuthExhaustedCallback(callback: () => void): void;
+  resolveUrl(path: string): string;
+  getFunctionsBaseUrl(): string | undefined;
   get<T>(path: string, options?: RequestOptions): Promise<T>;
   post<T>(path: string, data?: any, options?: RequestOptions): Promise<T>;
   put<T>(path: string, data?: any, options?: RequestOptions): Promise<T>;
@@ -43,10 +46,14 @@ class ApiClient {
 interface ApiClientConfig {
   baseUrl: string;
   publishableKey: string;
+  functionsBaseUrl?: string;
   headers?: Record<string, string>;
+  moniker?: string;
   timeout?: number;
+  fetch?: typeof globalThis.fetch;
   getAccessToken?: () => string | null;
   useProxy?: boolean;
+  onAuthExhausted?: () => void;
   onRefreshNeeded?: () => Promise<void>;
 }
 ```
@@ -56,6 +63,8 @@ the option table — `RayfinClientConfig` and `RayfinServerClientConfig` both ex
 `ApiClientConfig`. `setAccessTokenCallback` and `setRefreshCallback` are how `Auth` attaches
 itself to an `ApiClient` after construction (`Auth.attachToClient()`), which is also how
 `@microsoft/rayfin-auth-provider-fabric` gets its token-refresh behavior for free.
+
+[New in 1.36](/docs/reference/changelog#rayfin-136) `ApiClientConfig.fetch` lets callers inject a custom fetch implementation, for example one configured with a network proxy, and `resolveUrl()` is exported for cross-package wiring. `getFunctionsBaseUrl()` is also an exported method; application code normally constructs `RayfinClient` instead of calling them directly.
 
 ## Errors
 
@@ -70,11 +79,22 @@ class SdkError extends Error {
 
 class AuthError extends SdkError {}
 
+interface WorkloadFailure {
+  readonly errorCode?: string;
+  readonly subErrorCode?: string;
+  readonly functionName?: string;
+  readonly invocationId?: string;
+  readonly status?: string;
+}
+
 class NetworkError extends SdkError {
   status?: number;
-  constructor(message: string, status?: number, code?: string);
+  workload?: WorkloadFailure;
+  constructor(message: string, status?: number, code?: string, workload?: WorkloadFailure);
 }
 ```
+
+`NetworkError.workload` carries structured Fabric workload failure detail when a response includes that envelope, so callers can branch on fields such as `errorCode`, `subErrorCode`, `functionName`, `invocationId`, and `status` instead of parsing `message`. [New in 1.36](/docs/reference/changelog#rayfin-136)
 
 `@microsoft/rayfin-client` declares its **own** `AuthError extends SdkError` rather than
 re-exporting this one — the two classes are structurally identical but distinct; an

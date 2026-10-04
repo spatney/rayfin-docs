@@ -1,0 +1,70 @@
+---
+title: Deployment pipelines
+description: Prepare Rayfin apps for Microsoft Fabric Deployment Pipelines by resolving runtime config instead of baking stage values into the bundle.
+---
+
+Fabric Deployment Pipelines promote a pre-built Fabric AppBackend between stages. The source bundle is not rebuilt, so a Rayfin frontend must read stage-specific backend config at runtime.
+
+
+## What moves between stages
+
+A promoted AppBackend definition contains pre-built artifacts:
+
+```text
+MyAppBackend.AppBackend/
+├── .platform
+├── rayfin.yml
+├── dab-config.json
+└── static-app.zip
+```
+
+The static bundle moves byte-for-byte. Stage-specific values such as API URL, publishable key, workspace ID, item ID, portal URL, and tenant ID are regenerated for the target stage as `rayfin.config.json` beside the static assets.
+
+## Resolve config before creating the client
+
+Use `resolveRayfinConfig()` from `@microsoft/rayfin-client`. Pass build-time env vars as local-dev defaults; deployed stages override them from `rayfin.config.json`.
+
+```typescript title="src/rayfinClient.ts"
+import { RayfinClient, resolveRayfinConfig } from '@microsoft/rayfin-client';
+import type { AppSchema } from '../rayfin/data/schema';
+
+export async function createClient() {
+  const resolved = await resolveRayfinConfig({
+    apiUrl: import.meta.env.VITE_RAYFIN_API_URL,
+    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+    workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+    itemId: import.meta.env.VITE_FABRIC_ITEM_ID,
+    portalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
+    tenantId: import.meta.env.VITE_FABRIC_TENANT_ID,
+  });
+
+  return new RayfinClient<AppSchema>({ ...resolved, authStorage: true });
+}
+```
+
+Do not construct `RayfinClient` directly from `VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` in deployed code. That bakes the source stage into the bundle.
+
+## Read Fabric coordinates from runtimeConfig
+
+Fabric auth and embedded flows also need workspace, item, portal, and tenant values. Read them from `client.runtimeConfig` after resolving config; do not read `VITE_FABRIC_*` directly in promoted code.
+
+```typescript
+const client = await createClient();
+const { workspaceId, itemId, portalUrl, tenantId } = client.runtimeConfig ?? {};
+```
+
+## What is not promoted this way
+
+- Secrets remain separate from deployment-pipeline promotion.
+- Source-code Git integration is a Fabric platform feature, not a Rayfin CLI deploy.
+- Functions have their own deployment behavior; validate them separately in each stage.
+
+```prompt title="Make my Rayfin frontend deployment-pipeline safe"
+Search my frontend for direct `new RayfinClient`, `new RayfinServerClient`, and direct `VITE_FABRIC_*` reads. Refactor client creation to call `resolveRayfinConfig()` with the current env vars as defaults, pass the resolved object into the client constructor, and read Fabric coordinates from `client.runtimeConfig` so a promoted Fabric Deployment Pipeline stage uses that stage's generated rayfin.config.json.
+```
+
+## Related links
+
+- [Deploying with rayfin up](/docs/deploy/rayfin-up)
+- [Static hosting](/docs/hosting)
+- [Fabric CI/CD documentation](https://learn.microsoft.com/en-us/fabric/cicd/)

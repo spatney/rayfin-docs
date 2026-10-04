@@ -1,0 +1,104 @@
+---
+title: rayfin dev
+description: Start a local frontend and optional Functions runtime against a deployed Fabric Rayfin backend with rayfin dev.
+---
+
+
+Use `rayfin dev` for the local development loop. It provisions or reuses a Fabric
+AppBackend, applies service settings and Data schema, writes browser-visible environment
+values, then starts local project code.
+
+```bash
+npx rayfin dev
+```
+
+The Fabric backend remains deployed in Microsoft Fabric. The CLI runs only your frontend,
+and Functions when enabled, on `localhost`. It never publishes static content.
+
+## What the session does
+
+1. Finds the Rayfin project from `[project-path]` (default `.`).
+2. Authenticates with Fabric, using `-t, --tenant` when provided.
+3. Resolves or creates the target Fabric backend. `--workspace`, `--workspace-id`,
+   `RAYFIN_WORKSPACE_ID`, and recorded deployments can all select the workspace.
+4. Applies runtime settings from `rayfin.yml`, including connectors.
+5. Applies the Data configuration unless `--skip-db-apply` is passed.
+6. Reserves the frontend dev port and appends `http://localhost:<port>` and
+   `http://127.0.0.1:<port>` to auth redirect URIs when Auth is enabled.
+7. Writes `RAYFIN_PUBLIC_*` values to `rayfin/.env` and regenerates the framework
+   `.env.local` unless `--no-emit-env` is passed.
+8. Starts `npm run dev:frontend` when present, otherwise `npm run dev` if it is not
+   recursive.
+9. When `services.functions.enabled: true`, builds Functions, writes
+   `rayfin/functions/local.settings.json`, starts type generation and the local Functions
+   host, then starts the frontend with `RAYFIN_PUBLIC_FUNCTIONS_URL` pointing at that host.
+
+Press Ctrl+C to stop local runtimes. The Fabric backend is long-lived and is not deleted.
+
+## Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `[project-path]` | `.` | Path to the project root directory. |
+| `--skip-db-apply` | `false` | Skip automatic database configuration apply. |
+| `--env-file <path>` | `rayfin/.env` | Path to `.env` for `rayfin.yml` interpolation. |
+| `--provider <provider>` | `fabric` | Backend provider for managed Rayfin services. Use `fabric`. |
+| `-w, --workspace <name>` | — | Fabric workspace display name to provision a first-run backend into. |
+| `--workspace-id <id>` | — | Fabric workspace GUID to provision a first-run backend into. |
+| `--capacity-id <id>` | — | Fabric capacity ID to assign when the target workspace has no usable capacity. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `-t, --tenant <id>` | signed-in tenant | Entra ID tenant GUID. |
+| `--encryption-fallback-enabled` | `false` | Allow plaintext token storage when the OS keychain is unavailable. |
+| `--no-emit-env` | `false` | Leave existing framework `.env.local` untouched. |
+| `-v, --verbose` | `false` | Enable verbose logging. |
+
+## Files written
+
+| File | Written when |
+| --- | --- |
+| `rayfin/.deployments.json` | A backend is provisioned or selected. |
+| `rayfin/.env` | Public backend values, frontend port, retained port aliases, and local Functions URL are updated. |
+| `.env.local` or `<staticHosting.path>/.env.local` | Framework environment is regenerated unless `--no-emit-env`. |
+| `rayfin/functions/local.settings.json` | Functions are enabled and run locally. |
+| `.vscode/launch.json` | Best-effort Functions attach config when Functions debugging is enabled. |
+
+## Ports
+
+| Port | Behavior |
+| --- | --- |
+| Frontend | Starts from `RAYFIN_PUBLIC_FRONTEND_PORT` or 5173. If occupied, the CLI slides to the next available port and keeps the old occupied value in `RAYFIN_FRONTEND_DEV_PORT_ALIASES` so existing auth redirects keep working. |
+| Functions | Starts at 7071 and slides forward when occupied. The chosen URL is written to `RAYFIN_PUBLIC_FUNCTIONS_URL`. |
+| Node inspector | Starts at 9229 and slides forward when Functions debugging is enabled. |
+
+## `dev functions apply`
+
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+```bash
+npx rayfin dev functions apply
+```
+
+Use this subcommand when you want to run only the local Functions host against the active
+Fabric deployment, without starting the frontend. For the full workflow, see
+[Functions local development](/docs/functions/local-development).
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--port <port>` | `7071` | Port for the local function host. Slides forward when occupied. |
+| `--inspect-port <port>` | `9229` | Port for the Node.js inspector when debug is on. |
+| `--no-debug` | debug enabled | Disable the Node.js inspector on `func start`. |
+| `--no-emit-env` | `false` | Skip framework `.env.local` regeneration from `rayfin/.env`. |
+| `--verbose` | `false` | Show detailed diagnostic output. |
+| `--json` | `false` | Output result as JSON. |
+| `-y, --yes` | `false` | Run without interactive prompts. |
+
+The subcommand requires `services.functions.enabled: true`, an active deployment from
+`rayfin up`, Node.js 20 or later, and Azure Functions Core Tools. When Core Tools are
+missing, an interactive run asks for consent before installing prerequisites; a
+non-interactive run prints the commands to run and exits.
+
+```prompt title="Start the Rayfin development session"
+From my Rayfin project root, run `npx rayfin dev --workspace <workspace-name>` to start the
+Fabric-backed local development session. If Functions are enabled, confirm the chosen
+Functions URL was written to RAYFIN_PUBLIC_FUNCTIONS_URL and that the frontend started on
+the port written to RAYFIN_PUBLIC_FRONTEND_PORT.
+```

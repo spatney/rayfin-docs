@@ -4,6 +4,7 @@
   "pages": [
     "installation",
     "init",
+    "dev",
     "login",
     "up",
     "secret",

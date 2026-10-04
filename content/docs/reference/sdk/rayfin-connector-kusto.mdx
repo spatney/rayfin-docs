@@ -1,21 +1,22 @@
 ---
 title: "@microsoft/rayfin-connector-kusto"
 description: Marker, runtime, config, raw response, and normalization APIs for Fabric KQL Database connectors.
-appliesTo: "@microsoft/rayfin-connector-kusto — experimental"
+appliesTo: "@microsoft/rayfin-connector-kusto >= 1.36"
 ---
 
 `@microsoft/rayfin-connector-kusto` provides both the `kusto` connector marker and its
 runtime helper. Use it with `ConnectorsRayfinClient` from
-`@microsoft/rayfin-client/experimental`. See [KQL databases](/docs/connectors/kusto) for
+`@microsoft/rayfin-client`. See [KQL databases](/docs/connectors/kusto) for
 guide-level usage.
 
-> [!WARNING]
-> Connectors are in private preview. This API may change between releases.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+The package remains available for projects with existing Kusto connector entries. New `connector add --type kusto` authoring is held in Rayfin 1.36.2.
 
 ## Installation
 
 ```bash
-npm install @microsoft/rayfin-connector-kusto@1.36.0-alpha
+npm install @microsoft/rayfin-connector-kusto@1.36.2
 ```
 
 This package supplies both the marker and the config type, so `kusto` connectors need no

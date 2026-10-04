@@ -1,80 +1,65 @@
 ---
 title: "@microsoft/rayfin-functions"
-description: FunctionClient, the FunctionsSchema type, and client.functions.<name>.invoke() for calling serverless functions from the Rayfin SDK.
-appliesTo: "@microsoft/rayfin-functions — experimental"
+description: SDK reference for FunctionClient, FunctionsSchema, InvokeOptions, FunctionsError, and typed client.functions invocations.
+appliesTo: "@microsoft/rayfin-functions >= 1.36"
 ---
 
-`@microsoft/rayfin-functions` provides the typed client behind `client.functions.<name>.invoke()`
-on [`RayfinClient`](/docs/reference/sdk/rayfin-client). It depends only on
-[`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib).
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-> [!WARNING]
-> This package is marked **experimental** by its own README and may change substantially.
-> The functions service is not available in every Fabric region or tenant. The exact return
-> shape of `invoke()` has changed across versions (see
-> [Version notes](#version-notes) below) — confirm the behavior for your installed version
-> with `rayfin docs get --symbol FunctionClient` or the [MCP server](/docs/reference/cli/docs#mcp-server)
-> before relying on it in production code.
+`@microsoft/rayfin-functions` is the client-side SDK package behind `client.functions.<name>.invoke(...)`. Server-side function authoring uses `@microsoft/fabric-user-data-functions`.
 
 ## Installation
 
+New Rayfin projects get this package through `@microsoft/rayfin-client`. Add it directly only when you import `FunctionsError`, `FunctionClient`, or the types from this package yourself.
+
 ```bash
-npm create @microsoft/rayfin@latest
+npm install @microsoft/rayfin-functions
 ```
 
-`@microsoft/rayfin-functions` is normally installed as a dependency of
-`@microsoft/rayfin-client`; you rarely add it directly.
+## Exports
 
-## Declaring a `FunctionsSchema`
+| Export | Kind | Purpose |
+| --- | --- | --- |
+| `FunctionClient<TInput, TOutput>` | Class | Client for one named function. |
+| `FunctionsError` | Class | Function invocation error extending `SdkError`. |
+| `createFunctionsApi<TSchema>(apiClient)` | Function | Creates the typed `client.functions` proxy. |
+| `FunctionInvocationResponse<TOutput>` | Type | Transport envelope returned by the backend before `invoke()` unwraps `output`. |
+| `InvokeOptions` | Type | Per-call headers and timeout. |
+| `FunctionsSchema` | Type | Map of function names to `{ input, output }`. |
+| `TypedFunctionClients<TSchema>` | Type | Map from schema keys to typed `FunctionClient` instances. |
 
-Define a type that maps each function name to its input and output, and pass it as
-`RayfinClient`'s third type parameter so `client.functions.<name>.invoke()` is fully typed:
-
-```typescript title="rayfin/functions/src/types.ts"
-import type { FunctionsSchema } from '@microsoft/rayfin-functions';
-
-export type MyFunctionsSchema = {
-  helloWorld: { input: { firstName: string; lastName: string }; output: string };
-  add: { input: { a: number; b: number }; output: number };
-  noParams: { input: void; output: string }; // use `void` (or `{}`) for no-input functions
-} satisfies FunctionsSchema;
-```
+## `FunctionsSchema`
 
 ```typescript
 type FunctionsSchema = Record<string, { input: any; output: any }>;
 ```
 
-```typescript
-import { RayfinClient } from '@microsoft/rayfin-client';
-import type { MyFunctionsSchema } from '../rayfin/functions/src/types';
-import type { AppSchema } from '../rayfin/data/schema';
+Generated projects export an `AppFunctionsSchema` from `rayfin/functions/src/types.ts`:
 
-const client = new RayfinClient<AppSchema, MyFunctionsSchema>({
-  baseUrl: 'https://<your-app>-app.rayfin.windows.net/',
-  publishableKey: 'pk-commonSampleAppKey',
-});
-```
-
-## Invoking a function
-
-```typescript
-const greeting = await client.functions.helloWorld.invoke({
-  firstName: 'Ada',
-  lastName: 'Lovelace',
-});
-```
-
-`client.functions` is built by `createFunctionsApi`, which lazily instantiates and caches
-one `FunctionClient` per schema entry:
-
-```typescript
-function createFunctionsApi<TSchema extends FunctionsSchema = FunctionsSchema>(
-  apiClient: ApiClient,
-): TypedFunctionClients<TSchema>;
-
-type TypedFunctionClients<TSchema extends FunctionsSchema> = {
-  [K in keyof TSchema & string]: FunctionClient<TSchema[K]['input'], TSchema[K]['output']>;
+```typescript title="rayfin/functions/src/types.ts"
+export type AppFunctionsSchema = {
+  greet: {
+    input: { firstName: string; lastName: string };
+    output: string;
+  };
+  getEntries: {
+    input: Record<string, never>;
+    output: { id: string; message: string }[];
+  };
 };
+```
+
+Pass that schema as the second type parameter to `RayfinClient`:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import type { AppSchema } from '../../rayfin/data/schema';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types.js';
+
+export const client = new RayfinClient<AppSchema, AppFunctionsSchema>({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+});
 ```
 
 ## `FunctionClient`
@@ -82,59 +67,89 @@ type TypedFunctionClients<TSchema extends FunctionsSchema> = {
 ```typescript
 class FunctionClient<TInput = any, TOutput = any> {
   constructor(apiClient: ApiClient, functionName: string);
+
   invoke(
     ...args: TInput extends void | Record<string, never>
-      ? [options?: InvokeOptions]
+      ? [params?: undefined, options?: InvokeOptions]
       : [params: TInput, options?: InvokeOptions]
   ): Promise<TOutput>;
 }
+```
 
+`invoke()` returns the function output directly as `Promise<TOutput>`. It does not return the transport envelope.
+
+| Function shape | Call form |
+| --- | --- |
+| Input function | `invoke(params)` or `invoke(params, options)` |
+| No-input function | `invoke()` or `invoke(undefined, options)` |
+
+A lone argument is always treated as function input, never as options.
+
+## `InvokeOptions`
+
+```typescript
 interface InvokeOptions {
   headers?: Record<string, string>;
+  timeoutMs?: number;
 }
 ```
 
-- When the schema's `input` is `void`, call `invoke(options?)` with no params.
-- Otherwise call `invoke(params, options?)`. `options.headers` adds extra headers to that
-  one request.
-- `invoke()` resolves to the function's output directly, typed as `TOutput`. If the raw
-  response contains a JSON-encoded string, it is auto-parsed so the caller never has to.
-- Failures throw rather than returning an error value: a non-empty `errors` array or
-  non-success status is surfaced as `FunctionsError`; network failures as `NetworkError`;
-  anything else as `SdkError`.
+`timeoutMs` defaults to 250,000 ms and is capped at that same Fabric UDF host limit. Non-positive, non-finite, or missing values use the default.
+
+## Invocation route
+
+When the underlying `ApiClient` has `functionsBaseUrl`, `FunctionClient` posts to:
+
+```text
+${functionsBaseUrl}/api/<functionName>
+```
+
+Otherwise it posts to the deployed Fabric route:
+
+```text
+${baseUrl}/functions/<functionName>/invoke
+```
+
+## Errors
+
+`FunctionClient.invoke()` throws on failure. Catch `FunctionsError` before a generic error handler when you need function-specific messages or codes.
 
 ```typescript
 import { FunctionsError } from '@microsoft/rayfin-functions';
 import { NetworkError } from '@microsoft/rayfin-lib';
 
 try {
-  const result = await client.functions.add.invoke({ a: 1, b: 2 });
-  console.log(result); // 3, typed as number
+  const result = await client.functions.greet.invoke({
+    firstName: 'Ada',
+    lastName: 'Lovelace',
+  });
+  console.log(result);
 } catch (error) {
   if (error instanceof FunctionsError) {
-    console.error('Function failed:', error.message, error.code);
+    console.error(error.code, error.message);
   } else if (error instanceof NetworkError) {
-    console.error('Network issue:', error.message);
+    console.error('Network failure while invoking the function.');
+  } else {
+    throw error;
   }
 }
 ```
 
-## `FunctionsError`
+`FunctionClient.invoke()` throws on failure:
+
+| Failure | Error |
+| --- | --- |
+| Backend response contains `errors` or non-success `status` | `FunctionsError` with code `FUNCTION_EXECUTION_ERROR`. |
+| Unexpected invocation failure | `FunctionsError` with code `UNKNOWN_FUNCTION_ERROR`. |
+| Network failure | `NetworkError` from `@microsoft/rayfin-lib`. |
+| Other SDK failure | `SdkError` from `@microsoft/rayfin-lib`. |
+
+The backend `invocationId` is logged with `console.debug` as `[rayfin-functions] <name> invocationId=<id>`.
+
+## Full exported surface
 
 ```typescript
-class FunctionsError extends SdkError {
-  constructor(message: string, code?: string);
-}
-```
-
-## Full exported surface (`index.d.ts`)
-
-```typescript
-export {
-  FunctionsError,
-  createFunctionsApi,
-  FunctionClient,
-} from './Functions.js';
+export { FunctionsError, createFunctionsApi, FunctionClient } from './Functions.js';
 export type {
   FunctionInvocationResponse,
   InvokeOptions,
@@ -143,8 +158,7 @@ export type {
 export type { FunctionsSchema } from './FunctionsSchema.js';
 ```
 
-`FunctionInvocationResponse<TOutput>` is the raw wire envelope the function endpoint
-returns before `invoke()` unwraps it:
+## `FunctionInvocationResponse`
 
 ```typescript
 interface FunctionInvocationResponse<TOutput = any> {
@@ -156,18 +170,4 @@ interface FunctionInvocationResponse<TOutput = any> {
 }
 ```
 
-## Version notes
-
-The exact shape `invoke()` resolves to has changed between releases of this experimental
-package:
-
-- **Documented / current behavior** (shown above): `invoke()` resolves directly to
-  `TOutput` — the envelope's `output` field, auto-unwrapped — and throws on failure instead
-  of returning an `errors` array. The `invocationId` is still emitted via `console.debug`
-  for correlation, without being part of the typed return value.
-- **This machine's installed version (1.31.0)**: `invoke()` instead resolves to the full
-  `Promise<FunctionInvocationResponse<TOutput>>` envelope — callers must read `.output`
-  themselves and check `.errors` / `.status` manually.
-
-Check which behavior applies to your project before writing calling code — the two shapes
-are not interchangeable (`result.output` vs. `result` directly).
+This is the wire envelope. `invoke()` unwraps and returns `output`, auto-parsing JSON-encoded output strings and inner `{ output: <value> }` envelopes when present.

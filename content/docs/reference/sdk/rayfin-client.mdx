@@ -54,32 +54,68 @@ const todos = await client.data.Todo.select(['id', 'title']).execute();
 ```typescript
 interface RayfinClientConfig extends ApiClientConfig {
   authStorage?: AuthStorage | boolean;
+  persistSession?: boolean;
+  autoRefreshToken?: boolean;
+  multiTabSync?: boolean;
+  runtimeConfig?: RayfinRuntimeConfig;
 }
 
 interface ApiClientConfig {
   baseUrl: string;
   publishableKey: string;
+  functionsBaseUrl?: string;
   headers?: Record<string, string>;
+  moniker?: string;
   timeout?: number;
+  fetch?: typeof globalThis.fetch;
   getAccessToken?: () => string | null;
   useProxy?: boolean;
+  onAuthExhausted?: () => void;
   onRefreshNeeded?: () => Promise<void>;
 }
 ```
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `baseUrl` | `string` | — | Required. The Rayfin backend's base URL. |
+| `baseUrl` | `string` | — | Required. Absolute deployed backend URL, or `''` when a same-origin dev proxy forwards requests. |
 | `publishableKey` | `string` | — | Required. The project's public `pk-*` key. Safe for client-side code. |
-| `authStorage` | `AuthStorage \| boolean` | `true` (browser) | `true` uses `localStorage`; `false` disables persistence (useful in Node.js scripts); or pass a custom object implementing `getItem`/`setItem`/`removeItem`/`clear`. |
+| `authStorage` | `AuthStorage \| boolean` | `true` (browser) | `true` uses `localStorage`; `false` disables persistence; or pass a custom storage implementation. |
+| `persistSession` | `boolean` | `true` | When `false`, auth uses an in-memory session only. |
+| `autoRefreshToken` | `boolean` | `true` | When `false`, the client does not schedule session expiration timers or refresh automatically after a `401`. |
+| `multiTabSync` | `boolean` | auto-detected | Controls the browser `StorageEvent` listener for session changes in other tabs. |
+| `runtimeConfig` | `RayfinRuntimeConfig` | none | Values exposed as `client.runtimeConfig`, typically from `resolveRayfinConfig()` or `VITE_FABRIC_*` defaults. |
+| `functionsBaseUrl` | `string` | none | Routes `client.functions.<name>.invoke()` to `${functionsBaseUrl}/api/<name>` for local Functions calls while data continues to use `baseUrl`. |
 | `headers` | `Record<string, string>` | none | Extra headers sent with every request. |
-| `timeout` | `number` | none | Request timeout in milliseconds. |
+| `moniker` | `string` | inferred from URL | Explicit `x-ms-workload-resource-moniker`, usually the Fabric item ID. |
+| `timeout` | `number` | `30000` | Default request timeout in milliseconds. |
+| `fetch` | `typeof globalThis.fetch` | global fetch | Custom fetch implementation, for example one configured with a network proxy. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `getAccessToken` | `() => string \| null` | wired up by `Auth` | Overrides how the client obtains an access token for the `Authorization` header. |
-| `useProxy` | `boolean` | `true` | Under a Vite dev server, rewrites `baseUrl` to a relative path so requests go through Vite's dev proxy instead of hitting the absolute URL directly (avoids local CORS issues). Set `false` to always use the literal `baseUrl`. |
-| `onRefreshNeeded` | `() => Promise<void>` | wired up by `Auth` | Called before a request is retried after a `401`. |
+| `useProxy` | `boolean` | no effect | Deprecated. Set `baseUrl: ''` and configure a dev-server proxy instead. |
+| `onAuthExhausted` | `() => void` | wired up by `Auth` | Called when a retry after token refresh still returns `401`. |
+| `onRefreshNeeded` | `() => Promise<void>` | wired up by `Auth` | Called before a request is retried after a refreshable `401`. |
 
 `getAccessToken` and `onRefreshNeeded` are normally wired up automatically when `RayfinClient`
 constructs its internal `Auth` instance — most applications never set them directly.
+
+## Runtime configuration
+
+`resolveRayfinConfig(defaults, options?)` loads `/rayfin.config.json` in a browser, overlays it on caller-supplied defaults, and returns `{ baseUrl, publishableKey, runtimeConfig }`. Deployed static apps use that runtime file so the same built bundle can move between environments; `rayfin dev` falls back to generated `VITE_*` values when the file is absent.
+
+```typescript
+import { RayfinClient, resolveRayfinConfig } from '@microsoft/rayfin-client';
+
+const resolved = await resolveRayfinConfig({
+  apiUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+  itemId: import.meta.env.VITE_FABRIC_ITEM_ID,
+  portalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
+});
+
+const client = new RayfinClient({ ...resolved, authStorage: true });
+```
+
+`loadRayfinConfig()` is an internal helper behind `resolveRayfinConfig()`. It returns `null` only when the config is genuinely absent; malformed or unreachable config throws `RayfinConfigError` with codes such as `CONFIG_LOAD_FAILED`, `CONFIG_PARSE_FAILED`, `CONFIG_INVALID`, or `CONFIG_INCOMPLETE`.
 
 ## `RayfinServerClient`
 
@@ -94,6 +130,7 @@ class RayfinServerClient<TSchema extends EntitySchema = Record<string, any>> {
 
 interface RayfinServerClientConfig extends Omit<ApiClientConfig, 'getAccessToken'> {
   accessToken?: string | (() => string | null);
+  runtimeConfig?: RayfinRuntimeConfig;
 }
 ```
 
@@ -137,6 +174,16 @@ the `accessToken` config option instead of a browser session.
 `RayfinClient.functions` is typed as `TypedFunctionClients<TFunctionsSchema>` — one
 `FunctionClient` per entry in your `FunctionsSchema`, each with a typed `invoke()`. See
 [`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions).
+
+## The `connectors` facade
+
+`ConnectorsRayfinClient` is exported from the stable package root in 1.36. The `@microsoft/rayfin-client/experimental` subpath still re-exports it for existing apps, but new code should import from `@microsoft/rayfin-client`. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+```typescript
+import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
+```
+
+The root package also re-exports connector types such as `ConnectorConfig`, `ConnectorMarker`, `ConnectorsSchema`, `OperationCatalog`, `OperationDef`, `TypedConnectorsApi`, and `TypedConnectorClient`.
 
 ## Errors
 

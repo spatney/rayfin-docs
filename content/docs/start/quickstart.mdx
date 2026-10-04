@@ -1,26 +1,12 @@
 ---
 title: Quickstart
-description: Scaffold a Rayfin project, deploy it to Microsoft Fabric, and run the frontend locally — from nothing to a running app in four commands.
+description: Scaffold a Rayfin project, sign in to Fabric, run the local development loop, and deploy the app with rayfin up.
 ---
 
-From nothing to a running app in four commands. You need [Node.js 20 or later and the
-GitHub CLI](/docs/start/installation) first.
+Create a Rayfin app, run it against a managed Fabric backend, and publish the static frontend. You need [Node.js 20+, the GitHub CLI, and a Fabric account](/docs/start/installation).
 
-Rayfin deploys your backend to Microsoft Fabric and you run your frontend locally against
-it. There is no backend to run yourself.
-
-```prompt title="Let an agent do all of this"
-Set up a new Rayfin app for me, end to end.
-
-Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Before writing
-any code, read https://rayfin.ai/docs/reference/agent-rules.md — every page on that site is available as
-raw Markdown by appending .md to its URL.
-
-Then do the work yourself rather than printing steps for me:
-1. Scaffold a project with `npm create @microsoft/rayfin@latest my-app` and install dependencies.
-2. Sign in with `npx rayfin login`.
-3. Deploy with `npx rayfin up` and confirm it with `npx rayfin up status`.
-4. Start the frontend with `npm run dev` and tell me the URL to open.
+```prompt title="Create and run a new Rayfin app"
+Create a new Rayfin app named my-app with `npm create @microsoft/rayfin@latest my-app`. Install dependencies, run `npx rayfin login`, start the development loop with `npm run dev`, and report the local frontend URL. Then deploy the static build with `npx rayfin up` and confirm the live hosting URL with `npx rayfin up status`.
 ```
 
 ## 1. Scaffold a project
@@ -28,9 +14,19 @@ Then do the work yourself rather than printing steps for me:
 ```bash
 npm create @microsoft/rayfin@latest my-app
 cd my-app
+npm install
 ```
 
-Pick a template when prompted. You should see `✔ Project created`.
+The project name is positional. The CLI prompts for a template. Bundled templates in Rayfin 1.36 include:
+
+| Template | Use it when |
+| --- | --- |
+| `blankapp` | You want the default starter. In Rayfin 1.36, this scaffolds the Universal App workspace with capability packs. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `dataapp` | You are starting from the Fabric analytics app template. |
+| `todoapp` | You want a data-enabled todo CRUD app with per-user access rules. |
+| `gettingstartedauth` | You want a Fabric-authenticated starter with getting-started UI. |
+
+`universal-app` is hidden from the template list but accepted by name in 1.36; use `blankapp` for the CLI-facing default.
 
 ## 2. Sign in
 
@@ -38,45 +34,36 @@ Pick a template when prompted. You should see `✔ Project created`.
 npx rayfin login
 ```
 
-Opens a browser for Entra ID sign-in. You need an account with access to a Fabric
-workspace.
+The command opens a browser for Microsoft Entra ID sign-in. Use `--encryption-fallback-enabled` only in development environments where the OS keychain is unavailable.
 
-## 3. Deploy
-
-```bash
-npx rayfin up
-```
-
-This creates the Fabric item, applies the database schema generated from your entities,
-and deploys your frontend. Confirm it worked:
-
-```bash
-npx rayfin up status
-```
-
-> [!TIP]
-> While iterating on frontend code, add `--exclude-services staticHosting` to skip
-> rebuilding and uploading the bundle — the local dev server serves it instead.
-
-## 4. Run the frontend
+## 3. Run the development loop
 
 ```bash
 npm run dev
 ```
 
-The scaffolded `predev` script runs `rayfin env --framework vite`, which writes a
-`.env.local` pointing at the backend you just deployed. Open the URL it prints and you have
-a working app reading and writing real data.
+Since Rayfin 1.35, every bundled template's `npm run dev` runs `rayfin dev`.
 
-## Make your first change
+`rayfin dev` provisions or reuses the Fabric AppBackend, applies runtime settings and schema, writes `RAYFIN_PUBLIC_*` values to `rayfin/.env` and `.env.local`, then starts `dev:frontend` and local Functions when enabled. It does not publish static content.
 
-Entities live in `rayfin/data/`. Add a field:
+## 4. Deploy the app
+
+```bash
+npx rayfin up
+npx rayfin up status
+```
+
+`rayfin up` builds and deploys the production frontend, syncs `rayfin.yml`, applies schema changes, deploys Functions when enabled, and records deployment metadata in `rayfin/.deployments.json` and `rayfin/.env`. `rayfin up status` prints the hosting URL.
+
+## Make your first data change
+
+In a data-enabled template, entities live under `rayfin/data/` or the configured data service path. Add a field:
 
 ```typescript title="rayfin/data/Timestamp.ts"
-import { entity, anonymous, uuid, text, date } from '@microsoft/rayfin-core';
+import { entity, authenticated, uuid, text, date } from '@microsoft/rayfin-core';
 
 @entity()
-@anonymous()
+@authenticated('*')
 export class Timestamp {
   @uuid() id!: string;
   @date() timestamp!: Date;
@@ -84,19 +71,16 @@ export class Timestamp {
 }
 ```
 
-Then redeploy with the same command:
+Restart `npm run dev` so `rayfin dev` applies the new schema to your development backend. When you are ready to publish, deploy it:
 
 ```bash
 npx rayfin up
 ```
 
-`rayfin up` applies pending schema changes as part of a normal deploy. Two rules worth
-knowing now: every `@text()` field needs a `max`, and every entity needs an explicit
-permission decorator.
+Every `@text()` field needs a `max`, and every entity needs an explicit permission decorator.
 
 ## Next
 
-- [Project structure](/docs/start/project-structure) — what got generated and why.
-- [Modeling entities](/docs/data/modeling) — how classes become tables and APIs.
-- [Schema migrations](/docs/data/migrations) — how changes reach the database.
-- [Known limitations](/docs/reference/known-limitations) — read before modeling seriously.
+- [Project structure](/docs/start/project-structure) — what the scaffold generated.
+- [Develop locally](/docs/start/develop-locally) — the `rayfin dev` workflow.
+- [Deploying with rayfin up](/docs/deploy/rayfin-up) — deployment flags and metadata.

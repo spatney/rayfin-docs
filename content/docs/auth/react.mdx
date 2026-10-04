@@ -1,29 +1,22 @@
 ---
 title: React integration
-description: An auth context, a useAuth hook, and route guarding for React apps built on the Rayfin auth client with Fabric SSO.
+description: "Add a Rayfin AuthProvider, useAuth hook, route guard, Fabric SSO startup, and sign-in button to a React app."
 ---
 
-Rayfin's auth client is framework-agnostic — `getSession` and `onSessionChange` work the
-same everywhere, and Fabric SSO's `ensureSignedInWithFabric` resolves to the same opaque
-session shape. This page wires them into React with a context, a hook, and route guarding.
+Rayfin's auth client is framework-agnostic.
+`getSession` and `onSessionChange` work the same everywhere, and every supported sign-in flow resolves to the same opaque session shape.
+This page wires those APIs into React with a context, a hook, and route guarding.
 
-## A minimal `useAuth` hook
+## A minimal useAuth hook
 
-The smallest useful integration reads the current session once on mount, subscribes to
-changes, and exposes a `signIn` that wraps `ensureSignedInWithFabric`:
+The smallest useful integration reads the current session once on mount, subscribes to changes, and exposes a `signIn` that wraps `ensureSignedInWithFabric`.
+Use this for a small single-page app that does not need a shared provider yet.
 
 ```typescript title="src/hooks/useAuth.ts"
-import { useState, useEffect, useCallback } from 'react';
-import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
-import { auth } from '../services/rayfinClient';
+import { useCallback, useEffect, useState } from 'react';
 import type { OpaqueSession } from '@microsoft/rayfin-auth';
-
-const fabricOptions = {
-  workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
-  projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
-  fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
-  returnOrigin: window.location.origin,
-};
+import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
+import { auth, fabricOptions } from '../services/rayfinClient';
 
 export function useAuth() {
   const [session, setSession] = useState<OpaqueSession | null>(null);
@@ -36,7 +29,7 @@ export function useAuth() {
   const signIn = useCallback(() => ensureSignedInWithFabric(auth, fabricOptions), []);
 
   return {
-    ...session,
+    session,
     isAuthenticated: session?.isAuthenticated ?? false,
     signIn,
     signOut: auth.signOut.bind(auth),
@@ -44,17 +37,17 @@ export function useAuth() {
 }
 ```
 
-This is enough for a single-page app. Most real apps need one more thing: a shared provider
-so every component sees the same session without each one re-subscribing to
-`onSessionChange` itself. The rest of this page builds that.
+Most apps need one more piece: a shared provider so every component sees the same session without re-subscribing.
+The rest of this page builds that provider.
 
-## An auth context and provider
+## Create the Rayfin client and Fabric options
 
-`src/services/rayfinClient.ts` creates the shared `RayfinClient` and the `FabricAuthOptions`
-the provider needs:
+`src/services/rayfinClient.ts` creates the shared `RayfinClient` and the `FabricAuthOptions` that the provider needs.
+`rayfin dev` writes the `RAYFIN_PUBLIC_*` values and maps them to Vite variables before starting the frontend.
 
 ```typescript title="src/services/rayfinClient.ts"
 import { RayfinClient } from '@microsoft/rayfin-client';
+import type { FabricAuthOptions } from '@microsoft/rayfin-auth-provider-fabric';
 
 export const client = new RayfinClient({
   baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
@@ -63,7 +56,7 @@ export const client = new RayfinClient({
 
 export const auth = client.auth;
 
-export const fabricOptions = {
+export const fabricOptions: FabricAuthOptions = {
   workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
   projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
   fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
@@ -71,8 +64,12 @@ export const fabricOptions = {
 };
 ```
 
-The provider owns the session state, exposes loading/error state during sign-in, and hands
-the same `signIn` / `signOut` functions to every consumer:
+## Add AuthProvider and useAuth
+
+The provider owns session state, exposes loading and error state during sign-in, and hands the same `signIn` and `signOut` functions to every consumer.
+
+Call and await `initEmbeddedAuth()` before the initial loading state completes.
+This gives Fabric embedded auth and external embed host a chance to replace stale stored sessions before the UI trusts them. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
 ```tsx title="src/hooks/AuthContext.tsx"
 import {
@@ -85,8 +82,11 @@ import {
   type ReactNode,
 } from 'react';
 
-import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
 import type { OpaqueSession } from '@microsoft/rayfin-auth';
+import {
+  ensureSignedInWithFabric,
+  initEmbeddedAuth,
+} from '@microsoft/rayfin-auth-provider-fabric';
 import { auth, fabricOptions } from '../services/rayfinClient';
 
 interface AuthContextValue {
@@ -106,9 +106,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSession(auth.getSession());
-    setLoading(false);
-    return auth.onSessionChange(setSession);
+    let mounted = true;
+
+    const unsubscribe = auth.onSessionChange((nextSession) => {
+      if (mounted) {
+        setSession(nextSession);
+      }
+    });
+
+    async function initialize() {
+      try {
+        await initEmbeddedAuth(auth, fabricOptions);
+        if (mounted) {
+          setSession(auth.getSession());
+        }
+      } catch (err) {
+        if (mounted) {
+          setError(err instanceof Error ? err.message : 'Authentication failed');
+          setSession(auth.getSession());
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void initialize();
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
   }, []);
 
   const signIn = useCallback(async () => {
@@ -128,7 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await auth.signOut();
-    setSession(null);
+    setSession(auth.getSession());
     setError(null);
   }, []);
 
@@ -156,18 +185,16 @@ export function useAuth(): AuthContextValue {
 }
 ```
 
-The provider talks to `client.auth` directly and owns the session state — every component
-that calls `useAuth()` sees the same session without re-subscribing to `onSessionChange`
-itself.
+The provider talks to `client.auth` directly and owns session state.
+Every component that calls `useAuth()` sees the same session without subscribing to `onSessionChange` itself.
 
-## Guarding routes
+## Guard routes
 
-A guard component reads `useAuth()` and redirects based on `isAuthenticated`, showing a
-loading state until the first session check resolves:
+A guard component reads `useAuth()` and redirects based on `isAuthenticated`.
+It shows a loading state until the first session check and embedded startup flow resolve.
 
 ```tsx title="src/App.tsx"
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-
 import { AuthPage } from './components/AuthPage';
 import { useAuth } from './hooks/AuthContext';
 import { HomePage } from './pages/HomePage';
@@ -188,7 +215,7 @@ function AuthGuard({
   return <>{children}</>;
 }
 
-function App() {
+export default function App() {
   return (
     <BrowserRouter>
       <Routes>
@@ -213,14 +240,12 @@ function App() {
     </BrowserRouter>
   );
 }
-
-export default App;
 ```
 
-## Sign-in button and app entry point
+## Add a sign-in button
 
-`ensureSignedInWithFabric`'s popup fallback calls `window.open()`, so `signIn` has to run
-from a synchronous user-gesture handler — wire it to a button, not an effect:
+`ensureSignedInWithFabric()` can open a popup.
+Call it directly from a synchronous click handler, not from a page-load effect.
 
 ```tsx title="src/components/AuthPage.tsx"
 import { useAuth } from '../hooks/AuthContext';
@@ -229,17 +254,19 @@ export function AuthPage() {
   const { signIn, loading, error } = useAuth();
 
   return (
-    <div>
-      <button onClick={() => signIn()} disabled={loading}>
+    <main>
+      <button onClick={() => void signIn()} disabled={loading}>
         Sign in with Microsoft Fabric
       </button>
       {error && <p role="alert">{error}</p>}
-    </div>
+    </main>
   );
 }
 ```
 
-Wrap the app in `AuthProvider` at the entry point:
+## Wrap the app
+
+Wrap the app in `AuthProvider` at the entry point.
 
 ```tsx title="src/main.tsx"
 import { createRoot } from 'react-dom/client';
@@ -254,26 +281,15 @@ createRoot(document.getElementById('root')!).render(
 ```
 
 > [!NOTE]
-> Sign-in completes from a local Vite dev server as long as your origin is in
-> `allowedRedirectUris` and the backend is deployed — see
-> [Local frontend development](/docs/auth/fabric-sso#local-frontend-development). Everything
-> else in this pattern — the provider, the guard, `isAuthenticated` — behaves the same
-> regardless of which flow produced the session.
+> The popup flow works from a local Vite origin when that origin is in `allowedRedirectUris`.
+> The embedded iframe flow runs only when the app is loaded by Fabric or by an external embed host.
 
 ```prompt title="Add an AuthProvider, useAuth hook, and route guarding"
-In my Rayfin React app (Vite + react-router-dom), add authentication wiring:
+In my Rayfin React app, add authentication wiring.
 
-- An AuthProvider (React context) that wraps the app, calls client.auth.getSession() once
-  on mount, subscribes with client.auth.onSessionChange(...), and exposes { session,
-  loading, error, signIn, signOut, isAuthenticated } through a useAuth() hook.
-- signIn() should call ensureSignedInWithFabric() from
-  @microsoft/rayfin-auth-provider-fabric, built from VITE_FABRIC_WORKSPACE_ID,
-  VITE_FABRIC_ITEM_ID, and VITE_FABRIC_PORTAL_URL, and must be wired to a button's onClick
-  so the popup isn't blocked.
-- An AuthGuard component used in the router that redirects unauthenticated users to /auth
-  and authenticated users away from /auth, showing a loading state in between.
+Create a shared RayfinClient and FabricAuthOptions from VITE_RAYFIN_API_URL, VITE_RAYFIN_PUBLISHABLE_KEY, VITE_FABRIC_WORKSPACE_ID, VITE_FABRIC_ITEM_ID, VITE_FABRIC_PORTAL_URL, and window.location.origin.
 
-Use onSessionChange, not onAuthStateChange — the latter does not exist on the Rayfin auth
-client. Do not introspect session fields beyond isAuthenticated, isAnonymous, user, role,
-and expiresAt. Show me the full set of files.
+Add an AuthProvider that subscribes with client.auth.onSessionChange(...), awaits initEmbeddedAuth(client.auth, fabricOptions) before clearing the initial loading state, and exposes { session, loading, error, signIn, signOut, isAuthenticated } through a useAuth() hook. signIn() must call ensureSignedInWithFabric() from a button click path.
+
+Add an AuthGuard that redirects unauthenticated users to /auth and authenticated users away from /auth. Do not use onAuthStateChange.
 ```

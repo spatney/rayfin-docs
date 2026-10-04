@@ -1,81 +1,43 @@
 ---
 title: Templates
-description: Where Rayfin project templates come from — built-in, git, and local sources, registering your own template sources, and authoring a template.
+description: Use built-in, local, git, and registered Rayfin templates, including the 1.36 universal-app starter and registry behavior.
 ---
 
-Templates let you scaffold a project from a known starting point: a built-in starter, a
-local directory, a team's git repository, or a registered third-party source. Every
-`npm create @microsoft/rayfin@latest` or `npx rayfin init` invocation can pull from any of
-them.
+Templates scaffold the files for a Rayfin project before `rayfin init` applies Rayfin
+identity, service, package, and agent-file setup. Sources can be built in, local folders,
+git repositories, or registry entries.
 
 ## Where templates come from
 
-- **Built-in templates** ship inside `@microsoft/rayfin-cli` and work offline.
-- **Local directories** let you test or reuse a template on disk.
-- **External git repositories** are cloned on demand from any HTTPS, SSH, or `git@` URL.
-- **Template registries** are YAML files that name git URLs to surface alongside the
-  built-ins.
+- Built-in templates ship inside `@microsoft/rayfin-cli` and work offline.
+- Local directories let you test a template on disk.
+- Git repositories are cloned on demand from HTTPS, SSH, `git@`, or `file://` URLs.
+- Template registries are YAML files that give git sources stable names for `--list-templates` and the picker.
 
-External and local sources are discovered through a `rayfin-template.yml` manifest inside
-the source directory. Built-in templates are packaged with the CLI and appear in
-`--list-templates` automatically.
+External and local sources are discovered through `rayfin-template.yml`. Built-ins use the
+metadata packaged with the CLI.
 
-## List available templates
+## Built-in templates
+
+Run the installed CLI to see the exact names available in your version:
 
 ```bash
 npx rayfin init --list-templates
 ```
 
-Prints a JSON document (versioned by `schemaVersion`) suitable for piping to a script or
-agent:
+In Rayfin 1.36.2 the visible built-ins are:
 
-```json
-{
-  "schemaVersion": 1,
-  "bundled": [
-    {
-      "name": "blankapp",
-      "displayName": "Blank App",
-      "description": "Bare-bones Fabric-authenticated React + Vite app — sign-in, routing, and a placeholder home page, with no data layer to remove",
-      "source": "built-in"
-    },
-    {
-      "name": "dataapp",
-      "displayName": "Data App",
-      "description": "Build data analytics app based on your data in Fabric",
-      "source": "built-in"
-    },
-    {
-      "name": "gettingstartedauth",
-      "displayName": "A Todo App with Auth and Getting Started Docs",
-      "description": "Todo app with Fabric authentication, Tailwind CSS, and production-first workflow",
-      "source": "built-in"
-    },
-    {
-      "name": "todoapp",
-      "displayName": "Basic Todo App",
-      "description": "End-to-end Fabric-authenticated todo CRUD with a Rayfin data model and per-user row-level security — a working starter that exercises the full data path",
-      "source": "built-in"
-    }
-  ],
-  "registry": [
-    {
-      "name": "team-templates",
-      "displayName": "Team Templates",
-      "description": "Our team's starter collection",
-      "url": "https://github.com/example-org/rayfin-templates.git",
-      "ref": "v1.2.0",
-      "path": "catalogs/official",
-      "source": "C:\\Users\\you\\.rayfin\\template-registries.yml"
-    }
-  ]
-}
-```
+| CLI name | Display name | Notes |
+| --- | --- | --- |
+| `blankapp` | `✨ Use default template` | Same CLI name as 1.35, but in 1.36 it scaffolds the Universal App instead of the bare-bones Blank App. The canonical `universal-app` name is hidden from `--list-templates` but still accepted for automation. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `dataapp` | Data App | Fabric analytics app starter. |
+| `gettingstartedauth` | A Todo App with Auth and Getting Started Docs | Todo starter with Fabric auth and getting-started docs. |
+| `todoapp` | Basic Todo App | Todo CRUD starter with a Rayfin data model and per-user row-level security. |
 
-If a registry file fails to load or a name conflicts, a `warnings` array is appended. The
-list shows only built-ins plus what's registered through `template-registries.yml` — an
-arbitrary git URL passed with `-t` is not listed. Template names change over time; run
-`--list-templates` for current, copy/paste-ready names.
+`blankapp` remains the visible built-in template name. In 1.36, it now scaffolds the Universal App instead of the bare-bones Blank App from 1.35; use `universal-app` only when automation needs the hidden canonical template name. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Every bundled template's `dev` script is `rayfin dev`; `dev:frontend` starts the frontend
+without recursively invoking the CLI.
 
 ## Scaffold from a built-in template
 
@@ -83,79 +45,70 @@ arbitrary git URL passed with `-t` is not listed. Template names change over tim
 npm create @microsoft/rayfin@latest my-app -- --template todoapp
 ```
 
-Without `-t/--template`, the CLI prompts you to pick one interactively.
-
-## Scaffold from an external git repository
+To select the hidden universal starter explicitly:
 
 ```bash
-npx rayfin init my-app -t https://github.com/example-org/my-template.git
+npm create @microsoft/rayfin@latest my-app -- --template universal-app
 ```
 
-Supported URL formats: HTTPS, SSH, `git@host:org/repo.git`, and `file://`. The CLI does a
-shallow clone into a temp directory, scaffolds, then deletes the clone.
+## List templates
 
-Pin to a branch, tag, or commit with `#<ref>`:
+`--list-templates` prints JSON with `schemaVersion`, `bundled`, `registry`, and optional
+`warnings` fields. It lists built-ins and registry entries only; arbitrary git URLs passed
+to `-t` are not listed.
+
+## Scaffold from a local directory
 
 ```bash
-npx rayfin init my-app -t https://github.com/example-org/my-template.git#v1.2.0
+npx rayfin init my-app -t .\my-template
 ```
 
-Use a branch name, tag name, or full 40-character commit SHA — abbreviated SHAs are
-rejected because `git clone --branch` would treat them ambiguously. For repeated use,
-register the repo in a `template-registries.yml` (below) so the ref lives in
-configuration; then `-t <registry-name>` clones the pinned ref automatically.
+A bare `-t` value is resolved as a built-in or registry name. Use `.\`, `..\`, or an
+absolute Windows path for a local directory.
 
-### Authentication for private repositories
-
-The CLI uses your existing git credentials — SSH keys, Git Credential Manager, GitHub CLI
-auth, or whatever your environment already provides. No credentials are stored or managed
-by Rayfin. Interactive credential prompts are disabled, so a misconfigured environment
-fails fast instead of hanging. For GitHub repos, run `gh auth setup-git` to wire
-credentials through Git Credential Manager.
-
-### Multi-template repositories
-
-A repository can publish multiple templates via the `entries` array in its
-`rayfin-template.yml` (see [Author a template](#author-a-template)). Scaffolding
-interactively from one shows a picker; non-interactively, pass `--template-name`:
+## Scaffold from a git repository
 
 ```bash
-npx rayfin init my-app \
-  -t https://github.com/example-org/templates.git \
-  --template-name api-service \
-  --yes
+npx rayfin init my-app -t https://github.com/example-org/rayfin-template.git#v1.2.0
 ```
 
-`--template-name` requires `-t/--template` pointing at a multi-template source — passing it
-alone is an error, and against a built-in template name it has no effect.
+Supported forms are HTTPS, SSH, `git@host:org/repo.git`, and `file://`. Pin with
+`#<ref>`; use a branch, tag, or full 40-character commit SHA. The CLI shallow-clones the
+source, scaffolds from it, then removes the clone.
 
-## Scaffold from a local template directory
+Private repositories use ambient git credentials. Configure Git Credential Manager, SSH,
+or `gh auth setup-git`; Rayfin does not store git credentials.
+
+## Multi-template sources
+
+A `rayfin-template.yml` can contain multiple entries. Interactive runs show a picker;
+non-interactive runs need `--template-name`:
 
 ```bash
-npx rayfin init my-app -t ./my-template
+npx rayfin init my-app -t https://github.com/example-org/templates.git --template-name admin-app --yes
 ```
 
-> [!WARNING]
-> A bare value passed to `-t` is looked up as a template name against the built-ins and
-> registries — it is **not** treated as a path. Use `./`, `../`, or an absolute path for a
-> local directory (`C:\templates\web` on Windows).
+`--template-name` selects a leaf entry by name or path from the source named by
+`-t/--template`.
 
 ## Add a template registry
 
-A registry is a YAML file listing template repositories to surface in `--list-templates`
-and the interactive picker. There's no CLI command to add or remove entries — edit the
-file by hand.
+Registries are YAML files that add named git sources to `--list-templates` and the
+interactive picker.
 
-| Tier | Path | When to use |
-| --- | --- | --- |
-| User-global | `~/.rayfin/template-registries.yml` | Templates you use across many projects on this machine. |
-| Project-local | `<projectDir>/.rayfin/template-registries.yml` | Templates pinned to a specific project (commit it alongside the repo). |
+| Tier | Path |
+| --- | --- |
+| User-global | `~\.rayfin\template-registries.yml` |
+| Project-local | `.rayfin\template-registries.yml` |
+| Bundled | `@microsoft/rayfin-cli` `assets/template-registries.yml` |
 
-Both are optional. The CLI also loads a bundled registry shipped with
-`@microsoft/rayfin-cli` itself (`assets/template-registries.yml`) — in 1.34 it ships one
-entry, "Data App", marked as protected. Protected entries can't be overridden by a user or
-project entry reusing their name, and fall back to the matching bundled template (the
-`dataapp` template shown above) if the external clone fails.
+The bundled 1.36.2 registry contains a protected first-class `dataapp` entry pointing at
+`https://github.com/microsoft/fabric-apps-analytic-templates` with `ref: v1` and
+`templateName: Data App`.
+
+Registry entries load in tier order: bundled, user-global, project-local. The first
+occurrence of a `name` wins. Protected bundled entries cannot be overridden; conflicts are
+reported in `warnings`.
 
 ### Registry file format
 
@@ -167,190 +120,264 @@ registries:
     url: https://github.com/example-org/rayfin-templates.git
     ref: v1.2.0
     path: catalogs/official
+    templateName: admin-app
 ```
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `name` | Yes | Unique identifier for this entry. |
-| `url` | Yes | Git URL of the template repository (HTTPS, SSH, `git@`, or `file://`). |
-| `displayName` | No | Human-readable label. Defaults to `name`. |
-| `description` | No | Short description shown in pickers and `--list-templates`. |
-| `ref` | No | Git tag, branch, or full commit SHA to pin to. Defaults to the repository's default branch. |
-| `path` | No | Subdirectory inside the repo where the manifest lives. |
-| `templateName` | No | For a multi-template repo, the entry `name` or `path` to pre-select so consumers skip the picker. |
-
-### Conflict handling
-
-Registries load in tier order: bundled → user-global → project-local. The first occurrence
-of a `name` wins; later tiers with the same name are skipped and listed under `warnings` in
-`--list-templates`. A user or project entry that reuses a protected CLI-shipped template's
-name is ignored with a dedicated warning. Other name conflicts resolve the same way — by
-tier order — so rename one of the conflicting entries to fix it.
+| `name` | yes | Unique registry identifier. |
+| `url` | yes | Git URL. |
+| `displayName` | no | Label shown in pickers and listings. |
+| `description` | no | Short description. |
+| `ref` | no | Git tag, branch, or full commit SHA. CLI-shipped registries must use a release tag or full SHA, not a moving branch. |
+| `path` | no | Subdirectory in the repository that contains `rayfin-template.yml`. |
+| `templateName` | no | Entry name or path to pre-select from a multi-template source. |
+| `default` | no | Protected bundled fallback behavior for CLI-shipped entries. |
+| `firstClass` | no | CLI-shipped entries route before bundled templates of the same name and can fall back to a bundled template on supported clone errors. |
 
 ## Author a template
 
-A template is a directory with a `rayfin-template.yml` manifest at its root. Files are
-copied into the target directory, then a small fixed set of scaffold transforms runs:
-
-- If it includes `package.json`, its `name` field is rewritten to the generated project
-  slug (left as-is if the file isn't valid JSON).
-- If it includes `README.md`, the placeholders below are replaced.
-- `__projectName__` in **filenames** is replaced with the user's project name.
-- Everything else is copied as-is.
-
-The project name comes from the `[directory]` positional (`npm create @microsoft/rayfin@latest
-my-app` → `my-app`) unless overridden with `--project-name`.
-
-### Minimal template
+A template directory contains `rayfin-template.yml` and one or more entry paths. Files under
+an entry are copied to the target, then Rayfin's scaffold transforms run.
 
 ```text
-my-template/
+payments-template\
 ├── rayfin-template.yml
-└── template/
+└── template\
     ├── package.json
-    ├── README.md
-    └── src/
-        └── __projectName__.config.ts
+    └── rayfin\
+        └── rayfin.yml
 ```
 
-```yaml title="my-template/rayfin-template.yml"
+```yaml title="payments-template/rayfin-template.yml"
 apiVersion: v1
 metadata:
-  name: my-starter
-  displayName: My Starter
-  description: A starter template for Rayfin projects
+  name: payments
+  displayName: Payments starter
+  description: Fabric-authenticated payments dashboard
 entries:
-  - name: my-starter
-    path: ./template
-```
-
-Scaffolded into `my-app/`, `src/__projectName__.config.ts` is written as
-`src/my-app.config.ts`.
-
-### Publish and share it
-
-```bash
-# 1. Initialize a git repo for the template
-git init && git add . && git commit -m "Initial template"
-git remote add origin https://github.com/example-org/my-template.git
-git push -u origin main
-
-# 2. Tag a release — don't ask consumers to scaffold from a moving branch
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-Consumers scaffold from the URL directly:
-
-```bash
-npx rayfin init my-app -t https://github.com/example-org/my-template.git#v1.0.0
-```
-
-Or, to make it appear in `--list-templates` and the interactive picker, add it to a
-`template-registries.yml` (project-local, committed, or personal) so consumers scaffold by
-name instead of remembering the URL:
-
-```bash
-npx rayfin init my-app -t my-starter
-```
-
-Bump the tag and update the registry `ref` whenever you ship a meaningful template change.
-
-### Try it locally before publishing
-
-```bash
-npx rayfin init test-output -t ./my-template --yes
+  - name: payments
+    path: .\template
 ```
 
 ### Manifest reference
 
-```yaml
-apiVersion: v1            # required, must be 'v1'
-metadata:
-  name: my-collection     # required, identifier for the manifest
-  displayName: My Collection
-  description: Optional description
-  version: 1.2.0           # accepted, currently informational only
-  tags: [todo, auth]       # accepted, currently informational only
-entries:                   # required, at least one entry
-  - name: api-service      # scaffolds files from path
-    path: ./api-service
-    description: REST API with a Rayfin data layer
-```
+| Key | Required | Description |
+| --- | --- | --- |
+| `apiVersion` | yes | Must be `v1`. |
+| `metadata.name` | yes | Manifest identifier. |
+| `metadata.displayName` | no | Display label. |
+| `metadata.description` | no | Description shown in source-level pickers. |
+| `metadata.version` | no | Informational. |
+| `metadata.tags` | no | Informational. |
+| `entries` | yes | One or more entries. Entries can be direct leaves or nested groups. |
+| `entries[].name` | leaf | Template entry identifier. |
+| `entries[].path` | leaf | Directory to copy. |
+| `entries[].description` | no | Entry description for local pickers. |
+| `entries[].group` | group | Nested entries for larger collections. Local templates and git-backed templates both support grouped entries. |
 
-`metadata.displayName` and `metadata.description` are shown when scaffolding from this
-template. Entry-level `description` is shown in the local multi-template picker; for
-git-backed sources, group descriptions show but individual entry descriptions do not.
+### Nested entries
+
+```yaml title="rayfin-template.yml"
+apiVersion: v1
+metadata:
+  name: company-starters
+entries:
+  - group:
+      name: dashboards
+      displayName: Dashboards
+      entries:
+        - name: sales-dashboard
+          path: .\dashboards\sales
+        - name: finance-dashboard
+          path: .\dashboards\finance
+  - name: api-service
+    path: .\api-service
+```
 
 ### Single-entry vs. multi-entry manifests
 
-A single entry auto-selects with no picker:
+A single-entry manifest auto-selects its only entry with no picker:
 
-```yaml
+```yaml title="rayfin-template.yml"
+apiVersion: v1
+metadata:
+  name: payments
 entries:
-  - name: my-starter
-    path: .
+  - name: payments
+    path: .\template
 ```
 
-Multiple entries show an interactive picker, or require `--template-name` non-interactively:
+A multi-entry manifest shows an interactive picker. Non-interactive runs must pass
+`--template-name` with an entry name or path:
 
-```yaml
+```yaml title="rayfin-template.yml"
+apiVersion: v1
+metadata:
+  name: company-starters
 entries:
-  - name: api-service
-    path: ./templates/api-service
-  - name: fullstack
-    path: ./templates/fullstack
+  - name: dashboard
+    path: .\dashboard
+  - name: operations
+    path: .\operations
 ```
 
-Local template directories keep entries at the top level; git-backed sources can nest
-entries in named `group`s for larger collections:
+Grouped entries are supported for nested navigation in both local and git-backed sources:
 
-```yaml
+```yaml title="rayfin-template.yml"
+apiVersion: v1
+metadata:
+  name: company-starters
 entries:
   - group:
-      name: starters
-      displayName: Starter Apps
+      name: dashboards
+      displayName: Dashboards
       entries:
-        - name: hello-world
-          path: ./starters/hello-world
-        - name: todo-app
-          path: ./starters/todo-app
-  - name: standalone-app
-    path: ./standalone-app
+        - name: sales-dashboard
+          path: .\dashboards\sales
+        - name: finance-dashboard
+          path: .\dashboards\finance
+  - name: api-service
+    path: .\api-service
 ```
 
 ### What's currently supported
 
-- Most file contents are copied as-is — only `README.md` and `package.json` get the
-  transforms above.
-- `README.md` supports `{{PROJECT_NAME}}`, `{{PROJECT_NAME_KEBAB}}`, and
-  `{{PROJECT_NAME_PASCAL}}` placeholders.
-- `__projectName__` is the only filename placeholder, with path separators sanitized.
-- `rayfin-template.yml`, `.git`, `node_modules`, `.DS_Store`, and `Thumbs.db` are skipped
-  during scaffolding.
+
+- `package.json` `name` is rewritten to the generated project slug when the file is valid JSON.
+- `README.md` replaces `{{PROJECT_NAME}}`, `{{PROJECT_NAME_KEBAB}}`, and `{{PROJECT_NAME_PASCAL}}`.
+- `__projectName__` in filenames is replaced with the project name.
+- `rayfin-template.yml`, `.git`, `node_modules`, `.DS_Store`, and `Thumbs.db` are skipped.
 - Symlinks are not followed.
-- After scaffolding, the CLI installs its own agent files (`mcpServers.rayfin` in
-  `.mcp.json`, `.agents/skills/rayfin/`) into the project. Ship a `.mcp.json` with your own
-  servers, but don't include a `mcpServers.rayfin` key — the CLI manages that key. You can
-  also ship an `AGENTS.md`; it's a one-time install and the CLI won't overwrite it. See
-  [Ai-files](/docs/reference/cli/ai-files).
+- If the template ships `rayfin.yml`, init preserves service details and applies only explicit identity, dialect, and service edits.
+
+#### Agent-file ownership
+
+After scaffolding, `rayfin init` installs Rayfin-managed agent files from the installed CLI.
+Template authors should design around that ownership model:
+
+- The CLI owns `.agents/skills/rayfin/`, `.agents/skills/rayfin-functions/`,
+  `.agents/skills/rayfin-connectors/`, and the storage skill when storage is enabled. Do
+  not ship files in `.agents/skills/rayfin/` or other Rayfin-owned skill directories from
+  a template.
+- The CLI owns only the `mcpServers.rayfin` key inside `.mcp.json`. A template may ship a
+  `.mcp.json` with its own MCP servers, but it must not include `mcpServers.rayfin`; the
+  initializer adds or updates that key.
+- A template may ship its own `AGENTS.md`. If the file exists after template copy, Rayfin
+  treats it as user/template-owned content. `rayfin init ai-files install` is a one-time
+  install for `AGENTS.md` and never overwrites an existing file, even with `--force`.
+- Commit `rayfin/.lockfile.json` after scaffolding if you want the team to share the same
+  managed Rayfin skill and MCP baseline.
+
+## Authentication for private repositories
+
+The CLI uses the git credentials already configured on the machine. SSH keys, Git
+Credential Manager, GitHub CLI authentication, and other git credential helpers all work.
+Rayfin does not read, store, or prompt for repository credentials.
+
+Interactive git credential prompts are disabled during scaffolding. A private repository
+with missing credentials fails quickly instead of hanging. For GitHub repositories, run
+this once before scaffolding:
+
+```bash
+gh auth setup-git
+```
+
+Then scaffold with the same `-t` syntax used for public repositories.
+
+### Conflict handling
+
+Registries load in this order:
+
+1. Bundled entries from the CLI package.
+2. User-global entries from `~\.rayfin\template-registries.yml`.
+3. Project-local entries from `.rayfin\template-registries.yml`.
+
+The first entry for a name wins. A later registry entry with the same `name` is skipped and
+reported in the `warnings` array from `--list-templates`. Protected bundled entries cannot
+be overridden by user or project registries.
+
+Rename one of the entries to fix a conflict. Do not rely on tier order to shadow a CLI
+entry; an agent reading `--list-templates` should treat every returned name as the accepted
+choice for that installed CLI.
+
+### Publish and share it
+
+Keep reusable templates in a git repository and pin consumers to a tag or full commit SHA.
+Do not ask teams to scaffold from a moving branch.
+
+```bash
+# Initialize and publish the template repository
+git init
+git add .
+git commit -m "Initial Rayfin template"
+git remote add origin https://github.com/example-org/rayfin-templates.git
+git push -u origin main
+
+# Tag a release for consumers
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Consumers can scaffold from the URL directly:
+
+```bash
+npx rayfin init my-app -t https://github.com/example-org/rayfin-templates.git#v1.0.0
+```
+
+For repeated team use, add the repository to a registry file and pin `ref` to the same tag:
+
+```yaml title=".rayfin/template-registries.yml"
+registries:
+  - name: team-starters
+    displayName: Team starters
+    description: Approved Rayfin project templates for this repository
+    url: https://github.com/example-org/rayfin-templates.git
+    ref: v1.0.0
+```
+
+Then consumers scaffold by name:
+
+```bash
+npx rayfin init my-app -t team-starters
+```
+
+Bump the tag and update registry `ref` whenever you ship a meaningful template change.
+
+### Try it locally before publishing
+
+Use a local path so you can test the manifest, copied files, package rename, `rayfin.yml`
+identity edits, and agent-file installation before pushing to git.
+
+```bash
+npx rayfin init test-output -t .\payments-template --yes
+```
+
+Inspect the generated project before deleting it:
+
+```bash
+cd test-output
+npx rayfin init ai-files status
+npx rayfin --help
+```
 
 ## Gotchas
 
-- `--list-templates` lists built-in and registered templates only — an arbitrary git URL
-  passed with `-t` isn't in the list.
-- The CLI clones a single ref shallowly. Tooling that needs git history or other branches
-  won't have them at scaffold time.
-- Private repositories rely on ambient git credentials; interactive prompts are disabled,
-  so missing credentials fail immediately.
-- Non-interactive scaffolding from a multi-entry source fails unless `--template-name` is
-  given — the error lists the available names.
-- A bare `-t` value resolves as a template name, not a path. Use `./`, `../`, or an absolute
-  path for local directories.
+- `--list-templates` lists built-in and registered templates only. A raw git URL passed to
+  `-t` is never included in that list.
+- A bare `-t` value is a template or registry name, not a file path. Use `.\`, `..\`, or
+  an absolute path for local folders.
+- Non-interactive scaffolding from a multi-entry source needs `--template-name`; otherwise
+  the CLI cannot choose an entry.
+- The CLI shallow-clones one ref. Template tooling that needs other branches or history will
+  not have them during scaffold.
+- Private repositories rely on ambient git credentials, and prompts are disabled.
+- Do not include a `mcpServers.rayfin` key in a template's `.mcp.json`; Rayfin owns that
+  key. Template-authored `AGENTS.md` is respected as a one-time install and is not
+  overwritten.
 
-```prompt title="Author and test a Rayfin template"
-Create a rayfin-template.yml manifest in a directory called payments-starter with a single
-entry pointing at ./template, then scaffold it locally with
-`npx rayfin init test-output -t ./payments-starter --yes` to verify it works before I push
-it to a git repository.
+```prompt title="Create and test a Rayfin template"
+Create a local Rayfin template folder named payments-template with a rayfin-template.yml
+manifest and one entry at .\template. Include a minimal package.json and rayfin/rayfin.yml,
+then test it with `npx rayfin init test-payments -t .\payments-template --yes`.
 ```

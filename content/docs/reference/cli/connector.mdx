@@ -1,14 +1,12 @@
 ---
-title: Connector
+title: rayfin connector
+appliesTo: "@microsoft/rayfin-cli >= 1.36"
 description: rayfin connector manages external Fabric sources, from discovery and registration through inspection and invocation.
 ---
 
-> [!NOTE]
-> `connector` is registered only when connectors are enabled. Enable it with
-> `services.connectors.enabled: true` in `rayfin/rayfin.yml`, with any non-empty
-> top-level `connectors:` block, or for one command with
-> `RAYFIN_FEATURE_FLAGS=connectors`. Without one of those opt-ins, the CLI reports
-> `connector` as an unknown command.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+`connector` is always registered in Rayfin 1.36. No connector feature-flag opt-in is required.
 
 Use `rayfin connector` to discover existing Microsoft Fabric sources, register them in
 `rayfin.yml`, inspect their read shape, and invoke configured operations. For the workflow
@@ -21,16 +19,20 @@ npx rayfin connector <command>
 
 ## Connector types
 
-| Type | Fabric item | Category | Operations | Version |
-| --- | --- | --- | --- | --- |
-| `fabric-sqlanalytics` | Lakehouse | Category A | `read` | No |
-| `fabric-warehouse` | Warehouse | Category A | `read`, `create`, `update`, `delete` | No |
-| `fabric-sqldatabase` | SQL Database | Category A | `read`, `create`, `update`, `delete` | No |
-| `fabric-semanticmodel` | Semantic model | Category B | `executeQuery` | Pinned to `'1'` by `connector add` |
-| `kusto` | KQL Database | Category B | `executeQuery`, `executeCommand` | Pinned to `'1'` by `connector add` |
+| Type | Fabric item | Category | Operations | Auth default | Version |
+| --- | --- | --- | --- | --- | --- |
+| `fabric-sqlanalytics` | Lakehouse SQL analytics endpoint | Category A | `read` | `application` [Changed in 1.36](/docs/reference/changelog#rayfin-136) | No |
+| `fabric-warehouse` | Warehouse | Category A | `read`, `create`, `update`, `delete` | `application` [Changed in 1.36](/docs/reference/changelog#rayfin-136) | No |
+| `fabric-sqldatabase` | SQL Database | Category A | `read`, `create`, `update`, `delete` | `application` [Changed in 1.36](/docs/reference/changelog#rayfin-136) | No |
+| `fabric-semanticmodel` | Semantic model | Category B | `executeQuery` | `delegated` | Pinned to `'1'` by `connector add` |
+| `kusto` | KQL Database | Category B | `executeQuery`, `executeCommand` | `delegated`; existing entries only | New authoring held in 1.36 |
 
 Category A connectors generate entity configuration for Data API Builder. Category B
-connectors expose function-style query operations and are delegated-only. See
+connectors expose function-style query operations and are delegated-only.
+
+`connector types`, `connector search`, and `connector add` list only authorable types. In 1.36.2, `kusto` is absent and `connector add --type kusto` fails with `Connector type "kusto" is not available in this release. Supported types: [fabric-sqlanalytics, fabric-warehouse, fabric-sqldatabase, fabric-semanticmodel].`
+
+Existing Kusto entries still validate and deploy. See
 [Connectors](/docs/connectors), [Fabric SQL sources](/docs/connectors/sql-sources),
 [Semantic models](/docs/connectors/semantic-models), and [KQL databases](/docs/connectors/kusto).
 
@@ -82,7 +84,7 @@ Registers one source in `rayfin/rayfin.yml` and scaffolds `rayfin/connectors/<na
 
 | Flag | Description |
 | --- | --- |
-| `--type <type>` | Required. One of the five connector type literals. |
+| `--type <type>` | Required. One of the authorable connector type literals: `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, or `fabric-semanticmodel`. New `kusto` authoring is held in 1.36.2. |
 | `--workspace-id <id>` | Required Fabric workspace ID. Must be a literal value; `${VAR}` placeholders are rejected. |
 | `--item-id <id>` | Required Fabric item ID. Must be a literal value; `${VAR}` placeholders are rejected. |
 | `--name <name>` | Connector name. If omitted, the CLI derives one from the Fabric item display name. Must match `/^[a-zA-Z0-9\-_]+$/` and be at most 256 characters. |
@@ -93,11 +95,11 @@ Registers one source in `rayfin/rayfin.yml` and scaffolds `rayfin/connectors/<na
 
 The command verifies the Fabric item, writes the `connectors:` entry, and writes
 `rayfin/connectors/<name>/schema.ts`. For Category A it also runs schema discovery and
-writes `metadata.json`. For `kusto`, it resolves `queryServiceUri` and `databaseName` and
-bakes them into `schema.ts`; those values are not written to `rayfin.yml`.
+writes `metadata.json`. For `fabric-semanticmodel`, it writes the complete generated `schema.ts`.
 
-For versioned Category B types (`fabric-semanticmodel` and `kusto`), `connector add` writes
-the catalog `defaultVersion` automatically. Today that value is `'1'`.
+For authorable versioned Category B types, `connector add` writes the catalog `defaultVersion` automatically. Today `fabric-semanticmodel` uses `'1'`.
+
+Existing Kusto declarations also use version `'1'`, but new Kusto authoring is held in 1.36.2.
 
 `connector add` does not install packages. It prints a version-pinned `npm install` command;
 with `--json`, the same data appears under `install.packages` and `install.command`.
@@ -147,7 +149,9 @@ Lists the connector catalog.
 | `--output interactive\|plain\|json` | Select output mode. |
 | `--json` | Emit the catalog as JSON. |
 
-`--json` emits the same detailed catalog fields as verbose mode.
+[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+`--json` emits `{ status, schemaVersion, count, types }`. Each type includes `category`, `description`, `defaultAuth`, `allowedAuthTypes`, `dialect`, `allowedOperations`, `requiredConfig`, `discoverableItemTypes`, `requiresVersion`, optional `defaultVersion`, and version-pinned `packages`.
 
 ## `connector inspect`
 
@@ -206,6 +210,9 @@ forms, `--name` and `--operation`; flag values win over positionals.
 | `--file <path>` | JSON payload file, resolved against the project root. The resolved path must stay inside it; `..\` escapes are rejected before the file is read. |
 | `-v, --verbose` | Enable verbose output. Cannot be combined with `--json`. |
 | `--output interactive\|plain\|json` | Select output mode. |
+| `--transport <mode>` | `auto` (default) picks per connector type; `deployed` forces the deployed BaaS route and needs a Rayfin app-session token in `RAYFIN_TOKEN`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `--output-file <path>` | Write the full result to this file; inline output remains unless it exceeds `--max-inline-bytes`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `--max-inline-bytes <bytes>` | Spill to a file and show only a preview when serialized output exceeds this many bytes; `0` always prints inline. Default `8192`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `--json` | Emit one machine-readable JSON object. |
 
 Operation names match case-insensitively against the connector's `operations:` list. If the
@@ -214,9 +221,9 @@ allowlist.
 
 ### Invoke transports
 
-`fabric-semanticmodel` calls Fabric and Power BI directly under the developer's own
-identity. It works with or without `rayfin up`, and it requires `workspaceId` and `itemId`
-under the connector's `config:` block.
+With `--transport auto`, `fabric-semanticmodel` calls Fabric and Power BI directly under the developer's own identity. It works with or without `rayfin up`, and it requires `workspaceId` and `itemId` under the connector's `config:` block.
+
+`--transport deployed` opts out of that shortcut and exercises the deployed BaaS route.
 
 Every other type, including `kusto`, POSTs to the deployed item at
 `/__private/connectors/<name>/invoke` and requires a prior `rayfin up`.
@@ -232,15 +239,15 @@ is decoded and checked locally.
 
 ### Invoke output
 
-Success emits `{ status: 'ok', connector, operation, output }`. A resolved call is not
+Success emits `{ status: 'ok', connector, operation, output }`. When output spills, the envelope also includes `outputFile`, `outputBytes`, `outputTruncated`, and `previewItems`.
+
+A resolved call is not
 automatically a success: a normalizing connector reports failure as `status: 'error'`, and a
 connector returning a raw envelope reports failure as `status: 'Failed'`. The CLI converts
 either failure shape into a non-zero exit.
 
 > [!NOTE]
-> Invoking a semantic model operation whose DAX returns Int64 columns, for example
-> `DISTINCTCOUNT`, can fail while printing with `Do not know how to serialize a BigInt` even
-> though the query succeeded. Select a non-Int64 column to read the output.
+> Rayfin 1.36.1 coerces semantic-model Arrow Int64 values, including Union/Variant Int64s, before CLI output is serialized. Safe Int64 values should no longer print `Do not know how to serialize a BigInt`. Values outside JavaScript's safe integer range surface as connector `overflow` errors. [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
 
 ### Invoke errors
 
@@ -252,7 +259,29 @@ either failure shape into a non-zero exit.
 | `Operation "<op>" is not allowed for connector "<name>"` | Check the connector's `operations:` in `rayfin.yml`, or the type's allowlist. |
 | `missing workspaceId/itemId in rayfin.yml` | Add both under `config:`, or re-run [`connector add`](#connector-add). |
 | `Access token has the wrong audience for the Power BI query API` | Unset or replace `RAYFIN_TOKEN`, or re-run without `--json` to consent interactively. |
-| `No remote endpoint configured` | The non-semantic-model transport needs a deployed item; run `npx rayfin up` first. |
+| `Invalid --max-inline-bytes value: <value>.` | Pass a non-negative whole number of bytes, or `0` to always print inline. |
+| `No remote endpoint configured` | The non-semantic-model transport, or `--transport deployed`, needs a deployed item; run `npx rayfin up` first. |
+
+## `up connector apply`
+
+[Preview](/docs/reference/changelog#feature-status) [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+
+```bash
+npx rayfin up connector apply
+npx rayfin up connector apply --name inventory
+```
+
+Generates DAB configuration for declared Category A connectors, checks reserved and duplicate GraphQL entity names, and POSTs each generated config to the deployed workload.
+
+It requires a prior `npx rayfin up` so the remote endpoint and connector settings exist. Category B connectors are reported as skipped because they do not have generated GraphQL DAB config.
+
+| Flag | Description |
+| --- | --- |
+| `--name <name>` | Apply only the named connector instead of every entry in `rayfin.yml`. |
+| `-v, --verbose` | Enable verbose output. |
+| `--json` | Emit `{ status, generate, results, steps, duration }`. `status` is `partial` when generation or apply failed for any connector. |
+
+`npx rayfin up --json` also includes connector generation and apply outcomes in the deployment `steps` map, with connector step keys namespaced as `connector:<name>`.
 
 ```prompt title="Register a Fabric SQL Database connector"
 Add a Rayfin connector named "sales" for my Fabric SQL Database using

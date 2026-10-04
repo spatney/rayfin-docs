@@ -1,0 +1,163 @@
+---
+title: "@microsoft/rayfin-embed-host"
+description: "Parent-page SDK reference for brokering external Entra authentication into a Rayfin app embedded in an iframe."
+appliesTo: "@microsoft/rayfin-embed-host >= 1.36"
+---
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+`@microsoft/rayfin-embed-host` is the parent-page SDK for embedding a Rayfin app in an iframe and brokering its external Entra authentication. The parent portal supplies a delegated Entra token; the iframe receives only a single-use handoff code.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-embed-host
+```
+
+## Exports
+
+```typescript
+export { createEmbedHost };
+export { EmbedHostError };
+export type {
+  EmbedHost,
+  EmbedHostErrorCode,
+  EmbedHostOptions,
+  HandoffProvider,
+  HandoffRequest,
+  HandoffResult,
+};
+```
+
+`HandoffProvider` is a contributor extension seam, not a Builder-facing API.
+
+## createEmbedHost
+
+```typescript
+function createEmbedHost(options: EmbedHostOptions): EmbedHost;
+```
+
+Registers a `message` listener in the parent window. Call it before mounting or navigating the Rayfin iframe because the embedded app sends its readiness message once.
+
+```typescript
+import { createEmbedHost } from '@microsoft/rayfin-embed-host';
+
+const host = createEmbedHost({
+  allowedOrigins: ['https://my-rayfin-app.example.com'],
+  getAccessToken: () => acquireDelegatedEntraToken(),
+});
+
+host.dispose();
+```
+
+`createEmbedHost()` throws a Rayfin `SdkError` if called outside a browser environment.
+
+## EmbedHostOptions
+
+```typescript
+interface EmbedHostOptions {
+  allowedOrigins: string[];
+  getAccessToken: () => string | Promise<string>;
+  handoffProvider?: HandoffProvider;
+}
+```
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `allowedOrigins` | `string[]` | Exact origins of embedded Rayfin apps this host will broker for. The same list gates the iframe sender origin and the return origin bound into the handoff code. |
+| `getAccessToken` | `() => string \| Promise<string>` | Returns the parent portal's delegated Entra access token. Called once per handoff request and never cached by the host. |
+| `handoffProvider` | `HandoffProvider` | Internal acquisition seam. Omit in application code. |
+
+Use origins only, such as `https://my-rayfin-app.example.com`. Do not include paths.
+
+## EmbedHost
+
+```typescript
+interface EmbedHost {
+  dispose(): void;
+}
+```
+
+`dispose()` removes the parent-window message listener and stops brokering handoffs. It is idempotent.
+
+## Wire protocol behavior
+
+The host handles two message families on channel `fabric-auth`:
+
+| Message | Direction | Purpose |
+| --- | --- | --- |
+| `externalEmbed.ready` | iframe to parent | One-shot readiness announcement. |
+| `externalEmbed.ack` | parent to iframe | Scenario acknowledgement declaring `externalEmbed`. |
+| `auth.requestHandoff` | iframe to parent | Correlated handoff request with PKCE challenge, return origin, brokered-authorize endpoint, and artifact ID. |
+| `response` | parent to iframe | Correlated success or error response. |
+
+The host ignores readiness and handoff messages from origins outside `allowedOrigins`. Handoff requests must come from the same window and origin that completed readiness.
+
+## HandoffRequest and HandoffResult
+
+```typescript
+interface HandoffRequest {
+  brokeredAuthorizeUrl: string;
+  artifactId: string;
+  returnOrigin: string;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  state?: string;
+  getAccessToken: () => string | Promise<string>;
+}
+
+interface HandoffResult {
+  handoffCode: string;
+  state?: string;
+}
+```
+
+The default provider posts to `brokeredAuthorizeUrl` with:
+
+- `Authorization: Bearer <delegated Entra token>`
+- `x-ms-workload-resource-moniker: <artifactId>`
+- JSON body containing `returnOrigin`, PKCE challenge fields, and optional `state`
+
+The delegated token is never sent over `postMessage`.
+
+## EmbedHostError
+
+```typescript
+type EmbedHostErrorCode =
+  | 'EXCHANGE_NOT_ENABLED'
+  | 'AUTH_FAILED'
+  | 'INSUFFICIENT_PERMISSIONS'
+  | 'NOT_AVAILABLE'
+  | 'AUTHORIZE_FAILED'
+  | 'VALIDATION_FAILED';
+
+class EmbedHostError extends SdkError {
+  readonly code: EmbedHostErrorCode;
+}
+```
+
+| Code | Meaning |
+| --- | --- |
+| `EXCHANGE_NOT_ENABLED` | The target app has not enabled external Entra exchange. |
+| `AUTH_FAILED` | The delegated Entra token was rejected. |
+| `INSUFFICIENT_PERMISSIONS` | The user lacks Execute permission on the item. |
+| `NOT_AVAILABLE` | The brokered-authorize endpoint is unavailable or wrong. |
+| `AUTHORIZE_FAILED` | Network failure, malformed response, missing handoff code, or an unrecognized endpoint status. |
+| `VALIDATION_FAILED` | The handoff request failed host-side validation before any network call. |
+
+Messages are safe to log and do not include the delegated token or raw response body.
+
+## Default error messages
+
+| Code | Message |
+| --- | --- |
+| `VALIDATION_FAILED` | `returnOrigin is not permitted by the embed host.` |
+| `AUTHORIZE_FAILED` | `Failed to broker the authentication handoff.` |
+| `AUTHORIZE_FAILED` | `Failed to reach the brokered-authorize endpoint.` |
+| `AUTHORIZE_FAILED` | `Brokered-authorize endpoint returned a malformed response.` |
+| `AUTHORIZE_FAILED` | `Brokered-authorize endpoint returned no handoff code.` |
+| `EXCHANGE_NOT_ENABLED`, `AUTH_FAILED`, `INSUFFICIENT_PERMISSIONS`, `NOT_AVAILABLE`, `AUTHORIZE_FAILED` | `Brokered-authorize endpoint responded with status <status>.` |
+
+## Browser requirements
+
+This package runs in a parent browser window. It uses `window.addEventListener('message', ...)`, `postMessage`, and `fetch`. It is not for Node.js.

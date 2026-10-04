@@ -1,121 +1,66 @@
 ---
 title: Deployment troubleshooting
-description: Symptom-to-fix reference for the most common failures when deploying a Rayfin project to Microsoft Fabric.
+description: Fix common rayfin up, capacity, static hosting, and deployment-target errors using exact CLI messages.
 ---
 
-Each section below is a symptom you might hit while deploying a Rayfin project, why it
-happens, and how to fix it. If you don't see your error here, re-run the failing command
-with `-v, --verbose` for more detail.
+Match the exact error text from the CLI, then apply the fix. Re-run with `--verbose` when a Fabric request needs more detail.
 
-## Deployment fails with 401 or 403
+## Authentication and keychain errors
 
-**Cause:** your sign-in session has expired.
+| Error text | Fix |
+| --- | --- |
+| `Deployment fails with 401 or 403` | Run `npx rayfin login`, then retry. |
+| OS keychain or credential-storage failure | Use `npx rayfin login --encryption-fallback-enabled` only for a development environment without keychain support. |
+| `RAYFIN_TOKEN could not be decoded as a JWT, so its audience cannot be verified.` | Use a token for the expected Fabric audience, or unset `RAYFIN_TOKEN` and run `rayfin login`. |
 
-**Fix:** re-authenticate and retry:
+## Workspace and capacity errors
 
-```bash
-npx rayfin login
-npx rayfin up
-```
+| Error text | Fix |
+| --- | --- |
+| `The Fabric capacity assigned to this workspace is exhausted and cannot create another Rayfin item.` | Pass a workspace with available capacity using `--workspace-id <id>`, or pass `--capacity-id <id>`. |
+| `--capacity-id must be a GUID.` | Copy the Fabric capacity GUID from the Fabric portal. |
+| `--workspace-id and --capacity-id cannot be used together.` | Remove one option so Rayfin resolves either the workspace or the capacity. |
+| `RAYFIN_WORKSPACE_ID and --capacity-id cannot be used together.` | Unset `RAYFIN_WORKSPACE_ID` or remove `--capacity-id`. |
+| `No workspace targeting context. Pass --workspace <name> (or --workspace-id <id> / --workspace-uri <url>), or run \`rayfin up\` once interactively to record a deployment.` | Provide a workspace target for non-interactive deployment. |
+| `Multiple premium Fabric capacities are available and require interactive selection.` | Run interactively or pass `--capacity-id <id>`. |
+| `Provisioning and assigning Fabric trial capacity to workspace` | Run with `--yes`, pass `--capacity-id`, or ask an admin to assign existing capacity. |
+| `Workspace Admin permission is required to assign capacity to` | Ask a workspace Admin to assign capacity or promote your role. |
+| `Fabric trials are disabled for this tenant.` | Ask the tenant admin to enable trials or deploy to a workspace that already has capacity. |
+| `Fabric did not finish the workspace capacity assignment within` | Wait for Fabric assignment to finish, then retry. |
 
-## Sign-in fails with a keychain or credential-storage error
+## Item and deployment-target errors
 
-**Cause:** some environments — certain Linux distributions, dev containers, and GitHub
-Codespaces — don't provide OS-backed credential storage, which `rayfin login` normally
-uses to store tokens securely.
+| Error text | Fix |
+| --- | --- |
+| `Pass a non-empty value with --item-name <name>.` | Provide a non-empty item display name or omit the flag. |
+| `Omit --item-name to redeploy the existing item, or deploy to a different workspace.` | A recorded deployment already targets an item; omit `--item-name` unless creating a new target. |
+| `No remote endpoint configured.` | Run `npx rayfin up` first so static-only and connector commands have a deployed target. |
+| `This deployment has no recorded API URL, so the deployed transport has no endpoint to call.` | Run `npx rayfin up` to refresh deployment metadata. |
+| `This deployment has no recorded publishable key, which the deployed route requires.` | Run `npx rayfin up` to refresh deployment metadata. |
 
-**Fix:** pass `--encryption-fallback-enabled` (or set
-`RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true`) to allow a plaintext token cache instead. Use
-this only in development environments, not on shared or production machines:
+## Static hosting errors
 
-```bash
-npx rayfin login --encryption-fallback-enabled
-```
+| Error text | Fix |
+| --- | --- |
+| `Compressed package size (...) exceeds the 100 MB limit.` | Exclude large assets or source maps, then redeploy static content. |
+| `Static hosting is enabled but services.staticHosting.assetAccess is not set in rayfin.yml` | Add `assetAccess: protected` or `assetAccess: public`. Non-interactive `rayfin up` defaults a missing posture to `protected` and writes it to `rayfin.yml`. [New in 1.35.1](/docs/reference/changelog#rayfin-1351) |
+| `services.staticHosting.assetAccess in rayfin.yml must be protected or public` | Fix the value or the environment variable that resolves it. |
+| `Static hosting requires an explicit access posture. Set 'services.staticHosting.assetAccess' to 'protected' to require Fabric sign-in or 'public' to serve anyone with the link, then deploy again.` | Add the access posture and redeploy. |
+| `Invalid static hosting posture: 'services.staticHosting.embedded.only: true' cannot be combined with 'services.staticHosting.assetAccess: public' because an embedded app has no standalone surface to make public.` | Use `assetAccess: protected` or set `embedded.only: false`. |
+| `The static-hosting access posture has not been recorded. Run 'rayfin up' to record 'services.staticHosting.assetAccess' before trying again.` | Run a full deploy with a current CLI. |
 
-## Deploy fails with "Dialect is required when Data module is enabled"
+## Schema and runtime errors
 
-**Cause:** `services.data.enabled: true` is set in `rayfin.yml` without a `dialect`. This
-produces a 400 error at deploy time.
-
-**Fix:** add `dialect: mssql` under `services.data` — Fabric apps support MSSQL only:
-
-```yaml title="rayfin/rayfin.yml"
-services:
-  data:
-    enabled: true
-    dialect: mssql
-```
-
-## Database apply reports destructive changes
-
-**Cause:** `rayfin up db apply` blocks schema changes that could cause data loss — for
-example, dropping a column or a table.
-
-**Fix:** review the listed operations. If you accept the data loss, re-run with `--force`:
-
-```bash
-npx rayfin up db apply --force
-```
-
-## Static deploy exceeds the size limit
-
-**Cause:** the compressed static content archive exceeds the 100 MB limit for `rayfin up`
-and `rayfin up staticapp deploy`.
-
-**Fix:** exclude source maps and large development assets from your production build, or
-move binary files to Rayfin storage instead of bundling them as static content.
-
-## No remote endpoint configured
-
-**Cause:** `rayfin up staticapp deploy` requires an existing deployment to upload to.
-
-**Fix:** run `npx rayfin up` first to create the Fabric app, then use `staticapp deploy`
-for subsequent static-only updates.
-
-## GraphQL "Internal server error" after a successful deploy
-
-**Cause:** an entity has a `@text()` field without a `max` option. On MSSQL this generates
-an `NVARCHAR(MAX)` column, which can prevent the metadata provider from building a GraphQL
-schema — the deploy itself reports success, but the API fails at runtime.
-
-**Fix:** add an explicit `max` to every string field, then push the schema change:
-
-```typescript title="rayfin/data/Todo.ts"
-@text({ max: 200 }) title!: string;
-```
-
-```bash
-npx rayfin up db apply --force
-```
-
-## A new entity is unreadable after a deploy that reported success
-
-**Cause:** the static app and settings deployed correctly, but the schema for the new
-entity was not applied — usually because the entity was added after the last successful
-`db apply`, or a prior apply was skipped.
-
-**Fix:** confirm the deployment is otherwise healthy, then explicitly (re)apply the
-schema:
-
-```bash
-npx rayfin up status
-npx rayfin up db apply
-```
+| Error text | Fix |
+| --- | --- |
+| `Dialect is required when Data module is enabled` | Set `services.data.dialect: mssql` in `rayfin.yml`. |
+| Destructive schema change warning | Review operations and use `--force` only when the data loss is expected. |
+| GraphQL `Internal server error` after deploy | Add explicit `max` values to every `@text()` field, then apply the schema. |
 
 ```prompt title="Diagnose a failed Rayfin deployment"
-My Rayfin project's deployment to Microsoft Fabric isn't working as expected — either
-`rayfin up` failed, or it succeeded but the app is behaving incorrectly at runtime. Run
-`npx rayfin up status` to check deployment health, then re-run `npx rayfin up -v` for
-verbose output and show me the error. If it's a schema problem — a new or changed entity
-not showing up, or a GraphQL "Internal server error" — check rayfin/data/*.ts for @text()
-fields missing a max option, and for a missing dialect under services.data in rayfin.yml.
-Then run `npx rayfin up db apply` (adding --force only if the change is expected to be
-destructive) and confirm the fix with `npx rayfin up status` again.
+Use the exact error text from my failed `npx rayfin up` or `npx rayfin up status` run to fix the deployment. Re-run with `--verbose` if needed. Check workspace targeting, capacity readiness, `services.staticHosting.assetAccess`, static archive size, and schema configuration. Do not pass `--force` unless the destructive schema operations are expected.
 ```
 
-## See also
+## Source-oriented notes for agents
 
-- [Secrets](/docs/deploy/secrets) — troubleshooting for `rayfin secret set`
-  specifically.
-- [Known limitations](/docs/reference/known-limitations) — current platform constraints
-  that aren't bugs.
+The CLI error strings above come from the 1.36.2 package files `dist/errors.js`, `dist/commands/capacity-options.js`, `dist/workflows/fabric-readiness/steps/*.js`, `dist/workflows/up/steps/ensure-static-hosting-posture.js`, and `dist/services/runtime-settings/errors.js`.

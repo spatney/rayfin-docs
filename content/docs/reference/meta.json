@@ -1,5 +1,5 @@
 {
   "title": "Reference",
   "description": "Complete CLI, configuration, and SDK reference.",
-  "pages": ["index", "cli", "config", "sdk", "known-limitations", "deprecations", "errors"]
+  "pages": ["index", "changelog", "cli", "config", "sdk", "known-limitations", "deprecations", "errors"]
 }
