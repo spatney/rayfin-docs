@@ -241,9 +241,23 @@ hosting built in.
   size of every bulk download so you can budget a fetch.
 - [\`/docs/reference/agent-rules\`](${SITE_URL}/docs/reference/agent-rules) — the condensed do/don't list. **Read this before generating Rayfin code.**
 
-Every mirror carries \`sdk_version\`, \`cli_version\` and \`last_updated\` in its frontmatter.
+Every mirror carries \`sdk_version\`, \`cli_version\` and \`last_updated\` in its frontmatter,
+plus \`applies_to\` when a page only applies to a narrower range of releases.
 Check them before copying a snippet: API shapes differ between SDK releases, and mixing
 them produces code that does not compile.
+
+## Version tags
+
+Anything added or changed after Rayfin 1.35.0 is tagged inline with a link into the
+[changelog](${SITE_URL}/docs/reference/changelog.md), for example
+\`[New in 1.36](/docs/reference/changelog#rayfin-136)\` or
+\`[Changed in 1.36](/docs/reference/changelog#rayfin-136)\`. All \`@microsoft/rayfin-*\`
+packages share one version number. If the project's installed packages are older than a
+tag, that feature or behavior is not available there — read \`package.json\` first, and
+either upgrade every Rayfin package together or use the older form. Untagged content
+applies to Rayfin 1.35.0 and later; the changelog lists what 1.35 changed from 1.34.
+\`[Preview](/docs/reference/changelog#feature-status)\` and
+\`[Experimental](/docs/reference/changelog#feature-status)\` mark status, not version.
 
 ## Bulk downloads
 

@@ -27,6 +27,7 @@ export async function getLLMText(page: Page): Promise<string> {
     `product: Rayfin`,
     `sdk_version: ${siteConfig.sdkVersion}`,
     `cli_version: ${siteConfig.cliVersion}`,
+    ...(page.data.appliesTo ? [`applies_to: ${quote(page.data.appliesTo)}`] : []),
     `last_updated: ${lastModified(page.path)}`,
     `source: ${page.path}`,
     '---',

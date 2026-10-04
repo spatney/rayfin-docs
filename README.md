@@ -19,7 +19,10 @@ copy-pasteable prompts instead of only prose instructions.
 | `/sitemap.xml` | Every canonical HTML page, with `<lastmod>` |
 
 Every mirror carries `sdk_version`, `cli_version` and `last_updated` in its frontmatter, so
-an agent can tell which SDK release a snippet was written against. `last_updated` and
+an agent can tell which SDK release a snippet was written against, plus `applies_to` when a
+page needs newer packages than the rest of the site. Content added or changed after Rayfin
+1.35.0 is tagged inline with a link such as `[New in 1.36](/docs/reference/changelog#rayfin-136)`,
+which the renderer shows as a pill and the mirror keeps as a plain link. `last_updated` and
 `<lastmod>` both come from git commit dates, which is why CI checks out full history.
 
 The Markdown mirrors and the bulk downloads are served with `X-Robots-Tag: noindex` and

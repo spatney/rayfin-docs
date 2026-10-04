@@ -28,6 +28,10 @@ and static hosting built in.
 - Start with [Rules for coding agents](${absoluteUrl('/docs/reference/agent-rules')}) before generating any Rayfin code.
 - Every page carries \`sdk_version\`, \`cli_version\` and \`last_updated\` in its frontmatter.
   Do not mix API shapes across SDK versions.
+- Features added or changed after Rayfin 1.35.0 are tagged inline, for example
+  \`[New in 1.36](/docs/reference/changelog#rayfin-136)\`. If the project's installed
+  \`@microsoft/rayfin-*\` packages are older than the tag, the feature is not available
+  there. See the [changelog](${absoluteUrl('/docs/reference/changelog')}) for upgrade steps.
 
 Documented against \`@microsoft/rayfin-*\` v${siteConfig.sdkVersion} and \`@microsoft/rayfin-cli\` v${siteConfig.cliVersion}.
 

@@ -38,7 +38,38 @@ description: Read records with the type-safe GraphQL client — filters, orderin
 
 - `description` is one sentence, ≤ 200 characters, and must make sense **out of context**.
   It is what an agent sees in `/llms.txt` when deciding whether to open the page.
-- Optional: `tags: []`, `appliesTo: "@microsoft/rayfin-core >= 1.34"`.
+- Optional: `tags: []`, `appliesTo: "@microsoft/rayfin-cli >= 1.36"`. `appliesTo` is
+  emitted as `applies_to` in the `.md` mirror's frontmatter; set it on any page that only
+  works with packages newer than 1.35.
+
+## Version tags
+
+The site documents the release pinned in `lib/site.config.ts`. Untagged content works on
+Rayfin 1.35.0 and later. Anything added or changed after 1.35.0 carries an inline tag: a
+plain Markdown link into the changelog that the renderer upgrades to a pill
+(`components/version-badge.tsx`). In the `.md` mirror it stays a readable link an agent can
+follow. What 1.35 changed relative to 1.34 lives only on the changelog page.
+
+| Tag | Use for |
+| --- | --- |
+| `[New in 1.36](/docs/reference/changelog#rayfin-136)` | A page, command, flag, option, or API that did not exist before that release |
+| `[Changed in 1.36](/docs/reference/changelog#rayfin-136)` | Existing behavior, a default, or a name that changed in that release |
+| `[Deprecated in 1.36](/docs/reference/changelog#rayfin-136)` | Still works, but has a replacement |
+| `[Removed in 1.36](/docs/reference/changelog#rayfin-136)` | No longer works from that release |
+| `[Preview](/docs/reference/changelog#feature-status)` | Shipped, but its shape may still change |
+| `[Experimental](/docs/reference/changelog#feature-status)` | Behind a feature flag or rollout |
+
+- Tag at the smallest accurate scope: the end of a table cell for one flag or option, its
+  own line directly under the heading for a section, the first line of the body for a page.
+- Never put a tag inside a heading — it changes the anchor and leaks into the TOC.
+- Use minor versions (`1.36`). Name a patch (`1.36.2`, `1.35.1`) only when that patch
+  shipped the feature or changed the behavior.
+- Every tag needs a matching entry on `/docs/reference/changelog`. `check:docs` rejects a
+  tag whose label and anchor disagree, and any version tag at or below 1.35.0.
+- All `@microsoft/rayfin-*` packages, including the CLI, share one version number, so a
+  tag means "this release of every Rayfin package".
+- Untagged content applies to every release the site covers (1.35.0 and later). Do not
+  tag content that shipped in 1.35.0 or earlier.
 
 ## Writing style
 
@@ -50,10 +81,12 @@ description: Read records with the type-safe GraphQL client — filters, orderin
 - **Always label fences** with a language. Add `title="rayfin/data/Todo.ts"` when the
   snippet belongs in a specific file — agents use it to decide where to write.
 - **Be explicit about where code runs.** Rayfin runs one way: as a managed Fabric app, so
-  the backend is always deployed. Fabric SSO's popup flow works from any origin listed in
-  `allowedRedirectUris` — including a local Vite dev server at `http://localhost:5173`;
-  only the embedded (iframe) flow requires the app itself to be loaded inside the Fabric
-  portal. Say which flow you mean.
+  the backend is always deployed. During development, `rayfin dev` keeps that backend in
+  Fabric and runs only your frontend — plus Functions, when enabled — on `localhost`.
+  Fabric SSO's popup flow works from any origin listed in `allowedRedirectUris` —
+  including a local Vite dev server at `http://localhost:5173`; only the embedded (iframe)
+  flow requires the app itself to be loaded inside the Fabric portal. Say which flow you
+  mean.
 - **Link with absolute site paths**: `/docs/data/permissions`. Never relative `./x.md`.
 - **No marketing.** No "simply", "just", "easy", "powerful".
 
@@ -75,20 +108,37 @@ Do not write "ask your agent to do X" as prose. Write the prompt.
 ## Product scope
 
 Rayfin currently documents **one** way to run: as a managed **Fabric app** on Microsoft
-Fabric. Do not document these — they are experimental or unsupported and will be added
-back deliberately later:
+Fabric. The managed backend — data, auth, storage — always runs in Fabric.
 
-- `rayfin dev`, Docker, Docker Compose, local database containers, Azurite, MailDev
+The development loop is in scope and must be kept. Every bundled template's `npm run dev`
+script runs `rayfin dev`, which provisions or reuses the Fabric backend, applies declared
+state and schema, then starts the frontend (Vite) — and Functions, when enabled — as local
+processes. Keep `http://localhost:5173` in `allowedRedirectUris` examples.
+`rayfin up --exclude-services staticHosting` still exists for scripts that deploy the
+backend while a dev server serves the frontend; prefer `rayfin dev` in prose.
+
+Do not document these — they are experimental or unsupported and will be added back
+deliberately later:
+
+- The Docker provider: `rayfin dev --provider docker`, its maintenance flags (`--stop`,
+  `--down`, `--purge`, `--export-env`) and its subcommands (`rayfin dev db apply`,
+  `rayfin dev status`, `rayfin dev watch`)
+- Docker, Docker Compose, local database containers, Azurite, MailDev
 - The `docker-local-dev` feature flag, or "Rayfin Local" / self-hosted as a backend mode
-- A backend running on `localhost`, or local backend ports
+- A managed backend (data, auth, storage) running on `localhost`, or its ports
 - PostgreSQL as a dialect — Fabric supports `mssql` only
-- Email/password auth and magic links. **Fabric SSO (Entra ID) is the only supported
-  authentication method.**
+- Email/password auth and magic links. **Microsoft Entra ID is the only supported identity
+  provider**: Fabric SSO for browser apps, plus direct Entra token sign-in and the external
+  embed host for code that already holds a delegated Entra token.
 
-What *is* in scope, and must be kept: running your **frontend** locally with `npm run dev`
-(Vite) against a deployed Fabric backend. That is the normal development loop —
-`rayfin up --exclude-services staticHosting` deploys the backend while Vite serves the
-frontend from `localhost`. Keep `http://localhost:5173` in `allowedRedirectUris` examples.
+## Feature status
+
+| Feature | Status | How to present it |
+| --- | --- | --- |
+| Functions | GA since 1.36 (no feature flag) | Not available in every Fabric region or tenant — keep that `> [!NOTE]` on Functions pages, but do not call Functions experimental |
+| Connectors | GA since 1.36 (no feature flag) | `rayfin up connector apply` is `[Preview]`. Kusto (Eventhouse) is held back: existing connectors keep working, new ones cannot be added |
+| Storage | Experimental — `RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled` | `> [!WARNING]` callout plus the `[Experimental]` tag, and the same region/tenant caveat |
+| Function connections | Application identity only since 1.36 (`services.functions.auth.type: application` is required) | Deployed Functions reach external resources as the app identity — never describe them as acting as the signed-in user. Rayfin data access from a function stays caller-scoped |
 
 ## Naming
 
@@ -106,12 +156,18 @@ frontend from `localhost`. Keep `http://localhost:5173` in `allowedRedirectUris`
 
 Content is grounded in shipped code, not invented. Source material:
 
-- `vendor/rayfin-guide-1.34.0/` — the upstream guide snapshot.
-- `vendor/sdk-docs/` — per-package API docs.
-- `vendor/SKILL.md` — the agent skill shipped by `rayfin init ai-files`.
+- `vendor/rayfin-guide-1.36.2/` — the upstream guide snapshot.
+- `vendor/sdk-docs/` — per-package docs shipped in each package's `assets/docs`.
+- `vendor/SKILL.md` and `vendor/cli-assets/agent-files/skills/` — the agent skills
+  installed by `rayfin init ai-files`.
+- The published npm packages themselves (`npm pack @microsoft/rayfin-<name>@<version>`),
+  and `rayfin <command> --help` from the pinned CLI version.
 
-If a behaviour cannot be verified from those sources or from the installed packages, do
-not document it. Leave it out rather than guessing.
+The Rayfin source monorepo is useful for depth, but its `main` branch runs ahead of what
+is published. Read it at the release tag (`git show npm/v1.36.2:<path>`), never from a
+working tree. If a behaviour cannot be verified from those sources or from the installed
+packages, do not document it. Leave it out rather than guessing. Behaviour behind an
+internal rollout flag (for example `cli-minor-fixes`) is not shipped behaviour.
 
 ## Commands
 

@@ -10,6 +10,7 @@ import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
 import { getMDXComponents } from '@/components/mdx';
 import { PageFeedback } from '@/components/page-feedback';
+import { withVersionBadges } from '@/components/version-badge';
 import { absoluteUrl, siteConfig } from '@/lib/site.config';
 import { ogImagePath } from '@/app/og/[...slug]/route';
 
@@ -27,7 +28,7 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
       <DocsBody>
         <MDX
           components={getMDXComponents({
-            a: createRelativeLink(source, page),
+            a: withVersionBadges(createRelativeLink(source, page)),
           })}
         />
         <PageFeedback

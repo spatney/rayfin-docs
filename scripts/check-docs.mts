@@ -25,7 +25,14 @@ const MAX_DESCRIPTION = 200;
  * Fabric SSO. This gate stops local/Docker and password-auth content creeping back in.
  */
 const OUT_OF_SCOPE: { pattern: RegExp; reason: string }[] = [
-  { pattern: /\brayfin\s+dev\b/i, reason: 'the `rayfin dev` local stack is out of scope' },
+  {
+    pattern: /\brayfin\s+dev\s+(db|status|watch|storage)\b/i,
+    reason: 'Docker-provider `rayfin dev` subcommands are out of scope (bare `rayfin dev` is fine)',
+  },
+  {
+    pattern: /\brayfin\s+dev\b[^\n`]*\s--(stop|down|purge|export-env)\b/i,
+    reason: 'Docker-provider `rayfin dev` maintenance flags are out of scope',
+  },
   { pattern: /\bdocker\b/i, reason: 'Docker / local containers are out of scope' },
   { pattern: /\bdocker-local-dev\b/i, reason: 'the docker-local-dev feature flag is out of scope' },
   { pattern: /\bazurite\b/i, reason: 'Azurite (local storage emulator) is out of scope' },
@@ -73,6 +80,7 @@ async function main() {
     checkCodeFences(rel, content);
     checkComponents(rel, content);
     checkLinks(rel, content, routes, headings, toRoute(file));
+    checkVersionTags(rel, content, lineOffset(raw, content));
     checkScope(rel, raw);
   }
 
@@ -270,18 +278,100 @@ function checkLinks(
   }
 }
 
-/** Remove fenced blocks and inline code spans so their contents are never linted. */
+/**
+ * Version and status tags (see "Version tags" in AGENTS.md) are links into the
+ * changelog that the renderer upgrades to pills. A tag is only trustworthy if its label
+ * and its anchor agree, so `[New in 1.36](...#rayfin-135)` is an error, as is a tag that
+ * points anywhere but the changelog, or one placed inside a heading.
+ */
+const CHANGELOG_ROUTE = '/docs/reference/changelog';
+const TAG_LABEL = /^(New|Changed|Deprecated|Removed) in (\d+)\.(\d+)(?:\.(\d+))?$/;
+const STATUS_LABEL = /^(Preview|Experimental)$/;
+/** Untagged content applies to this release and later, so older tags are noise. */
+const UNTAGGED_BASELINE = [1, 35, 0] as const;
+
+function checkVersionTags(file: string, content: string, offset: number) {
+  const lines = stripCode(content).split('\n');
+
+  lines.forEach((line, index) => {
+    for (const match of line.matchAll(/\[([^\]]+)\]\(([^)\s]+)\)/g)) {
+      const [, label, href] = match;
+      const version = TAG_LABEL.exec(label);
+      const status = STATUS_LABEL.test(label);
+      if (!version && !status) continue;
+
+      const where = { file, line: offset + index + 1 };
+
+      if (/^#{1,6}\s/.test(line)) {
+        problems.push({
+          ...where,
+          message: `version tag \`[${label}]\` inside a heading — put it on its own line under the heading`,
+        });
+        continue;
+      }
+
+      const [pathname, anchor] = href.split('#');
+      if (pathname !== CHANGELOG_ROUTE) {
+        problems.push({
+          ...where,
+          message: `tag \`[${label}]\` must link to ${CHANGELOG_ROUTE}, not \`${href}\``,
+        });
+        continue;
+      }
+
+      if (version) {
+        const tagged = [Number(version[2]), Number(version[3]), Number(version[4] ?? 0)];
+        if (compareVersions(tagged, UNTAGGED_BASELINE) <= 0) {
+          problems.push({
+            ...where,
+            message: `tag \`[${label}]\` is redundant — untagged content already applies to ${UNTAGGED_BASELINE.join('.')} and later`,
+          });
+          continue;
+        }
+      }
+
+      const expected = version
+        ? `rayfin-${version[2]}${version[3]}${version[4] ?? ''}`
+        : 'feature-status';
+      if (anchor !== expected) {
+        problems.push({
+          ...where,
+          message: `tag \`[${label}]\` points at #${anchor ?? ''} — expected #${expected}`,
+        });
+      }
+    }
+  });
+}
+
+/** Number of lines the frontmatter occupies, so content-relative lines map back to the file. */
+function lineOffset(raw: string, content: string): number {
+  const start = raw.indexOf(content);
+  return start <= 0 ? 0 : raw.slice(0, start).split('\n').length - 1;
+}
+
+function compareVersions(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
+ * Remove fenced blocks and inline code spans so their contents are never linted.
+ * Fenced blocks are replaced by their line breaks so reported line numbers stay true.
+ */
 function stripCode(content: string): string {
   return content
-    .replace(/^(\s*)(`{3,}|~{3,})[\s\S]*?\n\1\2\s*$/gm, '')
+    .replace(/^(\s*)(`{3,}|~{3,})[\s\S]*?\n\1\2\s*$/gm, (block) => '\n'.repeat(block.split('\n').length - 1))
     .replace(/`[^`\n]*`/g, '');
 }
 
 /**
  * Scope gate. Scans the raw file including code fences, because an out-of-scope
  * command in a shell block is exactly what a reader would copy and run.
- * `npm run dev` and `localhost:5173` are in scope — that is local *frontend*
- * development against a deployed Fabric backend.
+ * `npm run dev`, bare `rayfin dev` and `localhost:5173` are in scope — the managed
+ * backend stays in Fabric while the frontend (and Functions) run locally.
  */
 function checkScope(file: string, raw: string) {
   const lines = raw.split('\n');
