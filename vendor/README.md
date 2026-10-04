@@ -6,17 +6,20 @@ exist so that a future upstream release can be diffed mechanically rather than b
 
 | Path | Upstream | Version |
 | --- | --- | --- |
-| `rayfin-guide-1.34.0/` | `@microsoft/rayfin-guide` → `assets/docs` | 1.34.0 |
-| `sdk-docs/rayfin-core/` | `@microsoft/rayfin-core` → `assets/docs` | 1.31.x |
-| `sdk-docs/rayfin-data/` | `@microsoft/rayfin-data` → `assets/docs` | 1.31.x |
-| `sdk-docs/rayfin-client/` | `@microsoft/rayfin-client` → `assets/docs` | 1.31.x |
-| `sdk-docs/rayfin-auth/` | `@microsoft/rayfin-auth` → `assets/docs` | 1.31.x |
-| `sdk-docs/rayfin-auth-provider-fabric/` | `@microsoft/rayfin-auth-provider-fabric` → `assets/docs` | 1.31.x |
-| `sdk-docs/rayfin-lib/` | `@microsoft/rayfin-lib` → `assets/docs` | 1.31.x |
-| `catalog.json` | `@microsoft/rayfin-docs` → `assets/catalog.json` | schemaVersion 1 |
-| `SKILL.md` | `rayfin init ai-files` → `.agents/skills/rayfin/SKILL.md` | 0.3.0 |
+| `rayfin-guide-1.36.2/` | `@microsoft/rayfin-guide` → `assets/docs` | 1.36.2 |
+| `sdk-docs/<package>/` | `@microsoft/<package>` → `assets/docs` | 1.36.2 |
+| `sdk-docs/rayfin-embed-host/` | `@microsoft/rayfin-embed-host` → `README.md` (no `assets/docs`) | 1.36.2 |
+| `catalog.json` | `@microsoft/rayfin-docs` → `assets/catalog.json` | 1.36.2 |
+| `SKILL.md` | `rayfin init ai-files` → `.agents/skills/rayfin/SKILL.md` | 1.36.2 |
+| `cli-assets/` | `@microsoft/rayfin-cli` → `assets/` (agent files, skills, templates) | 1.36.2 |
 
-Captured 2026-08-22.
+`sdk-docs/` covers `rayfin-core`, `rayfin-data`, `rayfin-client`, `rayfin-auth`,
+`rayfin-auth-provider-fabric`, `rayfin-lib`, `rayfin-functions`, `rayfin-storage`,
+`rayfin-connectors`, `rayfin-connector-fabric-graphql`,
+`rayfin-connector-fabric-semanticmodel`, `rayfin-connector-kusto`,
+`rayfin-app-state-fabric`, and `rayfin-embed-host`.
+
+Captured 2026-10-03.
 
 ## How upstream docs are distributed
 
@@ -28,7 +31,15 @@ already have a Rayfin project. This site exists to close that gap.
 
 ## Refreshing
 
+Every Rayfin package shares one version number, so refresh everything together:
+
 ```bash
-npm install @microsoft/rayfin-guide@latest
-# then diff node_modules/@microsoft/rayfin-guide/assets/docs against vendor/rayfin-guide-1.34.0
+npm pack @microsoft/rayfin-guide@<version>
+# extract it, then diff package/assets/docs against vendor/rayfin-guide-<current>
 ```
+
+Diff the public API too: `npm pack` each `@microsoft/rayfin-*` package at the old and new
+version and compare `dist/**/*.d.ts` and `assets/docs/`. Compare `rayfin <command> --help`
+across both CLI versions for flag changes, and read `RAYFIN_FEATURE_FLAGS` registrations in
+`@microsoft/rayfin-cli/dist/utils/feature-flags.js` to tell shipped behavior from gated
+behavior.

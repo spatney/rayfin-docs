@@ -12,6 +12,8 @@ registries:
     description: Build data analytics app based on your data in Fabric
     url: https://github.com/microsoft/fabric-apps-analytic-templates
     ref: v1
+    alphaRef: alpha
+    betaRef: beta
     templateName: Data App
     default: true
     firstClass: true

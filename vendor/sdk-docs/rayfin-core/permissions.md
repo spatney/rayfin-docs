@@ -59,6 +59,25 @@ class Document {
 }
 ```
 
+Store `claims.sub` in a text field such as `owner_id`.
+The subject claim is an opaque string and is not guaranteed to be a UUID.
+Use `@uuid()` only for fields that reference UUID entity keys.
+
+Policies validate access but do not populate owner fields.
+Set the owner field from the authenticated session when creating a row:
+
+```typescript
+const session = client.auth.getSession();
+if (!session.isAuthenticated || !session.user) {
+  throw new Error('Not signed in.');
+}
+
+await client.data.Document.create({
+  title: 'Project plan',
+  owner_id: session.user.id,
+});
+```
+
 The policy DSL supports equality, comparison, and boolean composition;
 the typing surface is enforced by the entity's field metadata so a
 typo on a field name fails at compile time.

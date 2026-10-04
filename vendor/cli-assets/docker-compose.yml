@@ -104,6 +104,10 @@ services:
       - Auth__Enabled=${Auth__Enabled:-false}
       - Data__Enabled=${Data__Enabled:-false}
       - Storage__Enabled=${Storage__Enabled:-false}
+      # Experimental feature gates. Storage's controller is filtered by both
+      # `Storage:Enabled` and `FeatureFlags:EnableStorage`; without this the
+      # stack starts with storage "on" and still 404s every apply.
+      - FeatureFlags__EnableStorage=${FeatureFlags__EnableStorage:-false}
       # Asymmetric key provider configuration (for JWT signing)
       # Keys are managed via Auth__AsymmetricKeys__* environment variables
       - Auth__AsymmetricKeys__Provider=${Auth__AsymmetricKeys__Provider:-local-file}
@@ -187,7 +191,7 @@ services:
   sqlserver:
     # SQL Server runs only with --profile data-api-mssql (required when Data:Enabled=true with dialect=mssql)
     hostname: sqlserver
-    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:49b45a911dc535e9345fbfd7101a1bd8a1e190a5f29b877ef75387a061e5fcf0
+    image: mcr.microsoft.com/mssql/server:2025-latest@sha256:86cc6144ef39bb0fbed2329e1ad79b13ee82e7b2e4739213a0db0800e668a74a
     profiles: ["data-api-mssql"]
     ports:
       - "${RAYFIN_SQLSERVER_PORT:-1433}:1433"

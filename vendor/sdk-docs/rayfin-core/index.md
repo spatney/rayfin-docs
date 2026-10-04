@@ -15,7 +15,7 @@ This package contains:
 - **Relationship decorators**: `@one()`, `@many()` (pass `() => Target`
   for circular references)
 - **Permission decorators**: `@role()`, `@anonymous()`, `@authenticated()`
-- **Class decorators**: `@entity()`, `@blob()`
+- **Class decorators**: `@entity()`
 
 See [decorators](./decorators.md) for the full reference and
 [permissions](./permissions.md) for the role/policy model.

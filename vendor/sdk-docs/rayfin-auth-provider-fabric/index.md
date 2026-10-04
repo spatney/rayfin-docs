@@ -1,10 +1,11 @@
 # Fabric auth provider
 
-Fabric brokered authentication helpers for Rayfin browser applications.
+Fabric brokered authentication helpers for Rayfin applications.
 
-Use `@microsoft/rayfin-auth-provider-fabric` when your application needs to authenticate through a Fabric-hosted broker experience instead of calling the standard Rayfin auth flows directly.
+Use `@microsoft/rayfin-auth-provider-fabric` to sign in through a Fabric-hosted browser experience or exchange an existing delegated Entra token directly for a Rayfin session.
 
-The package is designed for browser applications that already use `@microsoft/rayfin-auth` and need to reuse an existing session, refresh an expired session, or open the Fabric broker when no session can be restored silently.
+Popup and iframe helpers require a browser.
+`signInWithEntraToken()` supports browsers and Node.js and installs the exchanged session on your existing `Auth` instance.
 
 ## Installation
 
@@ -12,9 +13,71 @@ The package is designed for browser applications that already use `@microsoft/ra
 npm install @microsoft/rayfin-auth-provider-fabric @microsoft/rayfin-auth @microsoft/rayfin-lib
 ```
 
-## Quick start
+## Direct Entra token sign-in
 
-The recommended entry point is `ensureSignedInWithFabric()`.
+Use this flow when your app already obtains a delegated Entra token through MSAL, Azure CLI, or another identity library.
+Token acquisition remains your responsibility.
+The token must target the Fabric/Power BI resource accepted by your deployment, contain delegated `Item.Execute.All`, and belong to the target item's owning tenant.
+The user must also have Execute permission on that item; app-only tokens are not supported.
+The app must have external Entra exchange enabled.
+
+```typescript
+import { Auth } from '@microsoft/rayfin-auth';
+import { ApiClient } from '@microsoft/rayfin-lib';
+import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric';
+
+const apiClient = new ApiClient({
+  baseUrl: rayfinEndpoint,
+  publishableKey,
+});
+const auth = new Auth(apiClient, { storage: false });
+auth.attachToClient(apiClient);
+
+try {
+  const session = await signInWithEntraToken(auth, { entraToken });
+  console.log('Authenticated', session.isAuthenticated);
+  // Use SDK clients attached to apiClient here.
+} finally {
+  auth.destroy();
+}
+```
+
+This example works in Node.js without browser globals.
+`rayfinEndpoint` is the trusted HTTPS AppBackend workload API base URL, including its existing path, not the app's static-hosting URL or a full token endpoint.
+Use an absolute HTTPS URL, including for localhost, with no credentials, query string, or fragment; relative proxy bases are not supported.
+`entraToken` is the raw token string, without the `Bearer` scheme prefix.
+The SDK resolves `/api/auth/v1/brokered/token` against the configured base.
+No `FabricAuthOptions`, popup, iframe, PKCE, or return origin is needed.
+
+```typescript
+function signInWithEntraToken(
+  auth: Auth,
+  options: EntraTokenSignInOptions
+): Promise<OpaqueSession>;
+
+interface EntraTokenSignInOptions {
+  entraToken: string;
+}
+```
+
+For a `RayfinClient`, pass `client.auth`; it is already attached to the client's HTTP transport.
+The returned `OpaqueSession` exposes session metadata, not tokens.
+Subsequent authenticated requests and refresh use the Rayfin session, not the Entra token.
+The supplied `Auth` instance controls persistence; `storage: false` keeps the session in memory.
+Use a separate instance per user on a server and call `auth.destroy()` when it is no longer needed.
+`RayfinServerClient` does not expose `auth`; this helper expects a standalone `Auth` or `RayfinClient.auth`, not an access-token callback.
+
+Each explicit call attempts an exchange rather than silently returning a previous session.
+Concurrent direct calls on the same `Auth` instance run in invocation order and coordinate with its refresh operations.
+Success persists and replaces the session before emitting the login event; failure preserves an existing unexpired in-memory session without treating it as a successful new sign-in.
+The helper does not revoke the previous server session.
+Failures reject with `AuthError`; do not treat a failed sign-in as authentication of the requested identity.
+Browser callers need the service's CORS policy to permit the calling origin and authorization header.
+The helper does not acquire Entra tokens, follow exchange redirects, or automatically retry a rejected exchange.
+
+## Browser quick start
+
+For the browser broker experience, the recommended entry point is `ensureSignedInWithFabric()`.
 
 It performs a three-step waterfall:
 
@@ -24,22 +87,26 @@ It performs a three-step waterfall:
 
 Call it from a synchronous user gesture, such as a button click, because the broker step uses `window.open()`.
 
+The example below reads its configuration from the Vite-projected environment variables the Rayfin CLI emits.
+`rayfin up` writes `RAYFIN_PUBLIC_*` values to `rayfin/.env` and, when it detects a Vite or Next.js project, automatically projects them into `.env.local` as the `VITE_*` (or `NEXT_PUBLIC_*`) names shown here.
+Run `rayfin env --framework <vite|nextjs|plain>` manually only if you need to regenerate `.env.local` outside those flows or target a framework that can't be auto-detected.
+
 ```typescript
 import { ApiClient } from '@microsoft/rayfin-lib';
 import { Auth } from '@microsoft/rayfin-auth';
 import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
 
 const apiClient = new ApiClient({
-  baseUrl: 'https://api.contoso.example',
-  publishableKey: 'pk_your_publishable_key',
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
 });
 
 const auth = new Auth(apiClient);
 
 const fabricOptions = {
-  workspaceId: '00000000-0000-0000-0000-000000000000',
-  projectId: '11111111-1111-1111-1111-111111111111',
-  fabricPortalUrl: 'https://app.fabric.microsoft.com',
+  workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+  projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
+  fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
   returnOrigin: window.location.origin,
 };
 
@@ -68,6 +135,8 @@ interface FabricAuthOptions {
 This supports production and development portal URLs such as `https://app.fabric.microsoft.com` or `https://powerbi-df.analysis-df.windows.net?debug.useLocalManifests=1&experience=power-bi`.
 
 ## Supported flows
+
+Use `signInWithEntraToken()` when your app already has a delegated Entra token and wants to sign in without a browser broker.
 
 Use `ensureSignedInWithFabric()` when you want silent-session and refresh-token fallback behavior before opening the broker UI.
 
@@ -110,7 +179,7 @@ The bridge returns `true` when it handled a Fabric handoff and `false` when the 
 
 ## Behavior notes
 
-- The broker URL is built with PKCE using the `S256` challenge method.
+- The browser broker URL is built with PKCE using the `S256` challenge method; direct token sign-in does not use PKCE.
 - Existing query parameters on `fabricPortalUrl` are preserved.
 - `callbackUrl` defaults to `${returnOrigin}/auth/callback` when omitted.
 - The broker handoff waits up to five minutes before timing out.
@@ -121,6 +190,10 @@ The bridge returns `true` when it handled a Fabric handoff and `false` when the 
 The package throws `AuthError` values from `@microsoft/rayfin-lib` for validation and broker failures.
 
 Common cases include missing required options, blocked popups, explicit broker errors, and handoff timeout.
+
+Direct token sign-in reports `INVALID_REQUEST` for invalid local inputs, `EXCHANGE_NOT_ENABLED` for a disabled exchange, `AUTH_FAILED` for token rejection, `INSUFFICIENT_PERMISSIONS` for missing Execute access, and `NOT_AVAILABLE` for an unavailable endpoint.
+Transport or other HTTP failures use `TOKEN_EXCHANGE_FAILED`; malformed successful responses use `INVALID_TOKEN_RESPONSE`.
+Errors do not include the supplied token or raw server response.
 
 ```typescript
 import { AuthError } from '@microsoft/rayfin-lib';
@@ -134,8 +207,10 @@ try {
 }
 ```
 
-## Browser requirements
+## Runtime requirements
 
-This package is intended for browser environments.
+The public package entry point and `signInWithEntraToken()` can be imported and used in Node.js without browser globals.
+Use memory-only or appropriate custom `Auth` storage outside a browser.
 
-It depends on browser APIs such as `window.open()`, `postMessage`, `BroadcastChannel`, and `window.location`.
+The popup, iframe, and legacy callback helpers remain browser-only.
+They depend on browser APIs such as `window.open()`, `postMessage`, `BroadcastChannel`, and `window.location`.

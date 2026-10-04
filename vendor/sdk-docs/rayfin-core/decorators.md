@@ -1,5 +1,5 @@
 ---
-symbols: ['entity', 'text', 'uuid', 'int', 'decimal', 'boolean', 'date', 'set', 'email', 'one', 'many', 'blob']
+symbols: ['entity', 'text', 'uuid', 'int', 'decimal', 'boolean', 'date', 'set', 'email', 'one', 'many']
 ---
 
 # Decorator reference
@@ -24,9 +24,24 @@ export class Project {
 }
 ```
 
-### `@blob()`
+### Reserved entity names
 
-Marks a class as a blob storage entity (used with `@microsoft/rayfin-storage`).
+An entity name becomes a GraphQL type name, and type names are global across the generated schema.
+Naming an entity after a type the schema already defines redefines that type, so the CLI rejects the entity before the schema is applied.
+This applies to owned `rayfin/data/` entities and to connector entities alike.
+
+Matching is case-sensitive and exact, so `TaskDate` and `OrderDate` are fine while `Date` is not.
+
+Reserved: `Any`, `Base64String`, `Boolean`, `Byte`, `ByteArray`, `Date`, `DateTime`, `Decimal`, `Duration`, `Float`, `ID`, `Int`, `LocalDate`, `LocalDateTime`, `LocalTime`, `Long`, `Mutation`, `Query`, `Short`, `SignedByte`, `Single`, `String`, `Subscription`, `Time`, `TimeSpan`, `UnsignedByte`, `UnsignedInt`, `UnsignedLong`, `UnsignedShort`, `URI`, `URL`, `UUID` — plus any name starting with `__`.
+
+To resolve a collision, rename the class or pass an explicit name to `@entity()`:
+
+```typescript
+@entity('DateRecord')
+export class DateRecord {
+  @text() label!: string;
+}
+```
 
 ## Type decorators
 
@@ -84,15 +99,26 @@ Email address (text with email-shaped validation downstream).
 Use `@one(() => Target)` and `@many(() => Target)` with the lazy
 `() => Target` form to support circular references between entities
 in different files.
+Import each target entity as a runtime value, not with `import type`.
+Type-only imports are erased during compilation, so the lazy callback would
+resolve to `undefined` when Rayfin reads the relationship metadata.
 
 ```typescript
-import { entity, uuid, one, many } from '@microsoft/rayfin-core';
+// Project.ts
+import { entity, uuid, many } from '@microsoft/rayfin-core';
+import { Task } from './Task.js';
 
 @entity()
 export class Project {
   @uuid() id!: string;
   @many(() => Task) tasks?: Task[];
 }
+```
+
+```typescript
+// Task.ts
+import { entity, uuid, one } from '@microsoft/rayfin-core';
+import { Project } from './Project.js';
 
 @entity()
 export class Task {
@@ -100,3 +126,7 @@ export class Task {
   @one(() => Project) project!: Project;
 }
 ```
+
+Each file imports the other as a runtime value. The cycle is safe because the
+`() => Target` callback defers resolution until after both modules have
+finished evaluating.

@@ -27,7 +27,10 @@ coverage
 # secrets), and any future .env-family files Rayfin's runtime adds.
 rayfin/.env*
 rayfin/.deployments.json
+rayfin/.*.tmp
 rayfin/.temp/
+# Transient runtime config emitted during deploy — never commit.
+rayfin.config.json
 
 # Editor / OS
 .idea

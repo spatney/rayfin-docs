@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-05-07T05:00:00Z",
+  "generatedAt": "2026-08-26T00:00:00Z",
   "packages": [
     {
       "name": "@microsoft/rayfin-core",
@@ -55,16 +55,44 @@
     {
       "name": "@microsoft/rayfin-functions",
       "kind": "sdk",
-      "summary": "TypeScript helpers for function-style workflows on top of Rayfin core.",
-      "topics": ["functions", "serverless", "azure-functions", "workflow"],
-      "modules": []
+      "summary": "Client-side surface for invoking Rayfin user data functions from app code. Provides `FunctionClient` and `FunctionsSchema` behind `client.functions`. Authoring handlers is the separate `@microsoft/fabric-user-data-functions` package.",
+      "topics": [
+        "functions",
+        "udf",
+        "invoke",
+        "client",
+        "function-client",
+        "functions-schema",
+        "serverless",
+        "workflow"
+      ],
+      "modules": ["rayfin-functions"]
+    },
+    {
+      "name": "@microsoft/fabric-user-data-functions",
+      "kind": "sdk",
+      "summary": "Authoring surface and Azure Functions worker extension for Microsoft Fabric User Data Functions. Provides `udf.func()` registration, `RayfinContext` (data client, tokens, secrets), `AudienceType` connections, and the typegen that emits `types.ts`. Scaffolded by `rayfin functions init`; import `RayfinContext` from here, not from `@microsoft/rayfin-functions`.",
+      "topics": [
+        "functions",
+        "udf",
+        "user-data-functions",
+        "authoring",
+        "handler",
+        "rayfin-context",
+        "azure-functions",
+        "worker",
+        "typegen",
+        "fabric"
+      ],
+      "modules": ["fabric-user-data-functions"]
     },
     {
       "name": "@microsoft/rayfin-storage",
       "kind": "sdk",
-      "summary": "Type-safe blob storage client for Rayfin storage backends.",
+      "stability": "experimental",
+      "summary": "Experimental — type-safe blob storage client for Rayfin storage backends. Requires the `@blob()` decorator from `@microsoft/rayfin-core/experimental`.",
       "topics": ["storage", "blob", "azure-blob", "file", "upload"],
-      "modules": []
+      "modules": ["rayfin-storage"]
     },
     {
       "name": "@microsoft/rayfin-auth-provider-fabric",
@@ -74,10 +102,73 @@
       "modules": ["rayfin-auth-provider-fabric"]
     },
     {
+      "name": "@microsoft/rayfin-app-state-fabric",
+      "kind": "sdk",
+      "summary": "Deep-link application state for Rayfin apps embedded in the Microsoft Fabric portal. Reads launch state and writes shareable, bookmarkable portal URLs.",
+      "topics": [
+        "fabric",
+        "deep-link",
+        "url-state",
+        "history",
+        "embedded",
+        "share"
+      ],
+      "modules": ["rayfin-app-state-fabric"]
+    },
+    {
+      "name": "@microsoft/rayfin-connectors",
+      "kind": "sdk",
+      "summary": "Typed runtime for invoking Rayfin function-bridge connectors. Mounted as `client.connectors` by `ConnectorsRayfinClient`.",
+      "topics": [
+        "connector",
+        "connectors",
+        "runtime",
+        "function-bridge",
+        "typed"
+      ],
+      "modules": ["rayfin-connectors"]
+    },
+    {
+      "name": "@microsoft/rayfin-connector-fabric-semanticmodel",
+      "kind": "sdk",
+      "summary": "Fabric semantic model (Power BI dataset) connector. Runs DAX through `executeQuery`, with an optional `resultSetRowCountLimit` row guard.",
+      "topics": [
+        "connector",
+        "fabric",
+        "semantic-model",
+        "powerbi",
+        "dax",
+        "row-limit"
+      ],
+      "modules": ["rayfin-connector-fabric-semanticmodel"]
+    },
+    {
+      "name": "@microsoft/rayfin-connector-kusto",
+      "kind": "sdk",
+      "stability": "experimental",
+      "summary": "Experimental — typed connector marker and query-result normalization for Fabric KQL Database connectors.",
+      "topics": ["connector", "kusto", "kql", "fabric", "eventhouse", "query"],
+      "modules": []
+    },
+    {
+      "name": "@microsoft/rayfin-connector-fabric-graphql",
+      "kind": "sdk",
+      "summary": "Category A GraphQL-backed connector types. Provides the `GraphQLBackedConnector` entity marker and CRUD operation gating for the typed connectors surface.",
+      "topics": ["connector", "graphql", "fabric", "entity", "crud"],
+      "modules": ["rayfin-connector-fabric-graphql"]
+    },
+    {
       "name": "@microsoft/rayfin-cli",
       "kind": "tool",
       "summary": "Rayfin command-line interface: scaffolding, configuration, deployment, and the `rayfin docs` command group for offline-friendly agent grounding.",
       "topics": ["cli", "scaffolding", "init", "deploy", "docs"],
+      "modules": []
+    },
+    {
+      "name": "@microsoft/rayfin-local-dev",
+      "kind": "tool",
+      "summary": "Local-development adapters for Rayfin applications, including same-origin Vite routing to the Functions host selected by `rayfin dev`.",
+      "topics": ["local-development", "vite", "functions", "proxy"],
       "modules": []
     },
     {
@@ -110,7 +201,7 @@
     {
       "name": "@microsoft/rayfin-host-docs",
       "kind": "host",
-      "summary": "Host service reference docs for Rayfin .NET hosting components (WebService, Auth, Storage, DataApi, Function). Discovered via the rayfinDocs field.",
+      "summary": "Host service reference docs for Rayfin .NET hosting components (WebService, Auth, DataApi, Function). Discovered via the rayfinDocs field.",
       "topics": [
         "host",
         "dotnet",
