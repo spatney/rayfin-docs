@@ -7,6 +7,8 @@ import logo from '@/public/rayfin-logo.png';
 
 const CREATE_COMMAND = 'npm create @microsoft/rayfin@latest my-app';
 
+const FABRICATOR_URL = 'https://spatney.github.io/rayfin-fabricator/';
+
 const GET_STARTED_PROMPT = `Set up a new Rayfin app for me, end to end.
 
 Rayfin is a backend platform for TypeScript developers on Microsoft Fabric. Before writing any code, read https://rayfin.ai/llms.txt and https://rayfin.ai/docs/reference/agent-rules.md — every page on that site is available as raw Markdown by appending .md to its URL.
@@ -129,22 +131,34 @@ export default function HomePage() {
         </p>
       </section>
 
-      {/* Secondary path, for people who would rather type it themselves. */}
-      <section className="mt-10 w-full max-w-3xl sm:mt-12">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="shrink-0 text-sm text-fd-muted-foreground">
-            Prefer your terminal?
-          </span>
-          <div className="min-w-0 flex-1 sm:max-w-md">
-            <CopyCommand command={CREATE_COMMAND} />
-          </div>
-          <Link
-            href="/docs/start/quickstart"
-            className="shrink-0 text-sm font-medium text-fd-primary hover:underline"
-          >
-            Quickstart →
-          </Link>
-        </div>
+      {/*
+        Secondary paths, for people who would rather type it themselves or use a desktop
+        app. One grid, so both rows share column edges.
+      */}
+      <section className="mt-10 grid w-full max-w-3xl gap-3 sm:mt-12 sm:grid-cols-[auto_minmax(0,28rem)_auto] sm:items-center sm:justify-between sm:gap-y-4">
+        <span className="text-sm text-fd-muted-foreground">Prefer your terminal?</span>
+        <CopyCommand command={CREATE_COMMAND} />
+        <Link
+          href="/docs/start/quickstart"
+          className="text-sm font-medium text-fd-primary hover:underline"
+        >
+          Quickstart →
+        </Link>
+
+        <span className="mt-5 text-sm text-fd-muted-foreground sm:mt-0">
+          Prefer a desktop app?
+        </span>
+        <p className="text-sm text-fd-muted-foreground">
+          A community Copilot harness that helps you build Rayfin apps.
+        </p>
+        <a
+          href={FABRICATOR_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-sm font-medium text-fd-primary hover:underline"
+        >
+          Fabricator <span aria-hidden>↗</span>
+        </a>
       </section>
     </main>
   );
