@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install Node.js 22 or later and the Rayfin project CLI workflow before scaffolding or deploying a Fabric app.
+description: Install Node.js 20+ and the Rayfin project CLI workflow before scaffolding or deploying a Fabric app.
 ---
 
 Install the tools Rayfin needs on your development machine, then use the project-local CLI that `npm create @microsoft/rayfin@latest` installs. Rayfin deploys managed backends to Microsoft Fabric; the development loop also signs in to Fabric because `npm run dev` runs `rayfin dev`.
@@ -9,7 +9,7 @@ Install the tools Rayfin needs on your development machine, then use the project
 
 | Tool | Minimum | Why Rayfin needs it |
 | --- | --- | --- |
-| Node.js | 22 | Runs npm, Vite, the Rayfin CLI, and TypeScript tooling. Use a long-term support release, 22 or 24. |
+| Node.js | 20 | Runs npm, Vite, the Rayfin CLI, and TypeScript tooling. |
 | npm | Bundled with Node.js | Installs templates and project dependencies. |
 | Fabric account | Workspace access | `rayfin login`, `rayfin dev`, and `rayfin up` target Microsoft Fabric. |
 
@@ -104,7 +104,7 @@ npx rayfin --version
 If the CLI reports a static-hosting or auth SDK compatibility problem during deploy, update all `@microsoft/rayfin-*` packages together.
 
 ```prompt title="Prepare this machine for Rayfin"
-Check this machine for Node.js 22 or later. If it's missing or older, install the latest long-term support release for the current operating system. Then run `node --version`, `npm --version`, and `npx rayfin --version` inside my Rayfin project. If `npx rayfin login` fails because there is no OS keychain, retry with `--encryption-fallback-enabled` and explain that the fallback is for this development environment only.
+Check this machine for Node.js 20 or later. Install or update missing prerequisites for the current operating system, then run `node --version`, `npm --version`, and `npx rayfin --version` inside my Rayfin project. If `npx rayfin login` fails because there is no OS keychain, retry with `--encryption-fallback-enabled` and explain that the fallback is for this development environment only.
 ```
 
 ## Next

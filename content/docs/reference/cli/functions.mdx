@@ -116,7 +116,7 @@ This command uploads code only. It does not validate or apply `services.function
 | `Functions service is not enabled. Set 'services.functions.enabled: true' in rayfin.yml and re-run.` | Run `npx rayfin functions init` or enable the service in `rayfin.yml`. |
 | `Invalid services.functions.auth: authentication is required when Functions are enabled. Set services.functions.auth.type to "application".` | Add `services.functions.auth.type: application` and run full `npx rayfin up`. |
 | `No active deployment found. Run 'rayfin up' to deploy your Rayfin item first.` | Deploy once before running the standalone local Functions host. |
-| `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.` | Use Node.js 22 or later. |
+| `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.` | Use Node.js 20 or later. |
 | ``Azure Functions Core Tools still not detected on PATH. Open a new shell so PATH updates take effect, then re-run `rayfin dev functions apply`.`` | Open a new shell and rerun after installing Core Tools. |
 
 ```prompt title="Initialize and run Rayfin Functions commands"
