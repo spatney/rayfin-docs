@@ -40,6 +40,10 @@ empty value uses automatic detection.
 
 Do not put identifying or sensitive values in `RAYFIN_TELEMETRY_ENV`.
 
+Tools that run the CLI for you can set a label of their own.
+[Fabricator](https://spatney.github.io/rayfin-fabricator/) sets `RAYFIN_TELEMETRY_ENV` to
+`fabricator` for the Rayfin commands it runs.
+
 ## Endpoint override
 
 `RAYFIN_APPINSIGHTS_CONNECTION_STRING` overrides the Application Insights endpoint used by
