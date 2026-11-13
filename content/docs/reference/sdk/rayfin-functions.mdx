@@ -1,32 +1,70 @@
 ---
 title: "@microsoft/rayfin-functions"
-description: SDK reference for FunctionClient, FunctionsSchema, InvokeOptions, FunctionsError, and typed client.functions invocations.
-appliesTo: "@microsoft/rayfin-functions >= 1.36"
+description: SDK reference for functionsService, FunctionClient, FunctionsSchema, InvokeOptions, FunctionsError, and typed client.functions invocations.
+appliesTo: "@microsoft/rayfin-functions >= 2.0"
 ---
 
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-`@microsoft/rayfin-functions` is the client-side SDK package behind `client.functions.<name>.invoke(...)`. Server-side function authoring uses `@microsoft/fabric-user-data-functions`.
+`@microsoft/rayfin-functions` is the client-side SDK package behind `client.functions.<name>.invoke(...)`. Server-side function authoring uses `@microsoft/fabric-user-data-functions`; see [Writing a function](/docs/functions/writing-functions).
 
 ## Installation
 
-New Rayfin projects get this package through `@microsoft/rayfin-client`. Add it directly only when you import `FunctionsError`, `FunctionClient`, or the types from this package yourself.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Install the package in every app that calls functions, at the same version as `@microsoft/rayfin-client`. In 1.x the client pulled it in; the 2.0 client depends only on `@microsoft/rayfin-lib`.
 
 ```bash
-npm install @microsoft/rayfin-functions
+npm install @microsoft/rayfin-functions@2.0.0
 ```
 
 ## Exports
 
 | Export | Kind | Purpose |
 | --- | --- | --- |
+| `functionsService<TSchema>()` | Function | Registers typed `client.functions` on a client built with `RayfinClient.create`. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `FunctionClient<TInput, TOutput>` | Class | Client for one named function. |
 | `FunctionsError` | Class | Function invocation error extending `SdkError`. |
-| `createFunctionsApi<TSchema>(apiClient)` | Function | Creates the typed `client.functions` proxy. |
+| `createFunctionsApi<TSchema>(apiClient)` | Function | Creates the typed functions proxy for code that already owns an `ApiClient`. |
 | `FunctionInvocationResponse<TOutput>` | Type | Transport envelope returned by the backend before `invoke()` unwraps `output`. |
 | `InvokeOptions` | Type | Per-call headers and timeout. |
-| `FunctionsSchema` | Type | Map of function names to `{ input, output }`. |
+| `FunctionsSchema` | Type | Map of function names to `{ input, output }`. Import it from this package; `@microsoft/rayfin-client` no longer re-exports it. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `TypedFunctionClients<TSchema>` | Type | Map from schema keys to typed `FunctionClient` instances. |
+
+## `functionsService`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript
+function functionsService<TSchema extends FunctionsSchema>(): ClientServiceFactory<
+  TypedFunctionClients<TSchema>
+>;
+```
+
+Register the factory under `services` when you create the client. The key you choose becomes the namespace on the client; use `functions`:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
+import type { AppSchema } from '../../rayfin/data/schema';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types';
+
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+    functions: functionsService<AppFunctionsSchema>(),
+  },
+});
+
+export type AppClient = typeof rayfinClient;
+```
+
+The service uses the client's shared, authenticated transport and delegates to `createFunctionsApi`. Set `functionsBaseUrl` on `RayfinClient.create` to change function routing only; data, connectors, and storage keep using `baseUrl`. It replaces 1.x's `new RayfinClient<AppSchema, AppFunctionsSchema>(...)`; see [Migrate from 1.x](/docs/reference/sdk/rayfin-client#migrate-from-1x).
 
 ## `FunctionsSchema`
 
@@ -49,18 +87,7 @@ export type AppFunctionsSchema = {
 };
 ```
 
-Pass that schema as the second type parameter to `RayfinClient`:
-
-```typescript title="src/services/rayfinClient.ts"
-import { RayfinClient } from '@microsoft/rayfin-client';
-import type { AppSchema } from '../../rayfin/data/schema';
-import type { AppFunctionsSchema } from '../../rayfin/functions/src/types.js';
-
-export const client = new RayfinClient<AppSchema, AppFunctionsSchema>({
-  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
-  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
-});
-```
+Pass that schema as the type argument of `functionsService<AppFunctionsSchema>()`. Schemas provide compile-time types only; they do not validate inputs or outputs at run time.
 
 ## `FunctionClient`
 
@@ -98,7 +125,7 @@ interface InvokeOptions {
 
 ## Invocation route
 
-When the underlying `ApiClient` has `functionsBaseUrl`, `FunctionClient` posts to:
+When the client was created with `functionsBaseUrl`, `FunctionClient` posts to:
 
 ```text
 ${functionsBaseUrl}/api/<functionName>
@@ -112,43 +139,45 @@ ${baseUrl}/functions/<functionName>/invoke
 
 ## Errors
 
-`FunctionClient.invoke()` throws on failure. Catch `FunctionsError` before a generic error handler when you need function-specific messages or codes.
+`FunctionClient.invoke()` throws on failure. Catch `FunctionsError` before a generic error handler when you need function-specific messages or codes. Import `NetworkError` and `SdkError` by name from `@microsoft/rayfin-client`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-```typescript
+```typescript title="src/features/greet.ts"
+import { NetworkError } from '@microsoft/rayfin-client';
 import { FunctionsError } from '@microsoft/rayfin-functions';
-import { NetworkError } from '@microsoft/rayfin-lib';
+import { rayfinClient } from '../services/rayfinClient';
 
-try {
-  const result = await client.functions.greet.invoke({
-    firstName: 'Ada',
-    lastName: 'Lovelace',
-  });
-  console.log(result);
-} catch (error) {
-  if (error instanceof FunctionsError) {
-    console.error(error.code, error.message);
-  } else if (error instanceof NetworkError) {
-    console.error('Network failure while invoking the function.');
-  } else {
-    throw error;
+export async function logGreeting(): Promise<void> {
+  try {
+    const result = await rayfinClient.functions.greet.invoke({
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+    });
+    console.log(result);
+  } catch (error) {
+    if (error instanceof FunctionsError) {
+      console.error(error.code, error.message);
+    } else if (error instanceof NetworkError) {
+      console.error('Network failure while invoking the function.');
+    } else {
+      throw error;
+    }
   }
 }
 ```
-
-`FunctionClient.invoke()` throws on failure:
 
 | Failure | Error |
 | --- | --- |
 | Backend response contains `errors` or non-success `status` | `FunctionsError` with code `FUNCTION_EXECUTION_ERROR`. |
 | Unexpected invocation failure | `FunctionsError` with code `UNKNOWN_FUNCTION_ERROR`. |
-| Network failure | `NetworkError` from `@microsoft/rayfin-lib`. |
-| Other SDK failure | `SdkError` from `@microsoft/rayfin-lib`. |
+| Network failure | `NetworkError`, propagated unchanged. |
+| Other SDK failure | `SdkError`, propagated unchanged. |
 
 The backend `invocationId` is logged with `console.debug` as `[rayfin-functions] <name> invocationId=<id>`.
 
 ## Full exported surface
 
 ```typescript
+export { functionsService } from './functionsService.js';
 export { FunctionsError, createFunctionsApi, FunctionClient } from './Functions.js';
 export type {
   FunctionInvocationResponse,
@@ -171,3 +200,9 @@ interface FunctionInvocationResponse<TOutput = any> {
 ```
 
 This is the wire envelope. `invoke()` unwraps and returns `output`, auto-parsing JSON-encoded output strings and inner `{ output: <value> }` envelopes when present.
+
+```prompt title="Register typed functions on my Rayfin 2.0 client"
+In my Rayfin 2.0 app, make `client.functions` typed by the generated functions schema.
+
+Add @microsoft/rayfin-functions to the frontend package.json at the same exact version as @microsoft/rayfin-client. In the existing `RayfinClient.create({...})` call, keep the auth adapter and every other service, and add `functions: functionsService<AppFunctionsSchema>()` to `services`, importing `functionsService` from @microsoft/rayfin-functions and `AppFunctionsSchema` from rayfin/functions/src/types. Replace any import of `FunctionsSchema` from @microsoft/rayfin-client with an import from @microsoft/rayfin-functions. Do not set `functionsBaseUrl` unless the app already uses the local `/.rayfin/api` route. Run the type check and fix what it reports.
+```

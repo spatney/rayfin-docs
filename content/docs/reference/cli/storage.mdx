@@ -1,0 +1,146 @@
+---
+title: rayfin storage
+description: Command reference for rayfin storage init, which enables Storage and Data, installs packages, and scaffolds a starter folder without deploying, plus the Storage apply commands.
+appliesTo: "@microsoft/rayfin-cli >= 2.0"
+---
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`rayfin storage` prepares Rayfin Storage in a project's local files. Its subcommand, `init`, never signs in, creates a backend, or deploys folders; apply folders with `rayfin up` or the [apply commands](#apply-storage-configuration). For declaring folders and using the client, see [Storage](/docs/storage).
+
+## `rayfin storage init`
+
+```bash
+npx rayfin storage init
+npx rayfin storage init --dry-run --output json
+npx rayfin storage init --path packages/storage
+```
+
+| Option | Description |
+| --- | --- |
+| `--path <directory>` | Storage service root relative to the project root. This is a package root, not a path to schema or client source files. |
+| `--skip-install` | Skip dependency installation and declaration compilation. |
+| `--dry-run` | Validate and list planned changes without writing files or installing dependencies. |
+| `-y, --yes` | Auto-accept all confirmation prompts. |
+| `--json` | Emit machine-readable JSON output. |
+| `--verbose` | Enable verbose output. |
+| `--output <mode>` | Output format: `interactive`, `plain`, or `json`. |
+
+The command has no `--workspace`, `--workspace-id`, or `--env-file` option and does not use an ambient workspace target; choose deployment targets with `rayfin up`. npm installs still inherit your shell environment, including registry and authentication settings.
+
+Automatic initialization supports npm projects only. A `pnpm-lock.yaml`, a `yarn.lock`, or a `packageManager` other than npm stops it before any change; use [manual setup](/docs/storage#set-up-storage-manually) instead.
+
+## What init changes
+
+In a single-package project:
+
+| File | Change |
+| --- | --- |
+| `rayfin/rayfin.yml` | Sets `services.storage.enabled: true` and `services.data.enabled: true`. Adds `dialect: mssql` only when no dialect is set. |
+| `rayfin/storage/Attachment.ts` | Starter folder: `@blob({ maxSize: mb(10) })` with an `@role('authenticated', '*', …)` policy that compares `claims.sub` to `item.owner_id`. |
+| `rayfin/storage/schema.ts` | Runtime schema: `export const schema = [Attachment];` |
+| `rayfin/storage/client-schema.ts` | Browser-safe type map: `export type AppStorageSchema = { Attachment: object };` |
+| `rayfin/tsconfig.json` | Created when missing, compiling `data/**/*.ts` and `storage/**/*.ts` into `rayfin/.temp/compiled`. An existing file is checked, not rewritten. |
+| `rayfin/package.json` | `{ "type": "module" }`, only when the project package is not ESM. |
+| `rayfin/data/schema.ts` | `export const schema = [];`, only when Data was off and has no schema. |
+| `package.json` | Adds `@microsoft/rayfin-storage` and `@microsoft/rayfin-core`, and `typescript` as a dev dependency when it is missing. Adds a `build:storage` script and puts `npm run build:storage &&` in front of existing `build`, `build:fabric`, and `typecheck` scripts. |
+| `.gitignore` | Adds `rayfin/.temp/`. |
+
+The starter folder, runtime schema, and type map are written only when `rayfin/storage/schema.ts` does not exist. Running init again preserves authored folders, schemas, and client code, and does not restore a starter folder you removed. Existing package names, versions, scripts, dependencies, and other fields are kept. In npm workspaces, the declaration files go under the selected storage package — which gets a `package.json` if it has none — the scripts stay in the root `package.json`, and `services.storage.path` records the package.
+
+In a Universal App project, init applies the template's storage capability pack instead. It creates the `packages/storage` workspace with the starter folder, adds `packages/frontend/src/lib/storage-schema.ts`, registers `storage: storageService<AppStorageSchema>()` in `packages/frontend/src/lib/rayfin-client.ts`, and sets `services.storage.path: packages/storage`. If you customized that client file, init stops and asks you to merge the change yourself.
+
+In other layouts, init does not edit your client. It reports the remaining work as `Manual integration required:` warnings — compose Storage onto the existing authenticated client without a second session, and keep a browser-safe folder map in sync with the runtime schema. Register `storageService<AppStorageSchema>()`, which composes `createStorageClient` for you, as shown in [Add Storage to the client](/docs/storage#add-storage-to-the-client).
+
+## How init picks packages
+
+Storage package:
+
+- An existing `services.storage.path` wins; init never moves a configured service, and a different `--path` fails.
+- Without npm workspaces, the root package holds the declarations.
+- With npm workspaces and no `--path`, init uses `storage` inside the single container pattern, such as `packages/*` → `packages/storage`. With other patterns, pass `--path`.
+- A storage package other than the root must be covered by the root `package.json` workspaces. Independent nested packages are rejected before any change, including with `--skip-install` or `--dry-run`.
+
+Client package — there is no override:
+
+- Universal App: `packages/frontend`.
+- Without npm workspaces: the root package.
+- Other npm workspaces: the one root or workspace package that declares `@microsoft/rayfin-client` in `dependencies` or `devDependencies`. If none or several do, init stops before writing files or installing dependencies; set up Storage manually.
+
+Dependency versions:
+
+- Dependencies you already declare are kept.
+- New Rayfin dependencies match your `@microsoft/rayfin-core` declaration, or, without one, `@microsoft/rayfin-client`, then `@microsoft/rayfin-storage`, then the CLI's own version.
+- Conflicting declarations of that package stop init before it writes files.
+- For `file:` directory dependencies, init finds the required package by name among the folders beside the matched package and rebases the path for the destination package.
+
+## Validation, failure, and rollback
+
+- Planning runs first, also with `--dry-run` and `--skip-install`. It checks the package manager, the storage and client packages, and any existing TypeScript configuration, which must include `storage/**/*.ts`, emit to `.temp/compiled` with `rootDir` `.`, and use standard (not experimental) decorators.
+- Init then writes its files, runs `npm install --ignore-scripts --no-audit --no-fund` from the project root when dependencies changed or are missing, compiles the registered declarations, and fails if no folder is registered.
+- If installation fails, init restores the files it wrote. Lockfiles and `node_modules` that npm changed may still need cleanup before you retry.
+- Init never overwrites a file that changed after planning, or a symbolic link.
+- `--skip-install` also skips compilation. Run init again without it to install and validate.
+- Ctrl+C cancels init, including npm and the compiler, and exits with code 2. Other failures exit with code 1.
+
+## Output
+
+Human-readable output starts with `Storage sources initialized.`, `Storage sources are already initialized.`, or `Storage initialization preview (no changes made).`, lists each operation, and ends with `No backend was deployed. Apply declarations with rayfin up storage apply after deployment.`
+
+With `--json` or `--output json`, success is one object:
+
+| Field | Value |
+| --- | --- |
+| `status` | `success` |
+| `projectRoot` | Absolute path of the project root. |
+| `storagePath` | Storage package path relative to the root; `.` is the root. |
+| `layout` | `single-package`, `workspace`, or `universal-app`. |
+| `outcome` | `initialized`, `already-initialized`, or `dry-run`. |
+| `operations` | Planned or applied changes, such as `Create rayfin/storage/Attachment.ts`. |
+| `clientIntegration` | `configured`, or `manual-required` when `manualSteps` lists client work. |
+| `manualSteps` | Client changes left for you. |
+| `dependencies` | `installed`, or `skipped` with `--skip-install` or `--dry-run`. |
+
+A failure prints `{ "status": "error", "error": { "code": "…", "message": "…" } }`, and cancellation prints `{ "status": "cancelled" }`.
+
+| Error code | Cause | Fix |
+| --- | --- | --- |
+| `storage-init-package-manager-unsupported` | The project uses another package manager. | Set up Storage manually. |
+| `storage-init-path-conflict` | `--path` differs from `services.storage.path`. | Keep the configured path. |
+| `storage-init-ambiguous-layout` | The npm workspaces have no single container pattern. | Pass `--path`. |
+| `storage-init-unlinked-workspace` | The storage path is not the root package and not covered by npm workspaces. | Add it to the workspaces, choose a declared workspace, or pass `--path .`. |
+| `storage-init-client-not-found` | No root or workspace package declares `@microsoft/rayfin-client`. | Set up Storage manually in the intended package. |
+| `storage-init-ambiguous-client` | More than one package declares `@microsoft/rayfin-client`. | Set up Storage manually in the intended package. |
+| `storage-init-unregistered-folders` | `rayfin/storage/` has declarations but no `schema.ts`. | Register your folders in `rayfin/storage/schema.ts`, then rerun. |
+| `storage-init-script-conflict` | An authored `build:storage` script already exists. | Rename it, or make it build the storage service. |
+| `storage-init-client-integration-required` | A customized Universal App client would be left without Storage. | Merge the storage pack's client changes into your client, then rerun. |
+| `storage-init-pack-incompatible` | The installed Universal App storage pack is out of date. | Update the template pack tooling, or apply and review the pack manually. |
+| `storage-init-no-folders` | Compilation found no registered folder. | Register at least one folder in `rayfin/storage/schema.ts`. |
+| `storage-init-command-failed` | npm or another subprocess failed. | Read the included output, fix the cause, and rerun. |
+| `storage-init-failed` | Any other failure, such as a TypeScript configuration that omits the schema. | Resolve the reported error and rerun. |
+
+## Apply Storage configuration
+
+`rayfin up` applies enabled Storage declarations on every deploy, and `rayfin dev` applies them when a session starts. These commands apply Storage alone:
+
+| Command | Options | Use |
+| --- | --- | --- |
+| `npx rayfin up storage apply` | `--force`, `--json` | Apply Storage to the active Fabric deployment. See [rayfin up](/docs/reference/cli/up). |
+| `npx rayfin dev storage apply` | `--force`, `--gen-config-only` | Retry Storage for the Fabric backend that a full `rayfin dev` run set up. It rejects `--workspace` and `--workspace-id`. See [rayfin dev](/docs/reference/cli/dev). |
+
+| Option | Description |
+| --- | --- |
+| `--force` | Force the storage controller to accept configuration that may result in data loss. Required to remove a folder that still contains objects; the objects are deleted permanently. |
+| `--json` | Output the result as JSON. |
+| `--gen-config-only` | Generate the Storage configuration, `rayfin/.temp/storage-config.json` in the storage package, without applying it. |
+
+When no `@blob` folder is registered, apply is skipped with a warning. See [Apply Storage configuration](/docs/storage#apply-storage-configuration) and [Remove a folder](/docs/storage#remove-a-folder).
+
+```prompt title="Initialize Rayfin Storage with the CLI"
+In my Rayfin 2.0 project, add Storage with `rayfin storage init`.
+
+1. Read rayfin/rayfin.yml. Storage requires the Data service; if services.data.enabled is not true, ask me before continuing.
+2. Run `npx rayfin storage init --dry-run --output json` and show me the layout, the planned operations, and any error code.
+3. If I approve, run `npx rayfin storage init`. If the result lists manualSteps, add storage: storageService<AppStorageSchema>() from @microsoft/rayfin-storage to my existing RayfinClient.create call, typed with AppStorageSchema from rayfin/storage/client-schema.ts. Do not create a second client or import decorated classes into browser code.
+4. Do not deploy. Tell me to run `npx rayfin up` or `npx rayfin up storage apply` when I am ready, and never pass --force unless I accept data loss.
+```

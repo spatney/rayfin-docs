@@ -1,6 +1,6 @@
 ---
 title: Deployment troubleshooting
-description: Fix common rayfin up, capacity, static hosting, and deployment-target errors using exact CLI messages.
+description: Fix common rayfin up, capacity, static hosting, Storage, and schema compilation errors using exact CLI messages.
 ---
 
 Match the exact error text from the CLI, then apply the fix. Re-run with `--verbose` when a Fabric request needs more detail.
@@ -12,6 +12,7 @@ Match the exact error text from the CLI, then apply the fix. Re-run with `--verb
 | `Deployment fails with 401 or 403` | Run `npx rayfin login`, then retry. |
 | OS keychain or credential-storage failure | Use `npx rayfin login --encryption-fallback-enabled` only for a development environment without keychain support. |
 | `RAYFIN_TOKEN could not be decoded as a JWT, so its audience cannot be verified.` | Use a token for the expected Fabric audience, or unset `RAYFIN_TOKEN` and run `rayfin login`. |
+| `Can't reach Microsoft Entra ID (<host>)` | The CLI could not reach the sign-in endpoint. Follow the recovery steps it prints. In WSL2, set `networkingMode=nat` and `dnsTunneling=false` under `[wsl2]` in `%UserProfile%\.wslconfig`, run `wsl --shutdown`, reopen your terminal or container, and sign in again. See [`rayfin login`](/docs/reference/cli/login). [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
 ## Workspace and capacity errors
 
@@ -43,11 +44,77 @@ Match the exact error text from the CLI, then apply the fix. Re-run with `--verb
 | Error text | Fix |
 | --- | --- |
 | `Compressed package size (...) exceeds the 100 MB limit.` | Exclude large assets or source maps, then redeploy static content. |
+| `The built bundle is not parseable JavaScript, so the deployed app would be a blank page:` | The build emitted JavaScript the browser cannot parse, and the CLI refused to upload it. A common cause is `@vitejs/plugin-react-swc` leaving raw `@decorator` syntax when frontend code imports an entity class as a value. Enable Stage 3 decorators in the SWC plugin as shown below, or switch to `@vitejs/plugin-react`, then rebuild and redeploy. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `Static hosting is enabled but services.staticHosting.assetAccess is not set in rayfin.yml` | Add `assetAccess: protected` or `assetAccess: public`. Non-interactive `rayfin up` defaults a missing posture to `protected` and writes it to `rayfin.yml`. [New in 1.35.1](/docs/reference/changelog#rayfin-1351) |
 | `services.staticHosting.assetAccess in rayfin.yml must be protected or public` | Fix the value or the environment variable that resolves it. |
 | `Static hosting requires an explicit access posture. Set 'services.staticHosting.assetAccess' to 'protected' to require Fabric sign-in or 'public' to serve anyone with the link, then deploy again.` | Add the access posture and redeploy. |
 | `Invalid static hosting posture: 'services.staticHosting.embedded.only: true' cannot be combined with 'services.staticHosting.assetAccess: public' because an embedded app has no standalone surface to make public.` | Use `assetAccess: protected` or set `embedded.only: false`. |
 | `The static-hosting access posture has not been recorded. Run 'rayfin up' to record 'services.staticHosting.assetAccess' before trying again.` | Run a full deploy with a current CLI. |
+| `Static app re-deployment skipped: the built static files, workspace, and backend are unchanged since the last successful deployment.` | Not an error: nothing changed, so `rayfin up` kept the deployed content. If you expected new content, check that the build output changed, or rerun with `--force-static-deploy`. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+
+### Enable decorators in the SWC plugin
+
+The bundled templates enable decorators in the SWC plugin like this. See
+[Project structure](/docs/start/project-structure) for the rest of the Vite settings
+Rayfin needs.
+
+```typescript title="vite.config.ts"
+import react from '@vitejs/plugin-react-swc';
+import { rayfinLocalDev } from '@microsoft/rayfin-local-dev/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [
+    react({
+      // Rayfin entities use TC39 Stage 3 decorators, which SWC does not compile by default.
+      useAtYourOwnRisk_mutateSwcOptions({ jsc }) {
+        if (!jsc?.parser) return;
+        jsc.parser.decorators = true;
+        jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' };
+      },
+    }),
+    rayfinLocalDev(),
+  ],
+  build: { target: 'es2022' },
+  esbuild: { target: 'es2022' },
+  optimizeDeps: { esbuildOptions: { target: 'es2022' } },
+});
+```
+
+## Storage errors
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+| Error text | Fix |
+| --- | --- |
+| `Storage requires the Data service.` | Enable `services.data` in `rayfin.yml`, or disable `services.storage`. |
+| `Storage apply blocked (409): the following folder(s) are no longer declared but still contain objects and were not removed:` | Restore the folder declarations, or rerun with `--force` to delete those folders and every object in them. Deleted folders cannot be restored. |
+| `` Storage configuration was not applied: <reason>. Run `rayfin up storage apply` to retry. `` | The rest of the deploy continued. Fix the reported reason, then run `npx rayfin up storage apply`. |
+| `⚠️  No @blob folder declarations found. Storage configuration was not applied.` | Register at least one `@blob` class in the `schema` array of `rayfin/storage/schema.ts`. Removing the last declaration does not remove folders that are already deployed. |
+| `No compiled Storage schema found at rayfin/.temp/compiled/storage/schema.js in:` | Export `const schema = [...]` from `rayfin/storage/schema.ts`. |
+
+See [Storage](/docs/storage) for folder declarations and the Storage commands.
+
+## Pre-deploy validation errors
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`rayfin up` checks these before it calls Fabric, so nothing in the workspace has changed when they appear.
+
+| Error text | Fix |
+| --- | --- |
+| `connectors block in rayfin.yml has validation errors:` with an `additionalPayload` entry | An `additionalPayload` is accepted only on Category B connectors, up to 64 KiB and 32 levels deep. Fix or remove it. See [Eventhouse](/docs/connectors/eventhouse). |
+| `'<audience>' is not a valid custom audience. Use an application ID (GUID) or an https:// or api:// resource URI without a scope, query, or wildcard.` | Fix the audience on the `RayfinContext` type or `udf.connection({ audience })`. See [Connections](/docs/functions/connections). |
+| `services.auth.dynamicClaims.enabled is true, but services.functions is not enabled.` | Enable `services.functions`, or set `services.auth.dynamicClaims.enabled: false`. See [Dynamic claims](/docs/auth/dynamic-claims). |
+| `services.auth.dynamicClaims.enabled is true, but no udf.authClaims provider was found in` | Add a `udf.authClaims` provider to the Functions package, or set `services.auth.dynamicClaims.enabled: false`. |
+
+## Functions deploy errors
+
+| Error text | Fix |
+| --- | --- |
+| `The installed @microsoft/fabric-user-data-functions@<version> ... but this CLI writes '3.0'.` | The Functions worker cannot read the runtime metadata this CLI writes, so the CLI blocks the Functions build. Run `npm install @microsoft/fabric-user-data-functions@2.0.0` in the Functions package so it matches the CLI version, then redeploy. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+
+See [Deploying functions](/docs/functions/deploying) for the rest of the Functions deploy.
 
 ## Schema and runtime errors
 
@@ -56,11 +123,29 @@ Match the exact error text from the CLI, then apply the fix. Re-run with `--verb
 | `Dialect is required when Data module is enabled` | Set `services.data.dialect: mssql` in `rayfin.yml`. |
 | Destructive schema change warning | Review operations and use `--force` only when the data loss is expected. |
 | GraphQL `Internal server error` after deploy | Add explicit `max` values to every `@text()` field, then apply the schema. |
+| HTTP 403 `ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN` | The schema grants the `anonymous` role a permission. Ask a Fabric tenant administrator to turn on **Enable anonymous data access for Fabric Apps (Preview)** for the app owner, or remove the anonymous permission. See [Permissions](/docs/data/permissions). |
+| `Unsupported TypeScript <version> at <path>. Rayfin tooling supports ^5.7.2 \|\| ^6.0.2.` | Install a supported TypeScript in the schema package, for example `npm install --save-dev "typescript@^5.7.2"`, and commit the lockfile. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `With NodeNext module settings in "<tsconfig>", ... but @microsoft/rayfin-core is ESM-only.` | Create `rayfin/package.json` containing `{ "type": "module" }`, or set `"type": "module"` in the package the message names. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `TypeScript migration hint: add "ESNext.Decorators" to compilerOptions.lib` | Add `"ESNext.Decorators"` to `lib` in the named schema config, keeping its other entries. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `TypeScript migration hint: install @types/node` | Install `@types/node` and add `"node"` to `types` in the named schema config. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+
+See [`rayfin init`](/docs/reference/cli/init#what-init-writes) for the schema config that
+2.0 scaffolds.
 
 ```prompt title="Diagnose a failed Rayfin deployment"
-Use the exact error text from my failed `npx rayfin up` or `npx rayfin up status` run to fix the deployment. Re-run with `--verbose` if needed. Check workspace targeting, capacity readiness, `services.staticHosting.assetAccess`, static archive size, and schema configuration. Do not pass `--force` unless the destructive schema operations are expected.
+Use the exact error text from my failed `npx rayfin up` or `npx rayfin up status` run to fix the deployment. Re-run with `--verbose` if needed. Check workspace targeting, capacity readiness, `services.staticHosting.assetAccess`, static archive size, Storage declarations, the TypeScript version and NodeNext schema config, and schema configuration. Do not pass `--force` unless the destructive schema or Storage folder removals are expected.
 ```
 
 ## Source-oriented notes for agents
 
-The CLI error strings above come from the 1.36.2 package files `dist/errors.js`, `dist/commands/capacity-options.js`, `dist/workflows/fabric-readiness/steps/*.js`, `dist/workflows/up/steps/ensure-static-hosting-posture.js`, and `dist/services/runtime-settings/errors.js`.
+The CLI error strings above come from the 2.0.0 packages. In `@microsoft/rayfin-cli`:
+`dist/errors.js`, `dist/commands/capacity-options.js`, `dist/auth/auth-errors.js`,
+`dist/utils/static-hosting-utils.js`, `dist/utils/storage-apply.js`,
+`dist/utils/storage-config-generator.js`, `dist/utils/functions-metadata-generator.js`,
+`dist/utils/functions-worker-compat.js`, `dist/commands/up/render.js`, and
+`dist/commands/up/dynamic-claims-preflight.js`. In `@microsoft/rayfin-tools-common`:
+`dist/workflows/fabric-readiness/steps/*.js`,
+`dist/workflows/up/steps/ensure-static-hosting-posture.js`,
+`dist/workflows/up/steps/deploy-static.js`, `dist/services/runtime-settings/errors.js`,
+`dist/config/serviceDependencies.js`, `dist/config/validateConnectors.js`, and
+`dist/services/data/node/typescript-*.js`.

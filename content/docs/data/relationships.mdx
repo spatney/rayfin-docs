@@ -49,7 +49,7 @@ export class Note {
   @text({ max: 200 }) title!: string;
   @text({ max: 10000 }) content!: string;
   @date() createdAt!: Date;
-  @uuid() notebook_id!: string;
+  @uuid({ optional: true }) notebook_id?: string;
   @one(() => Notebook, { optional: true }) notebook?: Notebook;
   @text({ max: 128 }) user_id!: string;
 }
@@ -97,16 +97,20 @@ needs to read or set it directly (for example, filtering by it — see
 - **Type**: a foreign key field referencing another entity's primary key must be declared
   `@uuid()`, matching the type of that entity's `id`. Declaring it `@text()` is a type
   mismatch with the column it references.
+- **Optionality**: give a declared foreign key the same optionality as its relationship. For
+  an optional `@one()`, declare `@uuid({ optional: true }) notebook_id?: string;` as in the
+  `Note` example above. A declared foreign key without `?` is a required property of
+  `create` input, even when you set the relationship object instead.
 - **Auth-derived owner columns are the exception.** A `user_id` field populated from
   `claims.sub` (the signed-in user's subject claim) is **not** a foreign key to another
   Rayfin entity — it is a plain `@text()` field, as shown in the `Notebook` and `Note`
   examples above.
 
 ```typescript
-@uuid() notebook_id!: string;              // correct — FK to Notebook.id (a uuid)
-@text() notebook_id!: string;              // wrong — type mismatch with the referenced uuid PK
+@uuid({ optional: true }) notebook_id?: string; // correct — FK to Notebook.id (a uuid)
+@text() notebook_id!: string;                   // wrong — type mismatch with the referenced uuid PK
 
-@text({ max: 128 }) user_id!: string;      // correct — claims.sub is not a Rayfin entity FK
+@text({ max: 128 }) user_id!: string;           // correct — claims.sub is not a Rayfin entity FK
 ```
 
 ## Option limits on relationship decorators
@@ -121,6 +125,30 @@ pattern used for scalar fields.
 @one(() => Notebook, { optional: true }) notebook?: Notebook; // a note may be unfiled
 @one(() => Notebook) notebook!: Notebook;                     // every note must have one
 ```
+
+## Read related records
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Select fields from a related entity with a path in `.select()`. Follow a `@one()` relationship
+with a dot (`'notebook.name'`); follow a `@many()` relationship with the `[]` marker
+(`'notes[].title'`), which returns the related rows as an array:
+
+```typescript
+const notes = await client.data.Note.select(['id', 'title', 'notebook.name']).execute();
+// notes[0].notebook?.name
+
+const notebooks = await client.data.Notebook.select(['id', 'name', 'notes[].title']).execute();
+// notebooks[0].notes?.map((note) => note.title)
+```
+
+Each path follows one relationship to one scalar field. In 1.x, collection paths were written
+without `[]` (`'notes.title'`); add the marker when you upgrade, since 2.0 reads cardinality
+from the marker and not from the relationship's name. See
+[Select nested fields with dot-paths](/docs/data/querying#select-nested-fields-with-dot-paths).
+
+To set or change a relationship, pass `{ id }` for the `@one()` side in a mutation — see
+[Setting `@one()` relationships in mutations](/docs/data/mutations#setting-one-relationships-in-mutations).
 
 ## Many-to-many: use an explicit join entity
 

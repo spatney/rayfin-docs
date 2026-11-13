@@ -1,0 +1,192 @@
+---
+title: Migrate from 1.36 Storage
+description: Upgrade Rayfin Storage code written for the experimental 1.36 release to 2.0 — drop the feature flag, move imports to @microsoft/rayfin-core, use storageService, and replace prefix with paths.
+appliesTo: "@microsoft/rayfin-storage >= 2.0"
+---
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Use this checklist when a project used the experimental Storage in Rayfin 1.36 and is moving every `@microsoft/rayfin-*` package to 2.0.0. In 2.0, Storage is generally available, and four things change for existing code:
+
+| Area | 1.36 | 2.0 |
+| --- | --- | --- |
+| Enablement | `RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled: true` | `services.storage.enabled: true` only; no feature flag |
+| Declaration imports | `@microsoft/rayfin-core/experimental` | `@microsoft/rayfin-core` |
+| Client composition | `ExtendableRayfinClient` from `@microsoft/rayfin-client/experimental` with `createStorageClient` | `RayfinClient.create` with `storageService()` |
+| Object addressing | `name` plus a `prefix` option | One complete object path |
+
+Keep every folder's name while you migrate. Without an explicit `@blob({ name })`, the folder name comes from the class name, and the next apply treats a renamed folder as removed — which deletes its objects once you authorize it with `--force`.
+
+## Upgrade the packages
+
+All Rayfin packages share one version. Upgrade them together, and install the capability packages the 2.0 client no longer brings in:
+
+```bash
+npm install @microsoft/rayfin-core@2.0.0 @microsoft/rayfin-client@2.0.0 @microsoft/rayfin-auth@2.0.0 @microsoft/rayfin-data@2.0.0 @microsoft/rayfin-storage@2.0.0
+npm install --save-dev @microsoft/rayfin-cli@2.0.0
+```
+
+Update any other `@microsoft/rayfin-*` package your project declares to `2.0.0` as well.
+
+## Drop the feature flag
+
+Remove `storage` from `RAYFIN_FEATURE_FLAGS` in shells, CI variables, and env files; 2.0 does not use it. Keep Storage enabled in `rayfin.yml`, together with the Data service it requires:
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  data:
+    enabled: true
+    dialect: mssql
+  storage:
+    enabled: true
+```
+
+## Move Storage imports to the package root
+
+The `@microsoft/rayfin-core/experimental` entry point is removed. [Removed in 2.0](/docs/reference/changelog#rayfin-20) Import `blob`, `StorageObject`, `ContentTypes`, `bytes`, `kb`, `mb`, `gb`, and the types `BlobFolderOptions`, `ByteSize`, and `MimeGlob` from `@microsoft/rayfin-core`. The decorators and helpers behave as before.
+
+Before, in 1.36:
+
+```typescript
+import { role } from '@microsoft/rayfin-core';
+import {
+  blob,
+  ContentTypes,
+  mb,
+  StorageObject,
+} from '@microsoft/rayfin-core/experimental';
+```
+
+After, in 2.0:
+
+```typescript title="rayfin/storage/ProfileImage.ts"
+import {
+  blob,
+  ContentTypes,
+  mb,
+  role,
+  StorageObject,
+} from '@microsoft/rayfin-core';
+
+@blob({
+  name: 'profile-images',
+  maxSize: mb(5),
+  allowedContentTypes: [ContentTypes.AnyImage],
+})
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class ProfileImage extends StorageObject {}
+```
+
+## Compose Storage with storageService
+
+`ExtendableRayfinClient` and the `@microsoft/rayfin-client/experimental` entry point are removed. [Removed in 2.0](/docs/reference/changelog#rayfin-20) Register `storageService()` in the `services` of `RayfinClient.create`, choose authentication with `browserSession()`, and let TypeScript infer the client type instead of writing an intersection.
+
+Before, in 1.36:
+
+```typescript
+import type { RayfinClient } from '@microsoft/rayfin-client';
+import { ExtendableRayfinClient } from '@microsoft/rayfin-client/experimental';
+import { createStorageClient, type StorageClient } from '@microsoft/rayfin-storage';
+
+import type { AppSchema } from '../../rayfin/data/schema';
+import type { AppStorageSchema } from '../../rayfin/storage/schema';
+
+export type AppClient = RayfinClient<AppSchema> & {
+  storage: StorageClient<AppStorageSchema>;
+};
+
+export function createAppClient(baseUrl: string, publishableKey: string): AppClient {
+  return ExtendableRayfinClient.create({
+    baseUrl,
+    publishableKey,
+    schema: {} as AppSchema,
+    services: {
+      storage: createStorageClient<AppStorageSchema>,
+    },
+  });
+}
+```
+
+After, in 2.0:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { storageService } from '@microsoft/rayfin-storage';
+import type { AppSchema } from '../../rayfin/data/schema';
+import type { AppStorageSchema } from '../../rayfin/storage/schema';
+
+export function createAppClient(baseUrl: string, publishableKey: string) {
+  return RayfinClient.create({
+    baseUrl,
+    publishableKey,
+    auth: browserSession({ storage: true }),
+    services: {
+      data: dataService<AppSchema>(),
+      storage: storageService<AppStorageSchema>(),
+    },
+  });
+}
+
+export type AppClient = ReturnType<typeof createAppClient>;
+```
+
+An `AppStorageSchema` exported from `rayfin/storage/schema.ts` with the classes as values keeps working, because the client imports it with `import type`. Calls stay on `client.storage.<folder>`. For the rest of the client changes — authentication options, data and functions services, runtime configuration — see the [`@microsoft/rayfin-client` reference](/docs/reference/sdk/rayfin-client).
+
+## Replace prefix with object paths
+
+The `prefix` option is removed from `upload()`, `download()`, `list()`, and `delete()`. [Removed in 2.0](/docs/reference/changelog#rayfin-20) Join the old prefix and name with `/`:
+
+| 1.36 call | 2.0 call |
+| --- | --- |
+| `upload(name, data, { prefix, ...options })` | `upload(prefix + '/' + name, data, options)` |
+| `download(name, { prefix, ...options })` | `download(prefix + '/' + name, options)` |
+| `delete(name, { prefix })` | `delete(prefix + '/' + name)` |
+| `list({ prefix, ...options })` | `list(prefix, options)` |
+| `upload(name, data)` without a prefix | `upload(name, data)` — unchanged |
+
+The SDK splits a path into the same folder, prefix, and file-name values it sent in 1.36, so objects uploaded with a prefix keep their address — as long as the prefix has no leading or trailing `/`, which 2.0 rejects. A 1.36 object name could not contain `/`; a 2.0 path can, and every segment must follow the [path rules](/docs/storage/files#path-rules).
+
+`StorageObjectRef.path` is the complete relative object path, including the file name.
+
+## Build and apply
+
+Rebuild so the declarations compile against the new imports, then preview and deploy:
+
+```bash
+npm run build
+npx rayfin up --dry-run
+npx rayfin up
+```
+
+`rayfin up` applies the Storage declarations. To apply Storage alone, run `npx rayfin up storage apply`. Do not add `--force` unless the apply reports a folder removal you intend; see [Remove a folder](/docs/storage#remove-a-folder).
+
+## Options removed in 1.36
+
+[Removed in 1.36](/docs/reference/changelog#rayfin-136)
+
+Code written for Storage before 1.36 may still pass per-call options that 1.36 dropped. They do not exist in 2.0 either:
+
+| Removed option | Where it appeared | Replacement |
+| --- | --- | --- |
+| `declaredSize` | `upload()` options | The SDK infers the size when it can; the folder and service size limits are enforced by the service. |
+| `onProgress` | `upload()` options | No progress callback is exposed. |
+| `userMetadata` | `upload()` options | Declare typed fields on the folder class and pass them in `fields`. |
+| per-call `onConflict` | `upload()` options | Set the folder default with `@blob({ onConflict })`. |
+| `contentType`, `contentDisposition`, `range` | `download()` options | Download returns the headers OneLake supplies; the client does not request alternate headers or ranges. |
+| `correlationId` | every operation's options | The SDK creates a correlation ID for each operation and returns it. |
+
+```prompt title="Migrate Rayfin Storage code from 1.36 to 2.0"
+Migrate the Rayfin Storage code in my project from the experimental 1.36 API to Rayfin 2.0.0.
+
+1. Set every @microsoft/rayfin-* dependency to exactly 2.0.0, and add @microsoft/rayfin-auth, @microsoft/rayfin-data, and @microsoft/rayfin-storage at 2.0.0 to the package that creates the Rayfin client.
+2. Remove the storage value from RAYFIN_FEATURE_FLAGS in scripts, CI, and env files. In rayfin/rayfin.yml keep services.storage.enabled: true and make sure services.data.enabled: true.
+3. Under rayfin/storage/, import blob, StorageObject, ContentTypes, bytes, kb, mb, gb, and the types BlobFolderOptions, ByteSize, and MimeGlob from @microsoft/rayfin-core instead of @microsoft/rayfin-core/experimental. Do not rename folder classes or change @blob({ name }) values.
+4. Replace ExtendableRayfinClient (from @microsoft/rayfin-client/experimental) and createStorageClient composition with RayfinClient.create({ baseUrl, publishableKey, auth: browserSession({ storage: true }), services: { data: dataService<AppSchema>(), storage: storageService<AppStorageSchema>() } }). Import browserSession from @microsoft/rayfin-auth, dataService from @microsoft/rayfin-data, and storageService from @microsoft/rayfin-storage. Remove schema: {} as AppSchema and the handwritten AppClient intersection; infer the type with ReturnType<typeof createAppClient> or typeof client.
+5. Replace every prefix option: upload(name, data, { prefix }) becomes upload(`${prefix}/${name}`, data); do the same for download and delete; list({ prefix, ...rest }) becomes list(prefix, rest). Paths must not start or end with '/', contain empty, '.', or '..' segments, or use backslashes.
+6. Remove any declaredSize, onProgress, userMetadata, per-call onConflict, download range or header overrides, and correlationId options.
+7. Run the build and typecheck, fix the remaining errors, and show me `npx rayfin up --dry-run` before deploying. Never pass --force.
+```

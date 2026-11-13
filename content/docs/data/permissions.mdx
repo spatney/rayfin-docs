@@ -1,6 +1,6 @@
 ---
 title: Permissions and row-level security
-description: Secure Rayfin entities with @role, @anonymous, and @authenticated, including row-level policies, field visibility, action-specific rules, and multi-tenant scoping.
+description: Secure Rayfin entities with @role, @anonymous, and @authenticated — row-level policies, dynamic claims, owner stamping, field visibility, the anonymous-access tenant setting, and multi-tenant scoping.
 ---
 
 Permissions are declared on the entity class itself, as decorators, and compiled into
@@ -23,9 +23,24 @@ Rayfin recognizes two built-in roles:
 - **`anonymous`** — public access, no authentication required.
 - **`authenticated`** — requires a valid signed-in session.
 
-> [!NOTE]
-> Anonymous access requires a tenant admin to enable the "Enable anonymous data access
-> for Fabric Apps" switch for your tenant.
+### Fabric tenant setting for anonymous access
+
+`@anonymous()` and `@role('anonymous', ...)` work only when your Fabric tenant allows
+anonymous data access. A Fabric tenant administrator must turn on the tenant setting
+**Enable anonymous data access for Fabric Apps (Preview)**, which is off by default. If the
+setting is limited to specific security groups, the app owner must be in one of them, because
+the app owner applies the schema. Changes to the setting can take some time to take effect.
+
+- Without the setting, applying a schema that grants the `anonymous` role any permission
+  fails with HTTP 403 and the error code `ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`. This
+  happens wherever the schema is applied, including `rayfin dev` and `rayfin up`.
+- Fabric also enforces the setting when it serves requests. If an admin later turns it off, or
+  removes the app owner from its scope, unauthenticated data requests fail with HTTP 401.
+- The setting covers the data API only. Public access to a static-hosted frontend is
+  configured separately.
+
+If your tenant does not allow anonymous data access, grant access with `@authenticated(...)`
+instead and sign users in from your frontend.
 
 ## `@role()`, and the `@anonymous()` / `@authenticated()` shorthands
 
@@ -104,6 +119,37 @@ autocompleted and renaming a field is a compile-time error everywhere it's refer
 | `claims.email` | The signed-in user's email address. |
 | `claims.role` | The signed-in user's role. |
 
+Apps that declare a dynamic auth claims provider (`udf.authClaims`) can also compare the
+claims it returns, such as `claims.accountId`. Code generation merges the provider's return
+type into `claims`, so app-defined claims are typed and autocompleted like the base claims.
+See [Dynamic auth claims](/docs/auth/dynamic-claims).
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript title="rayfin/data/Invoice.ts"
+import { entity, authenticated, uuid, text } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('read', {
+  policy: (claims, item) =>
+    claims.accountId.eq(item.account_id).and(claims.region.eq(item.region)),
+})
+export class Invoice {
+  @uuid() id!: string;
+  @text({ max: 64 }) account_id!: string;
+  @text({ max: 32 }) region!: string;
+  @text({ max: 200 }) title!: string;
+}
+```
+
+This policy compiles only after the provider in your functions project returns
+`{ accountId: string; region: string }` and code generation has written
+`rayfin/auth/claims.generated.d.ts`.
+
+> [!NOTE]
+> The backend must have dynamic auth claims enabled for your workspace's region. Until it
+> does, sign-in and refresh mint only the base claims and never call the provider, so test
+> policies that use app-defined claims against your deployed app.
+
 ### Operators
 
 | Operator | Example |
@@ -127,6 +173,49 @@ policy: (claims, item) =>
 policy: (claims, item) =>
   claims.role.eq('admin').or(claims.sub.eq(item.owner_id))
 ```
+
+## Stamp owner fields from functions
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Policies check ownership but do not fill in the owner field. When a
+[function](/docs/functions/writing-functions) creates rows for a policy such as
+`claims.sub.eq(item.user_id)`, set the owner field from `ctx.user.id` — the same caller subject
+id that the frontend session exposes as `session.user.id` and Data API Builder evaluates as
+`claims.sub`:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+import type { AppSchema } from '../../data/schema.js';
+
+const udf = new UserDataFunctions();
+
+udf.func(
+  'createTodo',
+  async (
+    title: string,
+    ctx: RayfinContext<AppSchema>,
+  ): Promise<{ id: string }> => {
+    const todo = await ctx.getDataClient().Todo.create({
+      title,
+      isCompleted: false,
+      createdAt: new Date(),
+      user_id: ctx.user.id,
+    });
+
+    return { id: todo.id };
+  },
+  [],
+);
+```
+
+Write through `ctx.getDataClient()` so Rayfin data permissions still run as the caller. Do
+not decode `ctx.accessToken` to derive ownership — it may not match the subject value Data API
+Builder evaluates for the data request. `ctx.user.id` is a pseudonymous identifier; treat it
+as personal data.
 
 ## Field-level permissions
 
@@ -202,11 +291,11 @@ export class SecureDocument {
 The same decorators secure storage folders declared with `@blob()` — see
 [Field types](/docs/data/field-types#blob-storage-folders). Applied to a `@blob()` class,
 Rayfin generates a storage policy instead of a database policy, using the same
-`policy` / `include` / `exclude` options:
+`policy` / `include` / `exclude` options. In 2.0, import `blob` and `StorageObject` from the
+`@microsoft/rayfin-core` root. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript title="rayfin/storage/ProfileImage.ts"
-import { authenticated } from '@microsoft/rayfin-core';
-import { blob, StorageObject } from '@microsoft/rayfin-core/experimental';
+import { authenticated, blob, StorageObject } from '@microsoft/rayfin-core';
 
 @blob({ name: 'avatars' })
 @authenticated('*', {
@@ -220,10 +309,13 @@ Storage folders require at least one authenticated permission rule; anonymous st
 ## Multi-tenant patterns
 
 Row-level policies compare claims to fields on the *same row* — there is no join in the
-policy itself, and only `claims.sub`, `claims.email`, and `claims.role` are available (see
-[Supported claims](#supported-claims) above). That covers per-user scoping directly, but
-scoping rows to a shared organization or team needs a stored `organization_id` plus a
-membership entity, since there is no organization or tenant claim to compare against.
+policy itself. With the base claims (`claims.sub`, `claims.email`, and `claims.role` — see
+[Supported claims](#supported-claims) above), per-user scoping works directly, but scoping
+rows to a shared organization or team needs a stored `organization_id` plus a membership
+entity, since there is no organization or tenant claim to compare against. In 2.0, an app can
+instead mint the caller's organization as a [dynamic auth claim](/docs/auth/dynamic-claims)
+and compare it in the policy, as in the `Invoice` example above.
+[New in 2.0](/docs/reference/changelog#rayfin-20)
 
 ### Per-user scoping
 
@@ -324,6 +416,9 @@ Layer an admin bypass onto either pattern the same way described in
   the warning at the top of this page).
 - Include a `user_id` (or similarly named) field on any entity scoped to the signed-in
   user, and pair it with a `policy` comparing it to `claims.sub`.
+- Set that owner field yourself when you create a row: from `session.user.id` in the
+  frontend, or from `ctx.user.id` in a function.
+  [New in 2.0](/docs/reference/changelog#rayfin-20)
 - Start restrictive and expand as needed — it's easier to widen a policy later than to
   discover data was over-exposed.
 - Use separate `@role()` / `@authenticated()` entries per action when field visibility
@@ -336,4 +431,15 @@ In my Rayfin project, add row-level security to the Todo entity in rayfin/data/T
 each signed-in user can only read and write their own rows. Use @authenticated('*') with
 a policy comparing claims.sub to item.user_id. Remove any implicit reliance on default
 permissions — the decorator must be explicit. Then apply the schema with `rayfin up`.
+```
+
+```prompt title="Create rows from a function with the caller as owner"
+In my Rayfin 2.0 project, add a function to rayfin/functions/src/function_app.ts that creates a
+Todo for the caller. Register it with udf.func('createTodo', async (title: string, ctx:
+RayfinContext<AppSchema>) => { ... }, []), importing UserDataFunctions and RayfinContext from
+@microsoft/fabric-user-data-functions and the AppSchema type from '../../data/schema.js'.
+Create the row with ctx.getDataClient().Todo.create({ title, isCompleted: false, createdAt:
+new Date(), user_id: ctx.user.id }) so the Todo entity's claims.sub.eq(item.user_id) policy
+matches the caller, and return { id: todo.id }. Do not decode ctx.accessToken. Then deploy
+with `rayfin up`.
 ```

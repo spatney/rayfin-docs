@@ -1,6 +1,6 @@
 ---
 title: rayfin login
-description: Sign in to Rayfin for Fabric operations, inspect status, sign out, and understand token cache storage.
+description: "Sign in to Rayfin for Fabric operations, inspect status, sign out, recover from network failures in WSL2 or dev containers, and understand token cache storage."
 ---
 
 Fabric operations such as `rayfin dev`, `rayfin up`, `rayfin secret`, and connector
@@ -13,7 +13,15 @@ explicitly when you need a tenant, a service principal, or a status check.
 npx rayfin login
 ```
 
-Opens the Microsoft Entra ID account picker.
+Opens the Microsoft Entra ID account picker in your browser.
+Before it opens the browser, `rayfin login` checks that Microsoft Entra ID
+(`login.microsoftonline.com` by default) is reachable, so a sign-in that cannot complete
+fails before you start it. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+After you sign in, the browser tab shows a Rayfin page — **Sign-in received**, or **Sign-in
+didn't complete** with the reason — and the terminal confirms the account, tenant, and token
+expiry. The pages follow your system's light or dark color scheme.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -23,6 +31,76 @@ Opens the Microsoft Entra ID account picker.
 | `-p, --client-secret <secret>` | — | Client secret for service principal auth. |
 | `--select` | no effect | Deprecated; the MSAL account picker is always shown. |
 | `--encryption-fallback-enabled` | `false` | Allow plaintext token storage when the OS keychain is unavailable. |
+
+## Device code sign-in
+
+When the CLI cannot open a browser sign-in, it falls back to device code sign-in and prints
+the code and URL to enter. Those prompts go to stderr, so `rayfin --json login` still writes a
+single JSON object to stdout. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+## When Microsoft Entra ID is unreachable
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+If the CLI cannot reach Microsoft Entra ID — the host name does not resolve, or the
+connection times out, is refused, or is reset — `rayfin login` stops with
+`Can't reach Microsoft Entra ID (<host>)` and prints recovery steps for the environment it
+runs in. It no longer retries with a device code or asks you to sign in a second time,
+because both need the same network path. Other commands that renew a cached sign-in also stop
+with this error instead of opening a new browser sign-in. With `--json`, the error object
+includes the steps in a `recovery` field.
+
+| Where the CLI runs | Recovery steps it prints |
+| --- | --- |
+| WSL2 | Set `networkingMode=nat` and `dnsTunneling=false` under `[wsl2]` in `%UserProfile%\.wslconfig`, run `wsl --shutdown`, reopen your terminal or container, and run `rayfin login` again. |
+| Dev container | Check that the container can reach the Entra ID host, then run `rayfin login` again. |
+| Anywhere else | Check your network, proxy, or VPN connection, then run `rayfin login` again. |
+
+If the browser sign-in finished but the CLI could not complete it, the message says so.
+
+## Sign in from WSL2 or a dev container
+
+In WSL2 and dev containers, `npx rayfin login` opens your browser on Windows and then requests
+a token from Microsoft Entra ID from inside WSL2 or the container. If that request cannot reach
+`login.microsoftonline.com`, sign-in fails with `Can't reach Microsoft Entra ID`.
+
+A common cause is a network client on Windows, such as Global Secure Access or a VPN, that
+answers DNS with temporary addresses that WSL2 cannot reach. This happens with mirrored
+networking (`networkingMode=mirrored`), and with DNS tunneling on WSL versions earlier than
+2.5.4. Later WSL versions turn off DNS tunneling automatically when the Global Secure Access
+client is installed, so the default NAT networking works.
+
+To fix it, add the following to `%UserProfile%\.wslconfig` on Windows:
+
+```ini title=".wslconfig"
+[wsl2]
+networkingMode=nat
+dnsTunneling=false
+```
+
+Run `wsl --shutdown` in PowerShell, reopen your terminal or dev container, and run
+`npx rayfin login` again. For background, see
+[Troubleshooting Windows Subsystem for Linux](https://learn.microsoft.com/windows/wsl/troubleshooting#common-issues).
+
+If you cannot change the WSL configuration, get a token with the Azure CLI on Windows:
+
+```powershell
+az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken --output tsv
+```
+
+Then set it in your WSL2 or container shell:
+
+```bash
+export RAYFIN_TOKEN="<token>"
+```
+
+The CLI does not refresh this token, so repeat these steps when it expires, typically after
+about an hour. This replaces sign-in only; if other commands cannot connect either, apply the
+WSL configuration change.
+
+Some organizations use Conditional Access to require a compliant network for sign-in. In that
+case Microsoft Entra ID can block sign-in from WSL2 even after the DNS change; contact your
+administrator.
 
 ## Service principal sign-in
 
@@ -71,6 +149,11 @@ Clears cached credentials and account hints.
 
 Set `RAYFIN_CONFIG_DIR` to relocate `~\.rayfin`.
 
+Concurrent CLI commands, or a command running next to the local dev server, no longer delete
+the saved sign-in when they read the token cache at the same time: a keychain check or cache
+read that fails because another process holds the file is retried briefly first.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 > [!WARNING]
 > Use `--encryption-fallback-enabled` or `RAYFIN_ENCRYPTION_FALLBACK_ENABLED=true` only
 > after a keychain error. It permits plaintext token cache storage.
@@ -79,4 +162,15 @@ Set `RAYFIN_CONFIG_DIR` to relocate `~\.rayfin`.
 Add a CI step that runs `npx rayfin login --service-principal --client-id $CLIENT_ID
 --client-secret $CLIENT_SECRET --tenant $TENANT_ID`, with all three values sourced from
 CI secrets, then run `npx rayfin login status` before deployment.
+```
+
+```prompt title="Fix rayfin login in WSL2"
+`npx rayfin login` fails in my WSL2 shell with "Can't reach Microsoft Entra ID". On Windows,
+add a [wsl2] section to %UserProfile%\.wslconfig with networkingMode=nat and
+dnsTunneling=false (keep any other settings already in the file), then tell me to run
+`wsl --shutdown` in PowerShell, reopen the terminal, and run `npx rayfin login` again. If I
+cannot change the WSL configuration, instead show me how to run
+`az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken --output tsv`
+on Windows and export the result as RAYFIN_TOKEN in the WSL2 shell, and remind me that the
+token is not refreshed and expires after about an hour.
 ```

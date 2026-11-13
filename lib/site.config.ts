@@ -23,8 +23,8 @@ export const siteConfig = {
   },
 
   /** Rayfin package versions this documentation set was written against. */
-  sdkVersion: '1.36.2',
-  cliVersion: '1.36.2',
+  sdkVersion: '2.0.0',
+  cliVersion: '2.0.0',
 
   /** npm package names documented by the SDK reference section. */
   packages: [
@@ -36,10 +36,12 @@ export const siteConfig = {
     '@microsoft/rayfin-embed-host',
     '@microsoft/rayfin-functions',
     '@microsoft/rayfin-storage',
+    '@microsoft/rayfin-telemetry',
     '@microsoft/rayfin-connectors',
     '@microsoft/rayfin-connector-fabric-graphql',
     '@microsoft/rayfin-connector-fabric-semanticmodel',
-    '@microsoft/rayfin-connector-kusto',
+    '@microsoft/rayfin-connector-fabric-iq-mcp',
+    '@microsoft/rayfin-connector-eventhouse',
     '@microsoft/rayfin-app-state-fabric',
     '@microsoft/rayfin-lib',
     '@microsoft/rayfin-cli',

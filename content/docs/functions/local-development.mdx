@@ -26,7 +26,8 @@ Both commands use `services.functions.path` from `rayfin.yml`, run the configure
 - An active Fabric deployment from at least one `npx rayfin up`.
 - Node.js 20 or later.
 - Azure Functions Core Tools on `PATH`.
-- A local functions `host.json` whose `extensionBundle.version` floor is `[4.49.0, 5.0.0)` when using Rayfin 1.36.2. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
+- `@microsoft/fabric-user-data-functions` at the same version as the CLI — `2.0.0` for Rayfin 2.0. See [Match the worker package to the CLI](/docs/functions#match-the-worker-package-to-the-cli). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+- A local functions `host.json` whose Preview `extensionBundle.version` range starts at 4.49.0 or later: `[4.49.0, 5.0.0)`. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
 
 `rayfin dev functions apply` checks Node and Core Tools. If Core Tools is missing and the session is interactive, it asks for consent before installing. In non-interactive mode it prints the commands to run and stops.
 
@@ -49,6 +50,10 @@ Common options:
 | `-y, --yes` | `false` | Run without interactive prompts. |
 
 The command does not start the frontend. Start Vite separately, or use `npx rayfin dev` to start both.
+
+## Route frontend calls to the local host
+
+The Vite adapter from `@microsoft/rayfin-local-dev` forwards the SDK's default `/functions/<name>/invoke` route to the local Functions host that `rayfin dev` or `rayfin dev functions apply` selected. When no local Functions host is configured, it forwards the route to the configured Fabric backend instead, so a frontend-only session still runs the deployed functions. [Changed in 2.0](/docs/reference/changelog#rayfin-20) When a configured local host is down, the adapter returns HTTP 502 rather than calling deployed code. See [Calling functions from your app](/docs/functions/calling-functions#route-local-vite-calls-through-the-adapter).
 
 ## What the CLI writes
 
@@ -118,7 +123,7 @@ Rayfin 1.36.1 and later condense Azure Functions host restart noise to a single 
 
 `rayfin functions init` writes the local functions `host.json` used by Azure Functions Core Tools. Existing apps are not migrated when the scaffold changes, and Core Tools can reuse a cached extension bundle within the configured version range without checking for a newer bundle.
 
-For Rayfin 1.36.2, update the functions package's local `host.json` to require the Fabric extension bundle floor `[4.49.0, 5.0.0)`. The package is under `services.functions.path` in `rayfin.yml`; the default is `rayfin/functions/`.
+Since Rayfin 1.36.2, the local `host.json` should require the Preview extension bundle floor `[4.49.0, 5.0.0)`. That bundle lets the local host sign you in when it has no terminal window, which matters when a coding agent starts `rayfin dev`. The package is under `services.functions.path` in `rayfin.yml`; the default is `rayfin/functions/`.
 
 ```json title="rayfin/functions/host.json"
 {
@@ -130,7 +135,13 @@ For Rayfin 1.36.2, update the functions package's local `host.json` to require t
 }
 ```
 
-This local file affects `npx rayfin dev` and `npx rayfin dev functions apply`. Deployment is unaffected: `rayfin up` substitutes the CLI's deploy-time `host.deploy.json`, which uses the stable `Microsoft.Azure.Functions.ExtensionBundle` range for the target Rayfin release.
+Keep the other settings in your `host.json` unchanged; Core Tools downloads a matching bundle the next time the host starts. This local file affects `npx rayfin dev` and `npx rayfin dev functions apply`. Deployment is unaffected: `rayfin up` substitutes the CLI's deploy-time `host.deploy.json`, which uses the stable `Microsoft.Azure.Functions.ExtensionBundle` range `[4.38.1, 5.0.0)`.
+
+Rayfin 2.0 checks this for you: before starting the host, `rayfin dev` and `rayfin dev functions apply` print a warning when `host.json` still allows a Preview bundle older than 4.49.0. They never edit the file. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```text
+rayfin/functions/host.json allows Functions extension bundles older than 4.49.0, which can fail local sign-in, for example when the Functions host has no terminal window. Set "version": "[4.49.0, 5.0.0)" under extensionBundle.
+```
 
 ## Troubleshoot local runs
 
@@ -154,12 +165,36 @@ Install the listed prerequisites. In an interactive terminal, rerun without `--j
 
 Open a new terminal so the installer-updated `PATH` is visible, then rerun the command.
 
-### HTTP 502 from `/.rayfin/api/<name>`
+### Local sign-in fails without a terminal window
 
-The Vite adapter is active, but the local Functions host is unavailable. Start or restart `npx rayfin dev functions apply` or `npx rayfin dev`. The adapter does not fall back to deployed function code while local routing is enabled; this applies to both the default `/functions/<name>/invoke` proxy and the legacy `/.rayfin/api/<name>` proxy.
+When a function declares an audience on its `RayfinContext` annotation, the local Functions host signs you in as it starts so it can provide `ctx.Tokens`. It reuses a cached sign-in when it can and prompts otherwise — for example, the first time it runs on a machine. A Preview extension bundle older than 4.49.0 cannot show that prompt when the host has no terminal window, such as when a coding agent runs `npx rayfin dev`: Core Tools logs `A window handle must be configured` and exits.
+
+Rayfin 2.0 recognizes this failure: `rayfin dev` and `rayfin dev functions apply` replace their generic hint with the fix and name the file to change. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```text
+The Functions host could not sign in without a terminal window. Set "version": "[4.49.0, 5.0.0)" under extensionBundle in rayfin/functions/host.json, then retry `rayfin dev functions apply`.
+```
+
+Update `host.json` as shown in [Upgrade an existing functions host.json](#upgrade-an-existing-functions-hostjson), then retry.
+
+### `The installed @microsoft/fabric-user-data-functions@<version> ... but this CLI writes '3.0'.`
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The functions package still uses a worker older than the CLI, so type generation stops before it writes any files. Run the `npm install @microsoft/fabric-user-data-functions@2.0.0` command the CLI prints, in the functions package, then restart the session. See [Match the worker package to the CLI](/docs/functions#match-the-worker-package-to-the-cli).
+
+### HTTP 502 from a local function call
+
+The Vite adapter has a local Functions host configured, but the host is unavailable. Start or restart `npx rayfin dev` or `npx rayfin dev functions apply`. The adapter does not fall back to deployed function code while local routing is configured; this applies to both the default `/functions/<name>/invoke` proxy and the `/.rayfin/api/<name>` proxy used with an explicit `functionsBaseUrl`. When no local host is configured at all, the default route goes to the deployed backend instead. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+### `Raw SQL access is not available when running locally`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Expected: functions that use `ctx.sql` run only when deployed, because the service issues the SQL ticket only for deployed invocations. Deploy with `npx rayfin up` and test against the deployed app. See [Raw SQL in functions](/docs/functions/raw-sql).
 
 ```prompt title="Run and debug Rayfin functions locally"
-In my Rayfin project, start a local Rayfin Functions debugging session.
+In my Rayfin 2.0 project, start a local Rayfin Functions debugging session.
 
-Confirm services.functions.enabled is true and services.functions.auth.type is application in rayfin/rayfin.yml. Confirm the app has been deployed at least once with `npx rayfin up`. If this project was created before Rayfin 1.36.2, update the local functions host.json extensionBundle.version floor to `[4.49.0, 5.0.0)` before starting Core Tools. Run `npx rayfin dev functions apply` with the default port and debugger unless I ask for different ports. If Azure Functions Core Tools is missing, ask for terminal consent through the CLI flow rather than installing silently. Verify that RAYFIN_PUBLIC_FUNCTIONS_URL is written to rayfin/.env, explain how the Vite frontend reaches local functions through the adapter's default `/functions/<name>/invoke` proxy, or through `/.rayfin/api/<name>` when `functionsBaseUrl` is set, and tell me how to attach VS Code using the "Functions: Attach" configuration.
+Confirm services.functions.enabled is true and services.functions.auth.type is application in rayfin/rayfin.yml. Confirm the app has been deployed at least once with `npx rayfin up`. Confirm the functions package depends on @microsoft/fabric-user-data-functions at the same exact version as the Rayfin CLI; if the CLI reports that the installed worker cannot read runtime metadata schema 3.0, run the `npm install` command it prints in the functions package. If the functions host.json allows a Preview extension bundle older than 4.49.0, set extensionBundle.version to `[4.49.0, 5.0.0)` before starting Core Tools. Run `npx rayfin dev functions apply` with the default port and debugger unless I ask for different ports. If Azure Functions Core Tools is missing, ask for terminal consent through the CLI flow rather than installing silently. Verify that RAYFIN_PUBLIC_FUNCTIONS_URL is written to rayfin/.env, explain how the Vite frontend reaches local functions through the adapter's default `/functions/<name>/invoke` proxy, or through `/.rayfin/api/<name>` when `functionsBaseUrl` is set, and tell me how to attach VS Code using the "Functions: Attach" configuration.
 ```

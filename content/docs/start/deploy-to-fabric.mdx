@@ -69,6 +69,8 @@ npx rayfin up
 
 On the first deploy, `rayfin up` resolves the workspace, checks capacity readiness, creates or reuses a Fabric item, syncs runtime settings, applies the data schema, builds and uploads static content, deploys Functions when enabled, and writes `rayfin/.deployments.json` plus `rayfin/.env`.
 
+When `services.storage.enabled` is true, `rayfin up` also applies the [Storage](/docs/storage) folder configuration. Storage no longer needs a feature flag. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 Override the Fabric item display name without changing `rayfin.yml`:
 
 ```bash
@@ -76,6 +78,25 @@ npx rayfin up --item-name my-team-app
 ```
 
 `--item-name` is new in Rayfin 1.36. [New in 1.36](/docs/reference/changelog#rayfin-136)
+
+## Redeploy unchanged static content
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`rayfin up` still runs the static `buildCommand` on every deploy, but it uploads the result only when something changed. When the built files, workspace, Fabric item, backend URL, and publishable key all match the last successful deploy, it skips the upload, keeps the current hosting URL, and explains the skip:
+
+```text
+ℹ️  Static app re-deployment skipped: the built static files, workspace, and backend are unchanged since the last successful deployment.
+   To upload it anyway, run `rayfin up --force-static-deploy`.
+```
+
+To upload the static content even though it is unchanged:
+
+```bash
+npx rayfin up --force-static-deploy
+```
+
+With `--json`, a skipped upload adds a `staticHostingSkip` object with `reason` and `hint` to the result.
 
 ## Prepare workspace capacity
 
@@ -134,7 +155,7 @@ npx rayfin logout
 ```
 
 ```prompt title="Deploy this Rayfin project to Fabric"
-Deploy my Rayfin project to Microsoft Fabric. Run `npx rayfin login` if needed, then `npx rayfin up`. If this is the first deploy and no workspace is recorded, choose an appropriate Fabric workspace or use `--capacity-id` if I provided one. After deployment, run `npx rayfin up status --json` and report `deployment.hostingUrl`, the workspace ID, and the Fabric item ID. Do not use `rayfin up --exclude-services staticHosting` as the normal development loop; use `npm run dev` for local iteration.
+Deploy my Rayfin project to Microsoft Fabric. Run `npx rayfin login` if needed, then `npx rayfin up`. If this is the first deploy and no workspace is recorded, choose an appropriate Fabric workspace or use `--capacity-id` if I provided one. After deployment, run `npx rayfin up status --json` and report `deployment.hostingUrl`, the workspace ID, and the Fabric item ID. If `rayfin up` reports that the static app re-deployment was skipped because nothing changed, treat that as success; rerun with `npx rayfin up --force-static-deploy` only if I ask for a fresh upload. Do not use `rayfin up --exclude-services staticHosting` as the normal development loop; use `npm run dev` for local iteration.
 ```
 
 ## Next

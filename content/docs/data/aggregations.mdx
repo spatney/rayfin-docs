@@ -53,9 +53,12 @@ type Row = {
 };
 ```
 
-`fields` carries the values you grouped on, deserialized to your declared entity types (a
-`@date()` column comes back as a `Date`, not an ISO string). `aggregations` carries one entry
-per alias.
+`fields` carries the values you grouped on, and `aggregations` carries one entry per alias.
+Grouped values follow the same rules as row results: the client no longer converts strings
+that look like dates or booleans, so a grouped `@date()` value is typed `Date | string` and a
+`@boolean()` value `boolean | 'true' | 'false'`. Convert them explicitly — for example
+`new Date(row.fields.shippedOn)` — before you use them as dates or booleans.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 `count` is always a `number`. `sum`, `avg`, `min`, and `max` are `number | null`, because SQL
 returns `NULL` over a group with no non-null values.
@@ -207,7 +210,8 @@ call .aggregate({ alias: { sum | avg | min | max | count: 'field' } }) and .exec
 operation per alias. Remember that every operation, including count, accepts numeric fields
 only, so do not try to count a text or uuid column. Type the result as
 { fields, aggregations }[], and treat sum/avg/min/max as number | null since SQL returns NULL
-over empty groups.
+over empty groups. In Rayfin 2.0 a grouped date field is typed Date | string, so convert it
+with new Date(...) before using it as a date.
 
 Do not combine .aggregate() with .select(), .orderBy(), .first() or .after() — those are
 mutually exclusive with grouped aggregation. Sort the returned array in TypeScript instead.

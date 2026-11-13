@@ -1,228 +1,417 @@
 ---
 title: "@microsoft/rayfin-client"
-description: RayfinClient construction, configuration options, and the client.data, client.auth, and client.functions facades, with exact signatures from the SDK.
-appliesTo: "@microsoft/rayfin-client >= 1.31"
+description: Build the Rayfin 2.0 application client with RayfinClient.create — auth adapters, service registration, runtime config, disposal, errors, and the 1.x migration map.
+appliesTo: "@microsoft/rayfin-client >= 2.0"
 ---
 
-`@microsoft/rayfin-client` is the main SDK entrypoint. It composes
-[`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth),
-[`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data), and
-[`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) behind a single
-configured client, built on the HTTP plumbing in
-[`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib).
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`@microsoft/rayfin-client` assembles one typed application client from an explicit
+authentication adapter and the services your app registers. Nothing is registered
+implicitly: `client.data`, `client.functions`, `client.connectors`, and `client.storage`
+exist only when you pass their adapters, and `client.auth` exists only with a
+browser-session adapter. The package depends only on
+[`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib); each capability lives in its
+own package.
 
 ## Installation
 
+Install the client together with the adapters your app uses, all at the same exact
+version:
+
 ```bash
-npm install @microsoft/rayfin-client
+npm install @microsoft/rayfin-client@2.0.0 @microsoft/rayfin-auth@2.0.0 @microsoft/rayfin-data@2.0.0
 ```
 
-## `RayfinClient`
+Add `@microsoft/rayfin-functions`, `@microsoft/rayfin-connectors`, or
+`@microsoft/rayfin-storage` (same version) when you register those services. In 1.x the
+client pulled in auth, data, and functions transitively; in 2.0 your `package.json` must
+declare them. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-Use `RayfinClient` in browser and frontend code — it includes the full `auth` facade.
+## Create a client
 
-```typescript
-class RayfinClient<
-  TSchema extends EntitySchema = Record<string, any>,
-  TFunctionsSchema extends FunctionsSchema = FunctionsSchema,
-> {
-  readonly data: TypedDataClients<TSchema>;
-  readonly auth: Auth;
-  readonly functions: TypedFunctionClients<TFunctionsSchema>;
-  constructor(config: RayfinClientConfig);
+Resolve deployment configuration first, then construct the client synchronously. This is
+the shape the 2.0 templates generate.
+
+```typescript title="src/services/rayfinClient.ts"
+import {
+  RayfinClient,
+  resolveRayfinConfig,
+  type RayfinRuntimeConfig,
+} from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
+import type { AppSchema } from '../../rayfin/data/schema';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types';
+
+function createClient(config: {
+  baseUrl: string;
+  publishableKey: string;
+  runtimeConfig?: RayfinRuntimeConfig;
+}) {
+  return RayfinClient.create({
+    ...config,
+    auth: browserSession({ storage: true }),
+    services: {
+      data: dataService<AppSchema>(),
+      functions: functionsService<AppFunctionsSchema>(),
+    },
+  });
+}
+
+export type AppClient = ReturnType<typeof createClient>;
+
+let client: AppClient | undefined;
+
+export async function getRayfinClient(): Promise<AppClient> {
+  if (client) return client;
+
+  const resolved = await resolveRayfinConfig({
+    apiUrl: import.meta.env.VITE_RAYFIN_API_URL,
+    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+    workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+    itemId: import.meta.env.VITE_FABRIC_ITEM_ID,
+    portalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
+  });
+
+  if (!resolved.baseUrl || !resolved.publishableKey) {
+    throw new Error('Missing Rayfin configuration: run `npm run dev` or `npx rayfin up` first.');
+  }
+
+  client = createClient({
+    baseUrl: resolved.baseUrl,
+    publishableKey: resolved.publishableKey,
+    runtimeConfig: resolved.runtimeConfig,
+  });
+  return client;
 }
 ```
 
-The first type parameter maps entity names to their classes, so `client.data.<Entity>` is
-fully typed. Pass your `AppSchema` (built from `rayfin/data/schema.ts`) and, if you use
-`@microsoft/rayfin-functions`, your `FunctionsSchema`.
+Derive the application client type with `ReturnType<typeof createClient>` rather than
+writing generics by hand: the type carries exactly the services you registered, each
+typed by the schema you passed to its adapter.
 
-```typescript title="src/services/rayfinClient.ts"
-import { RayfinClient } from '@microsoft/rayfin-client';
-import type { AppSchema } from '../../rayfin/data/schema';
+```typescript
+const rayfin = await getRayfinClient();
 
-const client = new RayfinClient<AppSchema>({
-  baseUrl: 'https://<your-app>-app.rayfin.windows.net/',
-  publishableKey: 'pk-commonSampleAppKey',
-});
-
-const todos = await client.data.Todo.select(['id', 'title']).execute();
+const todos = await rayfin.data.Todo.select(['id', 'title']).execute();
+const greeting = await rayfin.functions.greet.invoke({ name: 'Ada' });
+const session = rayfin.auth.getSession();
 ```
+
+## `RayfinClient.create`
+
+```typescript
+class RayfinClient {
+  static create<TAuth extends object | undefined, const TServices extends ClientServices = {}>(
+    config: RayfinClientConfig<TAuth, TServices>,
+  ): ComposedRayfinClient<TServices, TAuth>;
+
+  readonly runtimeConfig?: RayfinRuntimeConfig;
+  dispose(): void;
+}
+```
+
+`create` is synchronous. It validates the configuration, attaches authentication to one
+shared HTTP transport, then runs each service factory once. The returned object exposes
+each registered service as a read-only property, plus `auth` when the adapter provides a
+session API.
 
 ### `RayfinClientConfig`
 
-```typescript
-interface RayfinClientConfig extends ApiClientConfig {
-  authStorage?: AuthStorage | boolean;
-  persistSession?: boolean;
-  autoRefreshToken?: boolean;
-  multiTabSync?: boolean;
-  runtimeConfig?: RayfinRuntimeConfig;
-}
+| Option | Type | Description |
+| --- | --- | --- |
+| `baseUrl` | `string` | Required. Absolute deployed backend URL, or `''` for intentional same-origin routing through a dev-server proxy. |
+| `publishableKey` | `string` | Required and nonblank. The project's public `pk-*` key. |
+| `auth` | `ClientAuthFactory` | Required. `browserSession()` from `@microsoft/rayfin-auth`, `suppliedToken()` from this package, or a custom factory. |
+| `services` | `Record<string, ClientServiceFactory>` | Synchronous factories keyed by the namespace each exposes, such as `data` or `storage`. |
+| `runtimeConfig` | `RayfinRuntimeConfig` | Deployment values from `resolveRayfinConfig()`, exposed as `client.runtimeConfig`. |
+| `functionsBaseUrl` | `string` | Routes `client.functions.<name>.invoke()` to `${functionsBaseUrl}/api/<name>` for local debugging; data, connectors, and storage keep using `baseUrl`. |
+| `headers` | `Record<string, string>` | Extra headers sent with every request. |
+| `moniker` | `string` | Explicit `x-ms-workload-resource-moniker`, usually the Fabric item ID. Wins over `runtimeConfig.itemId`. |
+| `timeout` | `number` | Default request timeout in milliseconds. Default `30000`; functions and connector calls use their own longer defaults. |
+| `fetch` | `typeof globalThis.fetch` | Custom fetch implementation, for example one configured with a network proxy. |
 
-interface ApiClientConfig {
-  baseUrl: string;
-  publishableKey: string;
-  functionsBaseUrl?: string;
-  headers?: Record<string, string>;
-  moniker?: string;
-  timeout?: number;
-  fetch?: typeof globalThis.fetch;
-  getAccessToken?: () => string | null;
-  useProxy?: boolean;
-  onAuthExhausted?: () => void;
-  onRefreshNeeded?: () => Promise<void>;
+Options that 1.x accepted at the top level are rejected in 2.0
+[Removed in 2.0](/docs/reference/changelog#rayfin-20):
+
+| 1.x option | 2.0 replacement |
+| --- | --- |
+| `authStorage`, `persistSession`, `autoRefreshToken`, `multiTabSync` | Pass them to `browserSession({ storage, persistSession, autoRefreshToken, multiTabSync })`. `authStorage` is now `storage`. |
+| `accessToken`, `getAccessToken` | `suppliedToken({ accessToken })`. |
+| `onRefreshNeeded`, `onAuthExhausted` | A custom auth factory that registers them on the transport. |
+| `useProxy` | Remove it and set `baseUrl: ''`. Passing `useProxy` fails with `INVALID_CONFIG`; an omitted `baseUrl` fails with `MISSING_BASE_URL`. |
+
+## Choose authentication
+
+Select exactly one adapter per client.
+
+### Browser session
+
+`browserSession(options?)` from [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth)
+creates the familiar `Auth` session and exposes it as `client.auth`. Fabric sign-in helpers
+from `@microsoft/rayfin-auth-provider-fabric` take that same `client.auth`.
+
+```typescript
+import { browserSession } from '@microsoft/rayfin-auth';
+
+const auth = browserSession({
+  storage: true, // localStorage; false keeps the session in memory
+  persistSession: true,
+  autoRefreshToken: true,
+  multiTabSync: true,
+});
+```
+
+The adapter accepts the existing `AuthOptions`: `storage`, `storageKeyPrefix`,
+`persistSession`, `autoRefreshToken`, `multiTabSync`, and `refreshTimeout`.
+
+### Supplied token
+
+Use `suppliedToken(options?)` in Node.js scripts, servers, and workers that already hold a
+token. The client has no `auth` property and starts no browser session.
+
+```typescript title="scripts/report.ts"
+import { RayfinClient, suppliedToken } from '@microsoft/rayfin-client';
+import { dataService } from '@microsoft/rayfin-data';
+import type { AppSchema } from '../rayfin/data/schema';
+
+const client = RayfinClient.create({
+  baseUrl: process.env.RAYFIN_API_URL!,
+  publishableKey: process.env.RAYFIN_PUBLISHABLE_KEY!,
+  auth: suppliedToken({ accessToken: async () => process.env.RAYFIN_TOKEN ?? null }),
+  services: { data: dataService<AppSchema>() },
+});
+
+try {
+  const todos = await client.data.Todo.select(['id', 'title']).execute();
+  console.log(todos);
+} finally {
+  client.dispose();
 }
 ```
 
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `baseUrl` | `string` | — | Required. Absolute deployed backend URL, or `''` when a same-origin dev proxy forwards requests. |
-| `publishableKey` | `string` | — | Required. The project's public `pk-*` key. Safe for client-side code. |
-| `authStorage` | `AuthStorage \| boolean` | `true` (browser) | `true` uses `localStorage`; `false` disables persistence; or pass a custom storage implementation. |
-| `persistSession` | `boolean` | `true` | When `false`, auth uses an in-memory session only. |
-| `autoRefreshToken` | `boolean` | `true` | When `false`, the client does not schedule session expiration timers or refresh automatically after a `401`. |
-| `multiTabSync` | `boolean` | auto-detected | Controls the browser `StorageEvent` listener for session changes in other tabs. |
-| `runtimeConfig` | `RayfinRuntimeConfig` | none | Values exposed as `client.runtimeConfig`, typically from `resolveRayfinConfig()` or `VITE_FABRIC_*` defaults. |
-| `functionsBaseUrl` | `string` | none | Routes `client.functions.<name>.invoke()` to `${functionsBaseUrl}/api/<name>` for local Functions calls while data continues to use `baseUrl`. |
-| `headers` | `Record<string, string>` | none | Extra headers sent with every request. |
-| `moniker` | `string` | inferred from URL | Explicit `x-ms-workload-resource-moniker`, usually the Fabric item ID. |
-| `timeout` | `number` | `30000` | Default request timeout in milliseconds. |
-| `fetch` | `typeof globalThis.fetch` | global fetch | Custom fetch implementation, for example one configured with a network proxy. [New in 1.36](/docs/reference/changelog#rayfin-136) |
-| `getAccessToken` | `() => string \| null` | wired up by `Auth` | Overrides how the client obtains an access token for the `Authorization` header. |
-| `useProxy` | `boolean` | no effect | Deprecated. Set `baseUrl: ''` and configure a dev-server proxy instead. |
-| `onAuthExhausted` | `() => void` | wired up by `Auth` | Called when a retry after token refresh still returns `401`. |
-| `onRefreshNeeded` | `() => Promise<void>` | wired up by `Auth` | Called before a request is retried after a refreshable `401`. |
+`accessToken` is a string or a callback that returns the current token synchronously or
+asynchronously. The callback runs per request, so it can return a rotated token; a
+callback that throws rejects that request before it is sent. Omit `accessToken` only where
+the backend allows publishable-key-only calls. `suppliedToken` replaces
+`RayfinServerClient`, which 2.0 removed.
 
-`getAccessToken` and `onRefreshNeeded` are normally wired up automatically when `RayfinClient`
-constructs its internal `Auth` instance — most applications never set them directly.
+### Custom authentication factory
+
+An application-owned token provider that needs refresh hooks can attach them in its own
+synchronous factory. The factory receives the shared transport and returns `undefined`
+(no `client.auth`).
+
+```typescript
+import { RayfinClient, type ClientAuthFactory } from '@microsoft/rayfin-client';
+
+export function createExternalAuthClient(
+  baseUrl: string,
+  publishableKey: string,
+  getAccessToken: () => string | null,
+  onRefreshNeeded: () => Promise<void>,
+  onAuthExhausted: () => void,
+) {
+  const auth: ClientAuthFactory<undefined> = (http) => {
+    http.setAccessTokenCallback(getAccessToken);
+    http.setRefreshCallback(onRefreshNeeded);
+    http.setAuthExhaustedCallback(onAuthExhausted);
+    return undefined;
+  };
+
+  return RayfinClient.create({ baseUrl, publishableKey, auth });
+}
+```
+
+After a `401`, the transport awaits `onRefreshNeeded` and retries once with the current
+token; if the retry is also unauthorized, `onAuthExhausted` runs and the request fails.
+
+## Register services
+
+| Namespace | Adapter | Package |
+| --- | --- | --- |
+| `data` | `dataService<AppSchema>()` | [`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data) |
+| `functions` | `functionsService<AppFunctionsSchema>()` | [`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions) |
+| `connectors` | `connectorsService<AppConnectorsSchema>({ configs, runtime?, host? })` | [`@microsoft/rayfin-connectors`](/docs/reference/sdk/rayfin-connectors) |
+| `storage` | `storageService<AppStorageSchema>()` | [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage) |
+
+The schema type belongs on the adapter, not on the client. Import schema and capability
+types from their owning packages: `EntitySchema` and `TypedDataClients` from
+`@microsoft/rayfin-data`, `FunctionsSchema` from `@microsoft/rayfin-functions`, and
+`ConnectorsSchema` and `ConnectorConfig` from `@microsoft/rayfin-connectors`. The client
+package no longer re-exports them. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Every registered service shares the same authenticated transport, so transport options
+such as `headers`, `timeout`, `fetch`, and `functionsBaseUrl` apply to all of them.
+Registrations are fixed at construction: the service properties are read-only and cannot
+be replaced, deleted, or added later.
+
+These names are reserved and cannot be used as service keys: `auth`, `runtimeConfig`,
+`dispose`, `constructor`, `prototype`, `__proto__`, `then`, `catch`, `finally`, and the
+`Object.prototype` member names (`toString`, `valueOf`, `hasOwnProperty`,
+`isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString`, `__defineGetter__`,
+`__defineSetter__`, `__lookupGetter__`, `__lookupSetter__`). Symbol keys are not
+supported.
+
+### Write a custom service
+
+A service factory receives the authenticated `ApiClient` and a lifecycle object. Return
+the service synchronously, and register cleanup as soon as you acquire a resource. This
+replaces subclassing the client or reaching into a protected transport.
+
+```typescript title="src/services/healthService.ts"
+import {
+  RayfinClient,
+  suppliedToken,
+  type ClientServiceFactory,
+} from '@microsoft/rayfin-client';
+
+const healthService: ClientServiceFactory<{ check(): Promise<unknown> }> = (
+  http,
+  lifecycle,
+) => {
+  const timer = setInterval(() => {}, 60_000);
+  lifecycle.onDispose(() => clearInterval(timer));
+  return { check: () => http.get('/health') };
+};
+
+export function createClient(baseUrl: string, publishableKey: string) {
+  return RayfinClient.create({
+    baseUrl,
+    publishableKey,
+    auth: suppliedToken(),
+    services: { health: healthService },
+  });
+}
+```
+
+Factories and cleanup callbacks must be synchronous: a factory that returns a promise
+fails with `INVALID_SERVICE_FACTORY`, and a factory must not depend on sibling services
+during construction. The low-level factories — `createDataApi`, `createFunctionsApi`,
+`createConnectorsApi`, and `createStorageClient` — stay public for code that already owns
+an `ApiClient`.
 
 ## Runtime configuration
 
-`resolveRayfinConfig(defaults, options?)` loads `/rayfin.config.json` in a browser, overlays it on caller-supplied defaults, and returns `{ baseUrl, publishableKey, runtimeConfig }`. Deployed static apps use that runtime file so the same built bundle can move between environments; `rayfin dev` falls back to generated `VITE_*` values when the file is absent.
+`resolveRayfinConfig(defaults, options?)` loads `/rayfin.config.json` in a browser,
+overlays it on the defaults you pass, and returns `{ baseUrl, publishableKey,
+runtimeConfig }`. Deployed static apps get that file from `rayfin up`, so one built bundle
+can move between environments; during `rayfin dev` the file is absent and the `VITE_*`
+defaults apply. See [Deployment pipelines](/docs/deploy/deployment-pipelines).
 
-```typescript
-import { RayfinClient, resolveRayfinConfig } from '@microsoft/rayfin-client';
+| `RayfinRuntimeConfig` field | Description |
+| --- | --- |
+| `apiUrl` | Backend base URL. |
+| `publishableKey` | Publishable key. |
+| `workspaceId`, `itemId`, `portalUrl`, `tenantId` | Fabric coordinates for the auth broker. |
+| `applicationInsightsConnectionString` | Present when the app has [Observability](/docs/deploy/observability) enabled and a resource is allocated. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
-const resolved = await resolveRayfinConfig({
-  apiUrl: import.meta.env.VITE_RAYFIN_API_URL,
-  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
-  workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
-  itemId: import.meta.env.VITE_FABRIC_ITEM_ID,
-  portalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
-});
+Outside a browser there is no origin to resolve the relative path, so pass an absolute
+`configUrl` in `options` to load remote configuration; without it, Node.js callers get
+their defaults back. A configuration file that is present but unreachable, malformed, or
+incomplete throws `RayfinConfigError` with `CONFIG_LOAD_FAILED`, `CONFIG_PARSE_FAILED`,
+`CONFIG_INVALID`, or `CONFIG_INCOMPLETE`; only a genuinely absent file falls back to the
+defaults. Check the resolved `baseUrl` with `typeof` rather than truthiness if you rely on
+`''` for same-origin routing.
 
-const client = new RayfinClient({ ...resolved, authStorage: true });
-```
+## Dispose a client
 
-`loadRayfinConfig()` is an internal helper behind `resolveRayfinConfig()`. It returns `null` only when the config is genuinely absent; malformed or unreachable config throws `RayfinConfigError` with codes such as `CONFIG_LOAD_FAILED`, `CONFIG_PARSE_FAILED`, `CONFIG_INVALID`, or `CONFIG_INCOMPLETE`.
+Call `client.dispose()` when the scope that owns the client ends — at the end of a script,
+or when a test tears down. It closes the shared transport to new requests and runs
+registered cleanup in reverse order, including auth cleanup.
 
-## `RayfinServerClient`
-
-Use `RayfinServerClient` in Node.js and worker code. It skips the browser-coupled `Auth`
-module entirely; you supply the access token yourself.
-
-```typescript
-class RayfinServerClient<TSchema extends EntitySchema = Record<string, any>> {
-  readonly data: TypedDataClients<TSchema>;
-  constructor(config: RayfinServerClientConfig);
-}
-
-interface RayfinServerClientConfig extends Omit<ApiClientConfig, 'getAccessToken'> {
-  accessToken?: string | (() => string | null);
-  runtimeConfig?: RayfinRuntimeConfig;
-}
-```
-
-```typescript
-import { RayfinServerClient } from '@microsoft/rayfin-client';
-import type { AppSchema } from '../rayfin/data/schema';
-
-const client = new RayfinServerClient<AppSchema>({
-  baseUrl: process.env.RAYFIN_BASE_URL!,
-  publishableKey: process.env.RAYFIN_PUBLISHABLE_KEY!,
-  accessToken: () => incomingRequest.headers.authorization,
-});
-
-const todos = await client.data.Todo.select(['id', 'title']).execute();
-```
-
-`accessToken` accepts either a static string or a function, so a server can rotate the
-token it forwards per request (for example, from an incoming request's `Authorization`
-header).
-
-## The `data` facade
-
-Both client classes expose `.data`, typed as `TypedDataClients<TSchema>` — one
-`GraphQLEntityClient` per entry in `TSchema`, giving you `client.data.<Entity>.select()`,
-`.where()`, `.create()`, `.update()`, `.delete()`, and more. See
-[`@microsoft/rayfin-data`](/docs/reference/sdk/rayfin-data) for the full query and mutation
-API.
-
-## The `auth` facade
-
-`RayfinClient.auth` is a full `Auth` instance from `@microsoft/rayfin-auth` —
-`signOut`, `onSessionChange`, `getSession`, and the rest of the session lifecycle. Sign-in
-itself goes through [`@microsoft/rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric),
-which operates on this same `Auth` instance. See
-[`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) for the complete
-surface. `RayfinServerClient` has no `auth` property, since server code authenticates via
-the `accessToken` config option instead of a browser session.
-
-## The `functions` facade
-
-`RayfinClient.functions` is typed as `TypedFunctionClients<TFunctionsSchema>` — one
-`FunctionClient` per entry in your `FunctionsSchema`, each with a typed `invoke()`. See
-[`@microsoft/rayfin-functions`](/docs/reference/sdk/rayfin-functions).
-
-## The `connectors` facade
-
-`ConnectorsRayfinClient` is exported from the stable package root in 1.36. The `@microsoft/rayfin-client/experimental` subpath still re-exports it for existing apps, but new code should import from `@microsoft/rayfin-client`. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
-
-```typescript
-import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
-```
-
-The root package also re-exports connector types such as `ConnectorConfig`, `ConnectorMarker`, `ConnectorsSchema`, `OperationCatalog`, `OperationDef`, `TypedConnectorsApi`, and `TypedConnectorClient`.
+- New requests after disposal fail with `CLIENT_DISPOSED`; a request already sent can
+  still complete, but cannot retry.
+- New browser-session refreshes reject with `AUTH_DESTROYED`.
+- Disposal does not sign out, revoke tokens, delete stored credentials, or wait for
+  pending network or storage work.
 
 ## Errors
 
-Both client classes expose a static `errors` map, and instances throw these types instead
-of raw `Error`:
+Import the error classes by name. They are the canonical classes from
+`@microsoft/rayfin-lib`, so `instanceof` checks match errors thrown by every Rayfin
+package. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript
-class RayfinClientBase {
-  static readonly errors: {
-    SdkError: typeof SdkError;
-    AuthError: typeof AuthError;
-    NetworkError: typeof NetworkError;
-  };
-}
-```
-
-`SdkError` and `NetworkError` in this map are re-exported directly from
-`@microsoft/rayfin-lib`. `AuthError` is **not** — `@microsoft/rayfin-client` declares its
-own `AuthError extends SdkError`, distinct from (though structurally identical to)
-`@microsoft/rayfin-lib`'s own `AuthError` class. Import whichever one matches where the
-error actually originated; `instanceof` checks against the wrong package's `AuthError` will
-not match. Catch by branching on failure type:
-
-```typescript
-import { RayfinClient } from '@microsoft/rayfin-client';
+import { AuthError, NetworkError } from '@microsoft/rayfin-client';
 
 try {
-  await client.auth.refreshSession();
+  await rayfin.auth.refreshSession();
 } catch (error) {
-  if (error instanceof RayfinClient.errors.AuthError) {
-    console.error('Auth failed:', error.message);
-  } else if (error instanceof RayfinClient.errors.NetworkError) {
-    console.error('Network issue:', error.message);
+  if (error instanceof AuthError) {
+    console.error('Auth failed:', error.code, error.message);
+  } else if (error instanceof NetworkError) {
+    console.error('Network issue:', error.status, error.serverErrorCode);
+  } else {
+    throw error;
   }
 }
 ```
 
-> [!NOTE]
-> Newer releases of `@microsoft/rayfin-client` add `setDeprecationsSilenced()` and
-> `isDeprecationSilenced()` for quieting deprecation warnings in application code. See
-> [Deprecation warnings](/docs/reference/deprecations) for usage and the version this
-> applies to.
+`RayfinClient.errors` still maps `SdkError`, `AuthError`, and `NetworkError` to the same
+classes; 1.x's separate client-level `AuthError` class is gone.
+
+Construction and disposal failures throw `ClientCompositionError` (extends `SdkError`),
+which exposes `cause` and `cleanupErrors`:
+
+| Code | Meaning |
+| --- | --- |
+| `INVALID_CONFIG` | Configuration is missing, not an object, or contains the removed `useProxy` option. |
+| `MISSING_BASE_URL` | `baseUrl` is not a string. Use `''` for same-origin routing. |
+| `MISSING_PUBLISHABLE_KEY` | The publishable key is missing, not a string, or blank. |
+| `MISSING_AUTH_MODE` | The `auth` adapter is missing or not a function. |
+| `INVALID_AUTH_CONFIG` | Removed top-level auth options were combined with an adapter, or a supplied token is neither a string nor a provider. |
+| `INVALID_SERVICE_NAME` | A service uses a reserved name or a symbol key. |
+| `INVALID_SERVICE_FACTORY` | The service map or a factory is invalid, including an async factory. |
+| `INVALID_SERVICE_RESULT` | A factory returned `null`, a primitive, or a promise. |
+| `SERVICE_INITIALIZATION_FAILED` | A factory threw without an SDK error code of its own. |
+| `CLIENT_DISPOSE_FAILED` | Cleanup failed during `dispose()`; inspect `cleanupErrors`. |
+| `CLIENT_DISPOSED` | A request or cleanup registration was attempted after disposal. |
+| `AUTH_DESTROYED` | A browser-session refresh was attempted after auth teardown. |
+
+## Migrate from 1.x
+
+2.0 has no compatibility wrappers, and renaming a constructor is not enough: register
+each capability explicitly. [Removed in 2.0](/docs/reference/changelog#rayfin-20)
+
+| 1.x | 2.0 |
+| --- | --- |
+| `import RayfinClient from '@microsoft/rayfin-client'` | `import { RayfinClient } from '@microsoft/rayfin-client'` |
+| `new RayfinClient<AppSchema, AppFunctionsSchema>(config)` | `RayfinClient.create({ ...config, auth: browserSession(), services: { data: dataService<AppSchema>(), functions: functionsService<AppFunctionsSchema>() } })` |
+| `new ConnectorsRayfinClient<Data, Functions, Connectors>(config, runtime)` | Register `connectorsService<Connectors>({ configs, runtime })` beside the other services. See [Wiring connectors](/docs/connectors/client-setup). |
+| `ExtendableRayfinClient.create({ schema, services })` | Register synchronous factories in `services`, for example `storageService<AppStorageSchema>()`. |
+| `new RayfinServerClient({ accessToken })` | `RayfinClient.create({ ..., auth: suppliedToken({ accessToken }) })` |
+| Subclasses of `RayfinClientBase` | Custom service factories that receive the shared transport. |
+| `@microsoft/rayfin-client/experimental` | The main entry plus adapters from their owning packages. |
+| `RayfinClient<AppSchema>` as a type | `ReturnType<typeof createClient>` from your own factory. |
+| Local Node script using `ConnectorsRayfinClient` without `host` | `connectorsService({ ..., host: { type: 'cli' } })`; the 2.0 adapter defaults to `standalone`, including in Node.js. |
+
+Call sites on `client.data`, `client.functions`, `client.connectors`, `client.storage`, and
+`client.auth` keep their APIs. See the [2.0 upgrade steps](/docs/reference/changelog#upgrade-to-20)
+for the rest of the release.
+
+```prompt title="Migrate my Rayfin client construction to 2.0"
+Migrate the Rayfin client in my project to Rayfin 2.0. Read
+https://rayfin.ai/docs/reference/sdk/rayfin-client.md first.
+
+1. Find every `new RayfinClient(`, `new ConnectorsRayfinClient(`, `new RayfinServerClient(`,
+   `ExtendableRayfinClient`, default import of @microsoft/rayfin-client, and import from
+   @microsoft/rayfin-client/experimental.
+2. Replace each with a synchronous factory that calls `RayfinClient.create`: use
+   `browserSession()` from @microsoft/rayfin-auth in browser code (move authStorage to
+   `storage`, and persistSession/autoRefreshToken/multiTabSync into browserSession options),
+   or `suppliedToken({ accessToken })` from @microsoft/rayfin-client in Node.js code.
+3. Register only the services the app uses: dataService<AppSchema>() from
+   @microsoft/rayfin-data, functionsService<AppFunctionsSchema>() from
+   @microsoft/rayfin-functions, connectorsService<AppConnectorsSchema>({ configs, runtime })
+   from @microsoft/rayfin-connectors, storageService<AppStorageSchema>() from
+   @microsoft/rayfin-storage. Remove useProxy and use baseUrl: '' if it relied on it.
+4. Replace `RayfinClient<...>` type annotations with
+   `export type AppClient = ReturnType<typeof createClient>`, and import EntitySchema,
+   FunctionsSchema, and ConnectorsSchema from their owning packages.
+5. Add @microsoft/rayfin-auth, @microsoft/rayfin-data, and any other adapter packages to
+   package.json at the same exact version as @microsoft/rayfin-client, run npm install, then
+   run the type-check, tests, and build and fix what they report.
+```

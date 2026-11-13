@@ -29,6 +29,16 @@ The `kind` value determines the docs area exposed through `--module`. Guide and
 TypeScript SDK docs load by default. Host docs are available when installed and selected
 with `--module host`.
 
+### Guide fallback
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+When the project has no `@microsoft/rayfin-guide` package installed, `rayfin docs` serves
+the general guides from the copy installed with the CLI, so `docs list --module guide`
+and guide searches work in a project that only has the CLI. A guide package installed in
+the project takes precedence, and SDK and API docs still come only from the project's own
+packages.
+
 
 ## `docs list`
 
@@ -73,8 +83,8 @@ resolved consistently.
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `-i, --id <id>` | — | Doc ID, for example `guide:guide/data/overview.md`. |
-| `-p, --path <path>` | — | Doc path, for example `guide/data/overview.md`. |
+| `-i, --id <id>` | — | Doc ID, for example `rayfin-guide:data/overview.md`. |
+| `-p, --path <path>` | — | Doc path, for example `data/overview.md`. |
 | `-s, --symbol <name>` | — | Symbol name, for example `RayfinClient` or `'@entity'`. |
 | `-m, --module <name>` | all modules | With `--symbol`, limit to `guide`, `host`, or `ts-sdk`. |
 | `-l, --limit <n>` | all matches | With `--symbol`, max sections, 1–50. |
@@ -91,6 +101,11 @@ npx rayfin docs discover "functions secrets"
 ```
 
 Finds Rayfin packages by free-form query when the installed corpus is missing the topic.
+
+`discover` recommends `@microsoft/rayfin-storage` and `@microsoft/rayfin-telemetry` in
+2.0. Packages marked experimental in the catalog are never recommended, but their docs
+are indexed once you install them.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -135,7 +150,9 @@ offline terminal workflow, or when a script needs `--json`/`--lean` output and e
 }
 ```
 
-Run your agent from the project root so the server resolves that project's packages.
+Run your agent from the project root so the server resolves that project's packages. Like
+the CLI, the 2.0 MCP server serves the general guides from its own installation when the
+project has no guide package. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 | MCP tool | Closest CLI command |
 | --- | --- |

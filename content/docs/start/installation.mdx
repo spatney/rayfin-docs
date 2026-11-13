@@ -1,27 +1,37 @@
 ---
 title: Installation
-description: Install Node.js 20+ and the Rayfin project CLI workflow before scaffolding or deploying a Fabric app.
+description: Install a supported Node.js and TypeScript, the project-local Rayfin CLI, and the Rayfin packages your app composes into its client before you build a Fabric app.
 ---
 
 Install the tools Rayfin needs on your development machine, then use the project-local CLI that `npm create @microsoft/rayfin@latest` installs. Rayfin deploys managed backends to Microsoft Fabric; the development loop also signs in to Fabric because `npm run dev` runs `rayfin dev`.
 
 ## Prerequisites
 
-| Tool | Minimum | Why Rayfin needs it |
+| Tool | Version | Why Rayfin needs it |
 | --- | --- | --- |
-| Node.js | 20 | Runs npm, Vite, the Rayfin CLI, and TypeScript tooling. |
+| Node.js | 20, 22, or 24. The default Universal App template needs 22.13 or later. [Changed in 2.0](/docs/reference/changelog#rayfin-20) | Runs npm, Vite, the Rayfin CLI, and TypeScript tooling. |
 | npm | Bundled with Node.js | Installs templates and project dependencies. |
+| TypeScript | 5.7.2 or later 5.x, or 6.0.2 or later 6.x, installed in the project. [Changed in 2.0](/docs/reference/changelog#rayfin-20) | Compiles your entity classes into the data schema. Templates install a supported version. |
 | Fabric account | Workspace access | `rayfin login`, `rayfin dev`, and `rayfin up` target Microsoft Fabric. |
+
+## Choose a Node.js version
+
+`@microsoft/rayfin-cli` and `@microsoft/create-rayfin` declare the Node.js 20, 22, and 24 release lines in their `engines` field. Other release lines, such as Node.js 26, are not in that range, and npm prints an `EBADENGINE` warning when it installs Rayfin on them.
+
+The default Universal App template (`blankapp`) also declares `"node": ">=22.13.0"` in its root `package.json`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Install Node.js 24. It satisfies both requirements.
 
 ## Windows
 
-Install the latest LTS Node.js:
+The winget `OpenJS.NodeJS.LTS` package follows the newest LTS line, which can be newer than Rayfin supports. List its versions and install the newest one that starts with `24.`:
 
 ```powershell
-winget install -e --id OpenJS.NodeJS.LTS
+winget show --id OpenJS.NodeJS.LTS --versions
+winget install -e --id OpenJS.NodeJS.LTS --version <24.x.y>
 ```
 
-Open a new terminal and verify Node.js and npm:
+Open a new terminal and verify Node.js and npm. `node --version` should print a version that starts with `v24.`:
 
 ```powershell
 node --version
@@ -46,11 +56,15 @@ npm --version
 
 ## Linux (Ubuntu or Debian)
 
-Install the latest LTS Node.js from the [official Node.js download instructions](https://nodejs.org/en/download), then verify it:
+Install Node.js 24 from the [official Node.js download instructions](https://nodejs.org/en/download), then verify it:
 
 ```bash
 node --version
 npm --version
+```
+
+```prompt title="Prepare this machine for Rayfin"
+Check this machine for Node.js 20, 22, or 24; Rayfin's CLI declares only those release lines, and the default Universal App template needs 22.13 or later. If Node.js is missing or on another release line, install Node.js 24 for the current operating system: on Windows, run `winget show --id OpenJS.NodeJS.LTS --versions` and install the newest 24.x version with `winget install -e --id OpenJS.NodeJS.LTS --version <that version>`; on macOS, run `brew install node@24` and add it to PATH. Then run `node --version`, `npm --version`, and `npx rayfin --version` inside my Rayfin project. If `npx rayfin login` fails because there is no OS keychain, retry with `--encryption-fallback-enabled` and explain that the fallback is for this development environment only.
 ```
 
 ## Install the Rayfin CLI in a project
@@ -73,6 +87,59 @@ npm install --save-dev @microsoft/rayfin-cli
 npx rayfin init
 npx rayfin --help
 ```
+
+When `rayfin init` sets up an existing project without a template, it installs `@microsoft/rayfin-core`, `@microsoft/rayfin-auth`, `@microsoft/rayfin-data`, and `@microsoft/rayfin-client`, plus `@microsoft/rayfin-cli` as a dev dependency. [Changed in 2.0](/docs/reference/changelog#rayfin-20) It also prepares the `rayfin/` schema project and your `dev` script; see [Project structure](/docs/start/project-structure#rayfinpackagejson) and [Develop locally](/docs/start/develop-locally#switch-an-existing-project-to-rayfin-dev).
+
+## Install the packages your client uses
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+In Rayfin 2.0, `@microsoft/rayfin-client` depends only on `@microsoft/rayfin-lib`. It no longer installs auth, data, Functions, or connector support for you, so your `package.json` must declare the package behind each capability the app composes into its client:
+
+| Package | Install it when your app |
+| --- | --- |
+| `@microsoft/rayfin-client` | Creates a client with `RayfinClient.create`. |
+| `@microsoft/rayfin-auth` | Signs users in from the browser with `browserSession()`. |
+| `@microsoft/rayfin-auth-provider-fabric` | Uses Fabric SSO for that sign-in. |
+| `@microsoft/rayfin-core` | Declares entities with decorators such as `@entity()`. |
+| `@microsoft/rayfin-data` | Registers `dataService()` to read and write entities. |
+| `@microsoft/rayfin-functions` | Registers `functionsService()` to call Functions. |
+| `@microsoft/rayfin-connectors` | Registers `connectorsService()` to call connectors. |
+| `@microsoft/rayfin-storage` | Registers `storageService()` to upload and download files. |
+
+For example, a browser app that signs in with Fabric SSO and uses data and Functions:
+
+```bash
+npm install @microsoft/rayfin-client @microsoft/rayfin-auth @microsoft/rayfin-auth-provider-fabric @microsoft/rayfin-core @microsoft/rayfin-data @microsoft/rayfin-functions
+```
+
+The bundled templates already declare the packages they use, and Vite templates add `@microsoft/rayfin-local-dev` for the [development adapter](/docs/start/develop-locally#route-sdk-calls-through-the-vite-adapter). See [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client#create-a-client) for how the packages compose into one client.
+
+## Install a supported TypeScript version
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Rayfin 2.0 compiles your schema with the project's own TypeScript and supports `^5.7.2 || ^6.0.2`. TypeScript 5.0 through 5.7.1, 6.0.0, 6.0.1, prereleases, and 7.x are not supported, and `@microsoft/rayfin-core` declares the same range as a peer dependency. Install a supported compiler in the package that owns your schema, which is the app root for a flat template.
+
+To stay on TypeScript 5:
+
+```bash
+npm install --save-dev "typescript@^5.7.2"
+```
+
+To use TypeScript 6:
+
+```bash
+npm install --save-dev "typescript@^6.0.2"
+```
+
+If npm reports `ERESOLVE` for the TypeScript peer, or schema compilation stops with `Unsupported TypeScript <version> at <path>`, compare the installed compiler with the supported range:
+
+```bash
+npm ls typescript @microsoft/rayfin-core
+```
+
+Update the conflicting TypeScript dependency and commit the updated manifest and lockfile. Do not use `--force` or `--legacy-peer-deps` to get past the conflict; Rayfin still rejects an unsupported compiler.
 
 ## Sign in to Fabric
 
@@ -103,8 +170,21 @@ npx rayfin --version
 
 If the CLI reports a static-hosting or auth SDK compatibility problem during deploy, update all `@microsoft/rayfin-*` packages together.
 
-```prompt title="Prepare this machine for Rayfin"
-Check this machine for Node.js 20 or later. Install or update missing prerequisites for the current operating system, then run `node --version`, `npm --version`, and `npx rayfin --version` inside my Rayfin project. If `npx rayfin login` fails because there is no OS keychain, retry with `--encryption-fallback-enabled` and explain that the fallback is for this development environment only.
+## Upgrade a 1.x project to 2.0
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`npm update` stays inside the major version that your `package.json` ranges allow, so it keeps a 1.x project on 1.x. To move to 2.0, install every `@microsoft/rayfin-*` package the project declares at 2.0 in one command, add the capability packages the 2.0 client no longer installs, and check TypeScript. For a project created from the 1.36 `todoapp` template:
+
+```bash
+npm install @microsoft/rayfin-client@^2.0.0 @microsoft/rayfin-auth@^2.0.0 @microsoft/rayfin-auth-provider-fabric@^2.0.0 @microsoft/rayfin-core@^2.0.0 @microsoft/rayfin-data@^2.0.0 @microsoft/rayfin-functions@^2.0.0 @microsoft/rayfin-local-dev@^2.0.0
+npm install --save-dev @microsoft/rayfin-cli@^2.0.0
+```
+
+Then replace `new RayfinClient(...)` with `RayfinClient.create(...)`; see [Migrate from 1.x](/docs/reference/sdk/rayfin-client#migrate-from-1x). If the project's TypeScript is older than 5.7.2, [update it](#install-a-supported-typescript-version) too.
+
+```prompt title="Upgrade this Rayfin project to Rayfin 2.0"
+Upgrade my Rayfin project from 1.x to Rayfin 2.0. Find every @microsoft/rayfin-* dependency in package.json and in each npm workspace package, then install all of them at ^2.0.0 in one npm install command per package.json so the versions stay in lockstep, keeping @microsoft/rayfin-cli as a dev dependency. In 2.0, @microsoft/rayfin-client depends only on @microsoft/rayfin-lib and the client is created with RayfinClient.create({ baseUrl, publishableKey, auth, services }), so add @microsoft/rayfin-auth if the code signs users in with browserSession(), @microsoft/rayfin-data if it reads or writes entities through the client, @microsoft/rayfin-functions if it calls Functions, @microsoft/rayfin-connectors if it calls connectors, and @microsoft/rayfin-storage if it uses Storage. Make sure the package that owns the schema has TypeScript ^5.7.2 or ^6.0.2 (check with `npm ls typescript @microsoft/rayfin-core`) and never bypass peer checks with --force or --legacy-peer-deps. Run `npx rayfin --version` and the project's build script, then list every remaining `new RayfinClient(` call that still needs migrating.
 ```
 
 ## Next

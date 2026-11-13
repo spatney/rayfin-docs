@@ -36,7 +36,13 @@ These apply to `@uuid()`, `@text()`, `@int()`, `@decimal()`, `@boolean()`, `@dat
 | `unique` | `boolean` | `false` | Adds a unique constraint on the column. |
 | `default` | matches the field's type | — | Default value used when the field is omitted on create. |
 | `column` | `string` | property name | SQL column name to create or map for this field. The GraphQL field stays the TypeScript property name. [New in 1.36](/docs/reference/changelog#rayfin-136) |
-| `description` | `string` | — | Free-text note attached to the field's metadata. Does not change validation or the database column. |
+
+The property name itself becomes the GraphQL field name, so it must match
+`/^[_A-Za-z][_0-9A-Za-z]*$/` and must not start with `__`; the CLI rejects names such as
+`$price` before it applies the schema. Use `column` to keep a column whose name is not a valid
+GraphQL name — `@decimal({ column: '$price' }) price!: number;`. See
+[Property names](/docs/data/modeling#property-names).
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript title="rayfin/data/Todo.ts"
 import { entity, authenticated, uuid, text, boolean, date } from '@microsoft/rayfin-core';
@@ -50,8 +56,7 @@ export class Todo {
   @text({ max: 200 }) title!: string;
   @boolean({ default: false }) isCompleted!: boolean;
   @date() createdAt!: Date;
-  @text({ max: 128, description: 'Owning user, set from claims.sub on create' })
-  user_id!: string;
+  @text({ max: 128 }) user_id!: string;
 }
 ```
 
@@ -66,6 +71,31 @@ constraint and the generated types.
 @text() title!: string;                    // required
 @text({ optional: true }) notes?: string;   // nullable — both the option and `?` are present
 ```
+
+A nullable column can come back from a query as `null`, but `?` only models `undefined` in
+TypeScript, and field decorators do not accept a `| null` property type (TypeScript reports
+`TS1240`). Check optional values with `== null` or `??`, which handle both. An optional
+`@text()` field returns `null` when no value is stored, while a required `@text()` field
+returns an empty string for empty text.
+
+## Values you read back
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Query and mutation results carry values as they arrive over the wire, and the client no longer
+converts strings that look like dates or booleans. A returned `@date()` field is typed
+`Date | string` and a `@boolean()` field `boolean | 'true' | 'false'`. Convert them before you
+call date methods or rely on truthiness:
+
+```typescript title="src/lib/rayfinValues.ts"
+export const toDate = (value: Date | string): Date =>
+  value instanceof Date ? value : new Date(value);
+
+export const toBoolean = (value: boolean | 'true' | 'false'): boolean =>
+  value === true || value === 'true';
+```
+
+See [Result types follow your selection](/docs/data/querying#result-types-follow-your-selection).
 
 ## Text length and MSSQL
 
@@ -118,20 +148,22 @@ object as the first argument instead, followed by the allowed values:
 
 ## `@blob()` storage folders
 
-> [!WARNING]
-> Storage is experimental and is not available in every Fabric region or tenant. See
-> [Storage](/docs/storage) before you depend on it.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-`@blob()` is a **class-level** decorator for experimental Rayfin Storage folders. Import it from `@microsoft/rayfin-core/experimental`, not from the stable package root.
+`@blob()` is a **class-level** decorator that declares a Rayfin Storage folder. Storage is
+generally available in 2.0 for deployed Fabric backends, and `@blob()`, `StorageObject`, the
+size helpers, and `ContentTypes` are exported from the `@microsoft/rayfin-core` root. The 1.x
+import path `@microsoft/rayfin-core/experimental` no longer resolves — move those imports to the
+package root. See [Storage](/docs/storage) for enabling and using it.
 
 ```typescript title="rayfin/storage/ProfileImage.ts"
-import { role } from '@microsoft/rayfin-core';
 import {
   blob,
+  role,
   ContentTypes,
   mb,
   StorageObject,
-} from '@microsoft/rayfin-core/experimental';
+} from '@microsoft/rayfin-core';
 
 @blob({
   name: 'profile-images',

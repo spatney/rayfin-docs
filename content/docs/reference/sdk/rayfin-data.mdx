@@ -1,14 +1,13 @@
 ---
 title: "@microsoft/rayfin-data"
-description: The fluent GraphQL query and mutation API behind client.data — select, where, orderBy, pagination, and CRUD methods with exact signatures.
+description: The fluent GraphQL query and mutation API behind client.data — dataService, select/where/orderBy, pagination, projected result types, and CRUD methods with exact signatures.
 appliesTo: "@microsoft/rayfin-data >= 1.31"
 ---
 
-`@microsoft/rayfin-data` is the DAB-compliant data client that powers `client.data` on both
-[`RayfinClient` and `RayfinServerClient`](/docs/reference/sdk/rayfin-client). Most
-applications never import it directly — you get a typed instance for free from
-`@microsoft/rayfin-client` — but it is a standalone package if you want the query builder
-without the rest of the SDK.
+`@microsoft/rayfin-data` is the Data API Builder–compliant data client behind `client.data`.
+Register it on a [`RayfinClient`](/docs/reference/sdk/rayfin-client) with
+`dataService<AppSchema>()`. It is also a standalone package if you already own an `ApiClient`
+and want only the query builder.
 
 ## Installation
 
@@ -16,9 +15,49 @@ without the rest of the SDK.
 npm install @microsoft/rayfin-data
 ```
 
-## Getting a client
+The 2.0 client package no longer depends on `@microsoft/rayfin-data`, so install it in every
+app that uses `client.data`. The package now also publishes an `exports` map: import from
+`@microsoft/rayfin-data`, because deep imports into `dist/` no longer resolve.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-`createDataApi` builds the typed proxy that `client.data` is:
+## Register the data service
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript
+function dataService<TSchema extends EntitySchema>(): ClientServiceFactory<
+  DataApi<TSchema> & TypedDataClients<TSchema>
+>;
+```
+
+`dataService<TSchema>()` registers the typed data client on `RayfinClient.create`, using the
+client's shared authenticated transport. It keeps `/graphql` routing, typed selections,
+relationships, the id conveniences, and Data API Builder mutation behavior.
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import type { AppSchema } from '../../rayfin/data/schema';
+
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+  },
+});
+
+export type AppClient = typeof rayfinClient;
+```
+
+Import `EntitySchema` and `TypedDataClients` from `@microsoft/rayfin-data` — the 2.0 client
+package no longer re-exports them. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+### `createDataApi`
+
+Use `createDataApi` directly when you already own an `ApiClient`:
 
 ```typescript
 function createDataApi<TSchema extends EntitySchema>(
@@ -31,46 +70,140 @@ type TypedDataClients<TSchema extends EntitySchema> = {
 ```
 
 Each property on the result — `dataApi.Todo`, `dataApi.Note`, and so on — is a
-`GraphQLEntityClient` scoped to that entity.
+`GraphQLEntityClient` scoped to that entity. Its methods are bound to the entity client, so a
+detached call such as `const { findById } = client.data.Todo` keeps working.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Query chain
 
-`GraphQLEntityClient` exposes both direct query methods and a fluent builder
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`GraphQLEntityClient` exposes direct query methods and the entry points of a fluent builder
 (`GraphQLQueryBuilder`) for composing `select` / `where` / `orderBy` / pagination:
 
 ```typescript
 class GraphQLEntityClient<TSchema extends EntitySchema, TEntity extends keyof TSchema> {
-  select<TFields extends FieldSelection<TSchema[TEntity]>>(fields: TFields): GraphQLQueryBuilder<TSchema, TEntity>;
+  select<const TFields extends FieldSelection<TSchema[TEntity]>>(
+    fields: TFields,
+  ): RowQueryBuilder<
+    TSchema,
+    TEntity,
+    GraphQLQueryBuilder<TSchema, TEntity>,
+    SelectionResult<TSchema[TEntity], TFields>
+  >;
   where(conditions: FilterInput<TSchema[TEntity]>): GraphQLQueryBuilder<TSchema, TEntity>;
-  orderBy(order: OrderByInput<TSchema[TEntity]>): GraphQLQueryBuilder<TSchema, TEntity>;
-  first(count: number): GraphQLQueryBuilder<TSchema, TEntity>;
-  findMany(filter?: FilterInput<TSchema[TEntity]>): Promise<TSchema[TEntity][]>;
-  findFirst(filter?: FilterInput<TSchema[TEntity]>): Promise<TSchema[TEntity] | null>;
-  findById(id: string): Promise<TSchema[TEntity] | null>;
-  create(input: CreateInput<TSchema[TEntity]>): Promise<TSchema[TEntity]>;
-  update(where: WhereUniqueInput<TSchema[TEntity]>, data: UpdateInput<TSchema[TEntity]>): Promise<TSchema[TEntity]>;
-  delete(where: WhereUniqueInput<TSchema[TEntity]>): Promise<TSchema[TEntity]>;
-  upsert(
-    where: WhereUniqueInput<TSchema[TEntity]>,
-    create: CreateInput<TSchema[TEntity]>,
-    update: UpdateInput<TSchema[TEntity]>,
-  ): Promise<TSchema[TEntity]>;
+  orderBy(order: OrderByInput<TSchema[TEntity]>): RowQueryBuilder<TSchema, TEntity>;
+  first(count: number): RowQueryBuilder<TSchema, TEntity>;
+  findMany(
+    filter?: FilterInput<TSchema[TEntity]>,
+  ): Promise<GraphQLResponseValue<PrimaryKeyOnly<TSchema[TEntity]>>[]>;
+  findFirst(
+    filter?: FilterInput<TSchema[TEntity]>,
+  ): Promise<GraphQLResponseValue<PrimaryKeyOnly<TSchema[TEntity]>> | null>;
+  findById(id: string): Promise<GraphQLResponseValue<PrimaryKeyOnly<TSchema[TEntity]>> | null>;
 }
 
-class GraphQLQueryBuilder<TSchema extends EntitySchema, TEntity extends keyof TSchema> {
-  select<TFields extends FieldSelection<TSchema[TEntity]>>(fields: TFields): this;
-  where(conditions: FilterInput<TSchema[TEntity]>): this;
-  orderBy(order: OrderByInput<TSchema[TEntity]>): this;
-  first(count: number): this;
-  after(cursor: string): this;
-  execute(): Promise<TSchema[TEntity][]>;
-  executePaginated(): Promise<PagedResult<TSchema[TEntity]>>;
-  findFirst(): Promise<TSchema[TEntity] | null>;
-}
+type RowQueryBuilder<
+  TSchema extends EntitySchema,
+  TEntity extends keyof TSchema,
+  TSelf = GraphQLQueryBuilder<TSchema, TEntity>,
+  TResult = GraphQLResponseValue<PrimaryKeyOnly<TSchema[TEntity]>>,
+> = ProjectionSafeMembers<TSelf> & {
+  select<const TFields extends FieldSelection<TSchema[TEntity]>>(
+    fields: TFields,
+  ): RowQueryBuilder<TSchema, TEntity, TSelf, SelectionResult<TSchema[TEntity], TFields>>;
+  where(conditions: FilterInput<TSchema[TEntity]>): RowQueryBuilder<TSchema, TEntity, TSelf, TResult>;
+  orderBy(order: OrderByInput<TSchema[TEntity]>): RowQueryBuilder<TSchema, TEntity, TSelf, TResult>;
+  first(count: number): RowQueryBuilder<TSchema, TEntity, TSelf, TResult>;
+  after(cursor: string): RowQueryBuilder<TSchema, TEntity, TSelf, TResult>;
+  execute(): Promise<TResult[]>;
+  executePaginated(): Promise<PagedResult<TResult>>;
+  findFirst(): Promise<TResult | null>;
+};
 ```
 
-`select`, `where`, `orderBy`, and `first` return `this`, so they chain in any order before a
-terminal call to `execute()`, `executePaginated()`, or `findFirst()`.
+- `select()` returns a new, independently selected builder that copies the current filters,
+  ordering, and pagination. Calling it again on that builder replaces the selection. Always use
+  the builder it returns — ignoring the return value leaves the original builder's selection
+  unchanged.
+- `where()`, `orderBy()`, `first()`, and `after()` update the builder they are called on and
+  return it, so they chain in any order before a terminal `execute()`, `executePaginated()`,
+  or `findFirst()`.
+- A `RowQueryBuilder` has no `groupBy()` or `aggregate()`. Once a query is shaped for rows, it
+  cannot turn into an aggregation — see [Aggregation](#aggregation).
+
+### Projected result types
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+GraphQL responses contain only the fields a query requests, and the inferred TypeScript result
+matches that projection:
+
+```typescript
+const note = await client.data.Note.select(['id', 'title']).findFirst();
+// Type: { id: string; title: string } | null
+
+note?.title; // valid
+note?.content; // type error: content was not selected
+```
+
+| Query shape | Result type |
+| --- | --- |
+| `.select(fields).where(...).orderBy(...).first(...).after(...).execute()` | `SelectionResult[]` |
+| `.where(...).select(fields).execute()` | `SelectionResult[]` |
+| `.orderBy(...).select(fields).execute()` | `SelectionResult[]` |
+| `.first(...).select(fields).findFirst()` | `SelectionResult \| null` |
+| `.after(...).select(fields).executePaginated()` | `PagedResult<SelectionResult>` |
+| No `.select()` | Primary-key-only result |
+| `.select([])` | Primary-key-only result |
+| Widened or dynamic field array | Possible selected fields are optional |
+
+- A literal field array produces exact types. If the array is widened or built dynamically,
+  every field it could contain is optional, because the compiler cannot know which entries
+  are present at runtime. Alternatives inside a fixed tuple, such as
+  `[condition ? 'email' : 'displayName']`, are optional for the same reason.
+- Selected `Date` fields are typed `Date | string`, and boolean fields
+  `boolean | 'true' | 'false'`, because responses can carry wire strings. The client does not
+  infer a field's type from a string's contents — 1.x converted ISO-looking strings and
+  `"true"`/`"false"` automatically, 2.0 does not — so convert explicitly before using date
+  methods or boolean truthiness.
+- The client preserves the nullability declared in the schema type. An optional `?` models
+  `undefined`, not a returned `null`. Required `@text()` fields return an empty string for
+  empty text; optional `@text({ optional: true })` fields preserve `null`.
+- Queries without `.select()` request only the entity's primary key, so `findMany()`,
+  `findFirst()`, and `findById()` return primary-key-only results. In 1.x these methods were
+  typed as returning the full entity, but the runtime already requested only `id`.
+
+### Complete API result contract
+
+| API | Result typing |
+| --- | --- |
+| `select(fields)` | Starts or replaces an exact projection; a widened field array produces optional possible fields |
+| `where(filter)` | Preserves the active projection; primary-key-only when no selection exists |
+| `orderBy(order)` | Preserves the active projection; primary-key-only when no selection exists |
+| `first(count)` | Preserves the active projection; primary-key-only when no selection exists |
+| `after(cursor)` | Preserves the active projection; primary-key-only when no selection exists |
+| `execute()` | `ActiveResult[]` |
+| `executePaginated()` | `PagedResult<ActiveResult>` |
+| Fluent `findFirst()` | `ActiveResult \| null` |
+| Entity `findMany(filter?)` | `PrimaryKeyOnly<Entity>[]` |
+| Entity `findFirst(filter?)` | `PrimaryKeyOnly<Entity> \| null` |
+| Entity `findById(id)` | `PrimaryKeyOnly<Entity> \| null` |
+| `create(input)` | Primary key plus eligible input fields |
+| `update(where, input)` | Primary key plus eligible input fields |
+| `delete(where)` | `PrimaryKeyOnly<Entity>` |
+| `upsert(where, create, update)` | Union of create and update result shapes |
+| `groupBy(fields).aggregate(spec)` | Grouped aggregation result; cannot be combined with row selection |
+| `aggregate(spec)` | Ungrouped aggregation result; cannot be combined with row selection |
+
+`ActiveResult` is the projection of the most recent `select()`, or the primary key when there
+is none. To read a full row by id, select the fields and filter on the key:
+
+```typescript
+const todo = await client.data.Todo.select(['id', 'title', 'isCompleted', 'createdAt'])
+  .where({ id: { eq: todoId } })
+  .findFirst();
+```
 
 ### Reading records
 
@@ -78,11 +211,11 @@ terminal call to `execute()`, `executePaginated()`, or `findFirst()`.
 const notes = await client.data.Note.select([
   'id',
   'title',
-  'isPinned',
-  'notebook.id',      // dot-path — only valid inside select(), not where()
+  'createdAt',
+  'notebook.id',      // relationship path — only valid inside select(), not where()
   'notebook.name',
 ])
-  .where({ isPinned: { eq: true } })
+  .where({ notebook_id: { eq: notebookId } })
   .orderBy({ createdAt: 'desc' })
   .execute();
 ```
@@ -92,6 +225,35 @@ const notes = await client.data.Note.select([
 records exist. Use it only for queries you know are bounded (a `.where()` filter that can
 match at most a handful of rows, or a small lookup table); for anything that can grow
 unbounded, use pagination instead.
+
+### Relationship paths
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript
+type FieldSelection<T> = readonly NestedFieldPath<T>[];
+// NestedFieldPath<T>: 'field' | 'relationship.field' | 'collection[].field'
+```
+
+`select()` accepts scalar field names and one level of relationship path:
+
+- An object (`@one()`) relationship uses a plain dot: `'notebook.name'` returns a `notebook`
+  object that contains only `name`.
+- An array (`@many()`) relationship needs the `[]` marker: `'notes[].title'` emits
+  `notes { items { title } }` and returns a `notes` array whose elements contain only
+  `title`, preserving the array's readonly-ness and nullability.
+- Cardinality comes from the marker, not the name. An object relationship keeps the unmarked
+  form even when its name looks plural.
+- Each path is one relationship followed by one scalar leaf. Bare relationship roots,
+  object-valued leaves, and deeper paths are not selectable; `Date` and `Buffer` fields are
+  scalar leaves.
+- Malformed paths and conflicting selections — one relationship selected both with and
+  without `[]`, or both bare and with a leaf — throw before the request is sent.
+
+To migrate 1.x code, add `[]` to every array-relationship path (`'notes.title'` becomes
+`'notes[].title'`) and replace bare relationships with explicit scalar leaves. Object paths are
+unchanged. Connector entities keep their own selection syntax, whose cardinality comes from
+registered metadata.
 
 ### Filtering — `FilterInput`
 
@@ -116,7 +278,9 @@ type FilterInput<T> = {
 | relationship field | `{ isNull: boolean }` (only when the relationship itself is optional) |
 
 Filter by the foreign key column (`customer_id`), not a relationship dot-path
-(`customer.id`) — dot-paths are select-only. See
+(`customer.id`) — dot-paths are select-only. A relationship `{ isNull }` filter is rewritten to
+its `{property}_id` foreign key only when the same query selects a field under that
+relationship; otherwise filter the declared foreign key directly. See
 [Known limitations](/docs/reference/known-limitations).
 
 ### Sorting — `OrderByInput`
@@ -156,11 +320,13 @@ const page = await client.data.Note.select(['id', 'title'])
 
 // page.items, page.hasNextPage, page.endCursor
 
-const nextPage = await client.data.Note.select(['id', 'title'])
-  .orderBy({ createdAt: 'desc' })
-  .first(25)
-  .after(page.endCursor!)
-  .executePaginated();
+if (page.hasNextPage && page.endCursor) {
+  const nextPage = await client.data.Note.select(['id', 'title'])
+    .orderBy({ createdAt: 'desc' })
+    .first(25)
+    .after(page.endCursor)
+    .executePaginated();
+}
 ```
 
 Keep `select`, `where`, and `orderBy` identical across pages — a stable sort order is
@@ -210,10 +376,14 @@ type AggregationOpValue<F> = F | { field: F; having?: NumberFilterInput; distinc
 type AggregationSpec<T> = Record<string, ExactlyOne<AggregationOps<T>>>;
 
 interface GroupedAggregationRow<T, G extends readonly ScalarKeys<T>[], S> {
-  fields: Pick<T, G[number] & keyof T>;
+  fields: GraphQLResponseValue<Pick<T, G[number] & keyof T>>;
   aggregations: { [K in Extract<keyof S, string>]: AggregationResult<S[K]> };
 }
 ```
+
+`fields` is wrapped in `GraphQLResponseValue` in 2.0, so a grouped `Date` field is typed
+`Date | string` and a grouped boolean `boolean | 'true' | 'false'`, matching row results.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 `AggregationResult` is `number` for `count` and `number | null` for `sum` / `avg` / `min` /
 `max`, because DAB emits those as nullable and SQL returns `NULL` over an empty or all-null
@@ -243,67 +413,136 @@ compile-time errors as well.
 
 ## Mutations
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 ```typescript
-// MutationInput<T> turns @one() relationship fields into "full object or { id }" inputs
+class GraphQLEntityClient<TSchema extends EntitySchema, TEntity extends keyof TSchema> {
+  create<const TInput extends CreateInput<TSchema[TEntity]>>(
+    input: TInput,
+    ..._invalidKeys: NoExtraKeys<TInput, CreateInput<TSchema[TEntity]>>
+  ): Promise<MutationResult<TSchema[TEntity], TInput>>;
+  update<const TInput extends UpdateInput<TSchema[TEntity]>>(
+    where: WhereUniqueInput<TSchema[TEntity]>,
+    data: TInput,
+    ..._invalidKeys: NoExtraKeys<TInput, UpdateInput<TSchema[TEntity]>>
+  ): Promise<MutationResult<TSchema[TEntity], TInput>>;
+  delete(
+    where: WhereUniqueInput<TSchema[TEntity]>,
+  ): Promise<GraphQLResponseValue<PrimaryKeyOnly<TSchema[TEntity]>>>;
+  upsert<
+    const TCreate extends CreateInput<TSchema[TEntity]>,
+    const TUpdate extends UpdateInput<TSchema[TEntity]>,
+  >(
+    where: WhereUniqueInput<TSchema[TEntity]>,
+    create: TCreate,
+    update: TUpdate,
+    ..._invalidKeys: [
+      ...NoExtraKeys<TCreate, CreateInput<TSchema[TEntity]>>,
+      ...NoExtraKeys<TUpdate, UpdateInput<TSchema[TEntity]>>,
+    ]
+  ): Promise<MutationResult<TSchema[TEntity], TCreate> | MutationResult<TSchema[TEntity], TUpdate>>;
+}
+
+// MutationInput<T> turns @one() relationship fields into keyed references
 type CreateInput<T> = Omit<MutationInput<T>, 'id'> & Partial<Pick<T, 'id'>>;
 type UpdateInput<T> = Partial<MutationInput<T>>;
 type WhereUniqueInput<T> = { id: string };
 ```
 
-`create`, `update`, `delete`, and `upsert` are available both directly on
-`GraphQLEntityClient` (`client.data.Todo.create(...)`) and do not go through the query
-builder.
+`NoExtraKeys` rejects fields the entity does not declare at compile time. Each method also has
+overloads that accept `ComputedMutationInput` for objects built with computed keys such as
+`{ [field]: value }`; when TypeScript widens a computed key, the result guarantees only the
+primary key (plus the required fields, for `create`), and other possible fields need optional
+guards. `create`, `update`, `delete`, and `upsert` run immediately — they do not go through the
+query builder.
+
+| Operation | Result type |
+| --- | --- |
+| `create(input)` | Primary key plus eligible input fields |
+| `update(where, input)` | Primary key plus eligible input fields |
+| `delete(where)` | Primary key only |
+| `upsert(where, create, update)` | Union of the create and update result shapes |
+
+Eligible input fields are scalars (including `null`), `Date` values, and relationship values
+that include their key. Fields passed as optional or possibly `undefined` stay optional in the
+result, and returned values are wrapped in `GraphQLResponseValue` like query results. A
+relationship input comes back as an object holding only its key, as lowercase `id`. Non-`Date`
+objects without an `id` or `Id`, including `Buffer`, are omitted from the mutation and its
+result. Array inputs are serialized, but the result does not guarantee them.
 
 ```typescript
 const todo = await client.data.Todo.create({
   title: 'Write docs',
   isCompleted: false,
+  createdAt: new Date(),
   user_id: session.user.id,
 });
+// todo: { id: string; title: string; isCompleted: boolean | 'true' | 'false';
+//         createdAt: Date | string; user_id: string }
 
 await client.data.Todo.update({ id: todo.id }, { isCompleted: true });
 
-await client.data.Todo.delete({ id: todo.id });
+await client.data.Todo.delete({ id: todo.id }); // { id: string }
 
 await client.data.Todo.upsert(
   { id: todo.id },
-  { title: 'Write docs', isCompleted: false, user_id: session.user.id },
+  {
+    title: 'Write docs',
+    isCompleted: false,
+    createdAt: new Date(),
+    user_id: session.user.id,
+  },
   { isCompleted: true },
 );
 ```
 
 ### Relationship fields in mutations
 
-A `@one()` relationship field in `create` / `update` input accepts either the full related
-object or an object with just the primary key — both produce the same GraphQL mutation. The
-primary-key-only form is the recommended shorthand:
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+A `@one()` relationship field in `create` / `update` input takes a reference that includes a
+concrete primary key: `{ id }` alone, a full entity, or a projected object containing the key
+plus some known fields. Only the key is serialized, into the `{property}_id` foreign key, and
+only the key is returned:
 
 ```typescript
-// ID-only shorthand (recommended)
+// Key-only reference (recommended)
 await client.data.Note.create({
   title: 'Meeting notes',
+  content: 'Discussion points',
+  createdAt: new Date(),
+  user_id: session.user.id,
   notebook: { id: notebookId },
 });
 
-// Full object also works
-await client.data.Note.create({
-  title: 'Meeting notes',
-  notebook: notebookObject,
-});
+// A projected object also works — only notebook.id is written
+const notebook = await client.data.Notebook.select(['id', 'name'])
+  .where({ id: { eq: notebookId } })
+  .findFirst();
+
+if (notebook) {
+  await client.data.Note.create({
+    title: 'Weekly summary',
+    content: 'Status for the week',
+    createdAt: new Date(),
+    user_id: session.user.id,
+    notebook,
+  });
+}
 ```
 
-`@many()` array fields are accepted on mutation input but ignored at runtime — manage the
-inverse side by updating the child entity's `@one()` field instead.
-
-## Field selection and types
-
-```typescript
-type FieldSelection<T> = readonly (CleanEntityKeys<T> | NestedFieldPath<T>)[];
-```
-
-`select()` accepts entity field names and one level of relationship dot-paths
-(`'notebook.name'`). Nested queries beyond the second level are not supported — see
-[Known limitations](/docs/reference/known-limitations).
+- Each keyed reference must supply its own non-nullish `id` (or `Id`). The client rejects a
+  relationship object whose key is `null` or `undefined` before it sends the mutation; a
+  present lowercase `id` takes priority over `Id`.
+- Relationship values cannot be `null`. Omit an optional relationship (leave it `undefined`)
+  instead. The client sends a foreign key scalar set to `null` as-is, so a schema whose
+  foreign key type includes `null` can clear the relationship with `{ category_id: null }`;
+  nullable scalar and `Date` columns accept `null` the same way.
+- You can pass the foreign key scalar (`notebook_id`) instead of the relationship object when
+  the entity declares it. Pass one or the other — if both are supplied for the same
+  relationship, the client sends a single foreign key value and the relationship object wins.
+- Manage one-to-many relationships through the child entity. The serializer does not expand a
+  `@many()` array into child writes, so do not pass relationship arrays as mutation input.
 
 ## Advanced: the underlying GraphQL client
 
@@ -322,3 +561,27 @@ class GraphQLClient {
 Most applications should use `client.data.<Entity>` rather than calling `GraphQLClient`
 directly — it exists so `GraphQLEntityClient` and `GraphQLQueryBuilder` have a raw
 query/mutation execution primitive to build on.
+
+### Subclass `GraphQLQueryBuilder`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Because `select()` and the fluent `findFirst()` construct a new builder, a custom
+`GraphQLQueryBuilder` subclass is constructed normally for each selection, so private fields
+and bound methods stay valid. A subclass whose constructor takes extra arguments must override
+`createSelectionClone()`, and a subclass with mutable state can override
+`copySelectionStateTo()`.
+
+Custom members are hidden on row-query builders unless the subclass lists their keys in a
+`readonly projectionSafeMembers` declaration. Only opt in members that never expose a builder
+or reset its result type, including through promises, unions, or overloads:
+
+```typescript
+class LabeledQuery extends GraphQLQueryBuilder<AppSchema, 'Todo'> {
+  declare readonly projectionSafeMembers: 'label';
+
+  label(): string {
+    return 'todos';
+  }
+}
+```

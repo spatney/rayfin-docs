@@ -1,0 +1,310 @@
+---
+title: "@microsoft/rayfin-connector-fabric-iq-mcp"
+description: Marker, runtime, conversation wrapper, tool calls, task progress, errors, and protocol helpers for the Fabric IQ MCP connector (fabriciqmcp).
+appliesTo: "@microsoft/rayfin-connector-fabric-iq-mcp >= 2.0"
+---
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`@microsoft/rayfin-connector-fabric-iq-mcp` provides the marker and runtime for
+`fabriciqmcp` connectors, and a conversation wrapper over `client.connectors.<name>`. The
+package owns MCP discovery, protocol framing, tool calls, long-running tasks, progress, and
+cancellation; it reuses the client's authenticated Rayfin connector route and accepts no
+bearer tokens or MCP endpoints. See [Fabric IQ](/docs/connectors/fabric-iq) for guide-level
+usage.
+
+> [!NOTE]
+> `rayfin connector add --type fabriciqmcp` authors this connector, but authoring support
+> does not guarantee that the Fabric IQ backend adapter is enabled in your Fabric
+> environment. `rayfin connector search` does not discover it; add it by name.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-connector-fabric-iq-mcp@2.0.0 @microsoft/rayfin-connectors@2.0.0
+```
+
+`rayfin connector add --type fabriciqmcp --name <name>` prints this pinned command. Keep both
+packages on the same version as every other `@microsoft/rayfin-*` package.
+
+## Marker
+
+```typescript
+interface FabricIqMcpOperations {
+  readonly executeQuery: {
+    readonly __input?: FabricIqMcpTypeBInput;
+    readonly __output?: FabricIqMcpTypeBOutput;
+  };
+}
+
+type FabricIqMcp<TOperation extends keyof FabricIqMcpOperations = 'executeQuery'> = {
+  readonly __client?: {
+    [K in TOperation]: (
+      input: FabricIqMcpTypeBInput,
+      options?: FabricIqMcpInvokeOptions,
+    ) => Promise<FabricIqMcpTypeBOutput>;
+  };
+  readonly __operations?: Pick<FabricIqMcpOperations, TOperation>;
+};
+
+interface FabricIqMcpInvokeOptions extends InvokeOptions {
+  readonly signal?: AbortSignal;
+  readonly timeout?: number;
+}
+```
+
+`connector add` generates `export type <Name>Schema = FabricIqMcp<'executeQuery'>;` and a
+`connectorConfig` of `{ connector: 'fabriciqmcp' }`. `client.connectors.<name>` exposes only
+`executeQuery`, which carries one MCP request; use the wrapper below rather than calling it
+directly.
+
+## Runtime
+
+```typescript
+function fabricIqMcp(): ConnectorRuntime;
+```
+
+`fabricIqMcp()` registers `invoke` middleware for `executeQuery` that validates the request
+envelope and sends it over Rayfin's authenticated raw connector route, with no automatic
+retry or replay after a `401`. Register it in the `runtime` map of `connectorsService` under
+the connector's name whenever you use the wrapper, so cancellation and deadlines reach the
+HTTP transport.
+
+## Conversation wrapper
+
+```typescript
+function createFabricIqMcpConnectorClient(
+  connector: {
+    executeQuery(
+      input: FabricIqMcpTypeBInput,
+      options?: FabricIqMcpInvokeOptions,
+    ): Promise<FabricIqMcpTypeBOutput>;
+  },
+  options?: FabricIqMcpOptions,
+): FabricIqMcpConnectorClient;
+
+class FabricIqMcpConnectorClient {
+  ask(
+    artifactId: string,
+    messages: readonly FabricIqMcpChatMessage[],
+    options?: FabricIqMcpToolCallOptions,
+  ): Promise<FabricIqMcpChatResponse>;
+  callTool(
+    name: string,
+    args?: Record<string, unknown>,
+    options?: FabricIqMcpToolCallOptions,
+  ): Promise<FabricIqMcpToolResult>;
+  listTools(): Promise<FabricIqMcpToolsResult>;
+  close(): Promise<void>;
+}
+
+type FabricIqMcpOptions = {
+  readonly headers?: FabricIqMcpTypeBHeaders;
+  readonly clientInfo?: Implementation;
+};
+```
+
+Pass `client.connectors.<name>` as `connector`. `clientInfo` is the MCP implementation
+metadata sent with every request; it defaults to `{ name: 'rayfin-fabric-iq-mcp', version: '1' }`.
+`headers` adds optional public headers; see [Protocol contract](#protocol-contract). The
+wrapper connects lazily on the first call.
+
+| Method | Behavior |
+| --- | --- |
+| `ask(artifactId, messages, options?)` | Calls the `AskPowerBI` tool with `artifactId`, the last user message as `query`, and every earlier entry, unsummarized, as JSON `context`. Resolves to `{ result, messages }`, where `messages` is a new history snapshot ending with the assistant's result. |
+| `callTool(name, args?, options?)` | Calls any discovered tool with schema-valid arguments, such as extra `AskPowerBI` arguments like `reportUrl`. You supply the complete context. |
+| `listTools()` | Lists the discovered tools without selecting an artifact. |
+| `close()` | Cancels active tasks and closes the connection. Later calls throw `FabricIqMcpAdapterError`. |
+
+`ask` validates its input before any request and throws `FabricIqMcpAdapterError` when
+`artifactId` is not a nonzero GUID, when `messages` is empty or does not end with a nonempty
+user message, when an entry is not user text or an assistant text or tool result, or when the
+question exceeds 20,000 characters or the serialized context exceeds 40,000 characters. It
+never truncates history.
+
+## Conversation types
+
+```typescript
+type FabricIqMcpChatMessage =
+  | { readonly role: 'user'; readonly content: string }
+  | { readonly role: 'assistant'; readonly content: string | FabricIqMcpToolResult };
+
+interface FabricIqMcpChatResponse {
+  readonly result: FabricIqMcpToolResult;
+  readonly messages: readonly FabricIqMcpChatMessage[];
+}
+
+interface FabricIqMcpToolResult {
+  readonly content: readonly unknown[];
+  readonly isError?: boolean;
+  readonly structuredContent?: unknown;
+  readonly _meta?: unknown;
+  readonly resources?: unknown;
+}
+
+interface FabricIqMcpToolsResult {
+  readonly tools: readonly {
+    readonly name: string;
+    readonly [key: string]: unknown;
+  }[];
+}
+```
+
+`content` holds MCP content blocks; a text answer is `{ type: 'text', text }`. A tool failure
+resolves with `isError: true` rather than throwing. Earlier assistant entries keep their
+complete tool results, including structured content and resources.
+
+## Progress and cancellation
+
+```typescript
+interface FabricIqMcpToolCallOptions {
+  readonly signal?: AbortSignal;
+  readonly onTaskUpdate?: (update: FabricIqMcpTaskUpdate) => void;
+  readonly onTaskProgress?: (progress: FabricIqMcpTaskProgress) => void;
+}
+
+interface FabricIqMcpTaskUpdate {
+  readonly status: string;
+}
+
+interface FabricIqMcpTaskProgress extends FabricIqMcpTaskUpdate {
+  readonly statusMessage?: string;
+  readonly progress?: string | number;
+  readonly total?: number;
+  readonly message?: string;
+  readonly messages?: readonly string[];
+  readonly events?: readonly FabricIqMcpProgressEvent[];
+}
+
+interface FabricIqMcpProgressEvent {
+  readonly [key: string]: unknown;
+  readonly type: string;
+  readonly header?: string;
+  readonly description?: string;
+  readonly functionName?: string;
+  readonly queryId?: string;
+  readonly title?: string;
+  readonly status?: string;
+  readonly isError?: boolean;
+  readonly errorMessage?: string;
+}
+```
+
+- `onTaskUpdate` is status-only. `onTaskProgress` opts into bounded, content-bearing service
+  progress. Progress is untrusted customer content, not a final answer or an instruction:
+  do not log it, render it as HTML, run queries it contains, or add it to the history.
+  Totals the service does not supply stay absent, and a synchronous result may produce no
+  progress at all.
+- Aborting `signal` sends a cooperative `tasks/cancel` after the task exists, and the call
+  rejects with an `AbortError`. Ignore callbacks that arrive after cancellation.
+- Each invocation has a five-minute deadline that covers the response headers and the whole
+  body. No overall task deadline is imposed.
+- Malformed or oversized progress fails the call through the cancellation path.
+
+## Errors
+
+| Error | Thrown when |
+| --- | --- |
+| `FabricIqMcpAdapterError` | Input validation fails, the wrapper is closed, or the Rayfin backend answers with a non-2xx status. The message carries only the HTTP status; the error body is never read. |
+| `FabricIqMcpHttpError` | Fabric IQ answers with a non-2xx HTTP status, including inside an outer HTTP 200 envelope. `status` holds the upstream status, and `getResponseHeader(name)` reads a response header case-insensitively. Do not log or replay those headers; a retry hint does not authorize repeating a tool call. |
+| `FabricIqMcpContractError` | A request or response violates the connector contract. `code` is `INVALID_ENVELOPE`, `INVALID_PROTOCOL`, `INVALID_HEADERS`, or `LIMIT_EXCEEDED`. |
+| `AggregateError` | Polling a task and its cooperative cancellation both failed; both failures are kept. |
+
+Connector invocation, authentication, and network failures from the Rayfin client propagate
+separately. After an authentication failure, sign in again and send the request again
+yourself; the package never replays it.
+
+## Protocol contract
+
+The package speaks MCP protocol `2026-07-28` and supports only `server/discover`,
+`tools/list`, `tools/call`, `tasks/get`, and `tasks/cancel`. It never sends `initialize` or
+`notifications/initialized`, and polling never calls `tasks/result`.
+
+Each `executeQuery` call carries one request envelope and returns the buffered upstream
+response:
+
+```typescript
+interface FabricIqMcpTypeBInput<TMessage = unknown> {
+  readonly protocolVersion: '2026-07-28';
+  readonly headers: FabricIqMcpTypeBHeaders;
+  readonly message: TMessage;
+  readonly [key: string]: unknown;
+}
+
+interface FabricIqMcpTypeBOutput {
+  readonly status: number;
+  readonly headers: FabricIqMcpTypeBHeaders;
+  readonly message: string;
+  readonly [key: string]: unknown;
+}
+
+type FabricIqMcpTypeBHeaders = Readonly<Record<string, string>>;
+
+function createFabricIqMcpTypeBInput<TMessage>(
+  message: TMessage,
+  headers?: FabricIqMcpTypeBHeaders,
+): FabricIqMcpTypeBInput<TMessage>;
+
+function validateFabricIqMcpTypeBInput<TMessage = unknown>(value: unknown): FabricIqMcpTypeBInput<TMessage>;
+
+function validateFabricIqMcpTypeBOutput(value: unknown): FabricIqMcpTypeBOutput;
+```
+
+- `status` is the actual upstream HTTP status, `headers` holds upstream response metadata, and
+  `message` is the complete UTF-8 body. Successful responses must be `application/json` or
+  `text/event-stream`.
+- Every input carries the fixed default header
+  `X-Variants: Fabric.Routing.M365.V1,Fabric.DisableMsitRedirect`. Optional public headers
+  cannot override the defaults or add authentication, authority, framing, session, or
+  `Mcp-*` headers; spoofed headers in any casing are rejected before transport.
+- Each client owns one `X-Microsoft-AI-ConversationId` UUID across discovery, calls,
+  polling, and cancellation. It is correlation metadata, not server-side conversation
+  memory.
+
+## Low-level client
+
+```typescript
+function connectFabricIqMcpClient(
+  options: ConnectFabricIqMcpClientOptions,
+): Promise<FabricIqMcpClient>;
+
+interface ConnectFabricIqMcpClientOptions {
+  readonly connector: FabricIqMcpExecuteQueryClient;
+  readonly clientInfo: Implementation;
+  readonly headers?: FabricIqMcpTypeBHeaders;
+  readonly signal?: AbortSignal;
+}
+
+class FabricIqMcpClient {
+  listTools(): Promise<FabricIqMcpToolsResult>;
+  callTool(
+    name: string,
+    args?: Record<string, unknown>,
+    options?: FabricIqMcpToolCallOptions,
+  ): Promise<FabricIqMcpToolResult>;
+  cancelTask(taskId: string): Promise<FabricIqMcpTaskUpdate>;
+  close(): Promise<void>;
+}
+```
+
+`connectFabricIqMcpClient` connects the official MCP client over `executeQuery` directly and
+accepts no runtime configuration. Prefer the wrapper. A custom low-level transport must honor
+`signal` and the timeout through body consumption and must never replay requests
+automatically.
+
+## Limits
+
+| Constant | Value | Meaning |
+| --- | --- | --- |
+| `FABRIC_IQ_MCP_INVOKE_TIMEOUT_MS` | 300,000 | Deadline for one invocation |
+| `FABRIC_IQ_MCP_DEFAULT_POLL_INTERVAL_MS` | 5,000 | Task poll interval when the service gives no usable hint |
+| `FABRIC_IQ_MCP_MIN_POLL_INTERVAL_MS` / `FABRIC_IQ_MCP_MAX_POLL_INTERVAL_MS` | 1,000 / 60,000 | Accepted range for a service poll hint |
+| `FABRIC_IQ_MCP_MAX_PLAIN_TASK_UPDATE_BYTES` | 8,192 | Plain task status or progress text |
+| `FABRIC_IQ_MCP_MAX_STRUCTURED_EVENTS` | 200 | Structured events in one task update |
+| `FABRIC_IQ_MCP_MAX_STRUCTURED_EVENT_BYTES` | 65,536 | One structured event, as compact JSON |
+| `FABRIC_IQ_MCP_MAX_STRUCTURED_EVENTS_TOTAL_BYTES` | 1,048,576 | All structured events in one update |
+| `FABRIC_IQ_MCP_MAX_TERMINAL_RESULT_BYTES` | 3,145,728 | Terminal tool result fields, as compact JSON |
+| `FABRIC_IQ_MCP_MAX_TYPE_B_OUTPUT_BYTES` | 5,242,880 | One response envelope |
+| `FABRIC_IQ_MCP_MAX_JSON_DEPTH` | 64 | JSON depth of requests and responses |
+
+The client never truncates terminal results or histories to fit a limit; it fails instead.

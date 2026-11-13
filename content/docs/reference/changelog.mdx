@@ -6,7 +6,7 @@ tags: [changelog, release notes, whats new, upgrade, versions, migration]
 
 Every `@microsoft/rayfin-*` package — the SDK packages, the connectors, the CLI, and
 `@microsoft/create-rayfin` — ships with the same version number. These docs are written
-against Rayfin **1.36.2**.
+against Rayfin **2.0.0**.
 
 ## Version tags
 
@@ -15,10 +15,10 @@ on this page that introduced it.
 
 | Tag | Meaning |
 | --- | --- |
-| [New in 1.36](/docs/reference/changelog#rayfin-136) | Did not exist before that release. |
-| [Changed in 1.36](/docs/reference/changelog#rayfin-136) | Existed, but its behavior, default, or name changed in that release. |
-| [Deprecated in 1.36](/docs/reference/changelog#rayfin-136) | Still works, but has a replacement. |
-| [Removed in 1.36](/docs/reference/changelog#rayfin-136) | No longer works from that release. |
+| [New in 2.0](/docs/reference/changelog#rayfin-20) | Did not exist before that release. |
+| [Changed in 2.0](/docs/reference/changelog#rayfin-20) | Existed, but its behavior, default, or name changed in that release. |
+| [Deprecated in 2.0](/docs/reference/changelog#rayfin-20) | Still works, but has a replacement. |
+| [Removed in 2.0](/docs/reference/changelog#rayfin-20) | No longer works from that release. |
 | [Preview](/docs/reference/changelog#feature-status) | Shipped, but its shape may still change. |
 | [Experimental](/docs/reference/changelog#feature-status) | Behind a feature flag or a gradual rollout. |
 
@@ -36,6 +36,342 @@ npx rayfin --version
 ```
 
 On Windows PowerShell, use `npm ls --depth=0 | Select-String '@microsoft/'`.
+
+## Upgrade to 2.0
+
+Rayfin 2.0 is a major release. The client is now composed with `RayfinClient.create`, and
+several 1.x imports, options, and names are gone without compatibility shims, so a 1.x
+project does not compile against 2.0 packages until you work through these steps. If you
+are on 1.35 or earlier, complete [Upgrade to 1.36](#upgrade-to-136) first. Steps 6 through
+9 apply only if you use that feature.
+
+1. **Update the packages.** Set every `@microsoft/rayfin-*` dependency — plus
+   `@microsoft/fabric-user-data-functions` and `@microsoft/rayfin-local-dev` — to `2.0.0`
+   in each `package.json`, including the functions package's own. The 2.0 client depends
+   only on `@microsoft/rayfin-lib`, so add `@microsoft/rayfin-auth` and
+   `@microsoft/rayfin-data` — and `@microsoft/rayfin-functions`,
+   `@microsoft/rayfin-connectors`, or `@microsoft/rayfin-storage` if you use them — to the
+   package that builds the client. Replace `@microsoft/rayfin-connector-kusto` with
+   `@microsoft/rayfin-connector-eventhouse`. Then run `npm install`.
+2. **Check TypeScript.** The package that holds your schema needs TypeScript `^5.7.2` or
+   `^6.0.2`. If schema compilation reports a schema file outside a `"type": "module"`
+   scope, create `rayfin/package.json` containing `{"type": "module"}`, or set
+   `"type": "module"` in the app's `package.json`, as the message suggests.
+3. **Rebuild the client.** Replace `new RayfinClient(...)`, `ConnectorsRayfinClient`,
+   `ExtendableRayfinClient`, and `RayfinServerClient` with `RayfinClient.create`. Pass
+   `browserSession()` — or `suppliedToken()` in Node.js — as `auth`, and register
+   `dataService()`, `functionsService()`, `connectorsService()`, and `storageService()`
+   as needed. Move `authStorage` and the other session options into `browserSession()`,
+   replace `useProxy` with `baseUrl: ''`, and derive the client type with
+   `ReturnType<typeof createClient>`. See
+   [Migrate from 1.x](/docs/reference/sdk/rayfin-client#migrate-from-1x).
+4. **Fix imports.** Import storage declarations and claims types from
+   `@microsoft/rayfin-core` instead of `@microsoft/rayfin-core/experimental`, and schema
+   types from their owning packages — `@microsoft/rayfin-data`,
+   `@microsoft/rayfin-functions`, `@microsoft/rayfin-connectors` — instead of
+   `@microsoft/rayfin-client`. Remove imports from any `dist/` path. See
+   [Deprecations](/docs/reference/deprecations#removed-or-changed-in-20).
+5. **Fix data queries.** Run the type-check: results now contain only the fields you
+   select. Add `.select([...])` wherever code reads fields from `findById`, `findMany`, or
+   `findFirst`, and add the `[]` marker to to-many relationship paths (`'notes[].title'`).
+   The client no longer turns date- and boolean-looking strings into `Date` objects and
+   booleans for you, so convert selected dates and booleans explicitly. See
+   [Querying](/docs/data/querying).
+6. **Functions.** Install `@microsoft/fabric-user-data-functions@2.0.0` in the functions
+   project; the CLI refuses to generate types or deploy with an older worker. Keep the
+   local `host.json` extension bundle at `[4.49.0, 5.0.0)`. See
+   [Run functions locally](/docs/functions/local-development).
+7. **Storage.** Remove `storage` from `RAYFIN_FEATURE_FLAGS`, register `storageService()`
+   on the client, and replace `prefix` options with full object paths. See
+   [Storage](/docs/storage).
+8. **Connectors.** Register connectors with `connectorsService()`. Change `type: kusto`
+   to `type: eventhouse` with `auth.type: application`, and move its queries into
+   `additionalPayload` — see [Eventhouse](/docs/connectors/eventhouse). Node.js scripts
+   that relied on the CLI connector middleware must pass `host: { type: 'cli' }`.
+9. **Frontend build.** If frontend code imports entity classes as values and the app uses
+   `@vitejs/plugin-react-swc`, enable Stage 3 decorators in the plugin. See
+   [Project structure](/docs/start/project-structure).
+10. **Verify.** Run the type-check, tests, and production build — including the functions
+    project — then `npx rayfin up --dry-run`, `npx rayfin up`, and `npx rayfin up status`.
+
+```prompt title="Upgrade my Rayfin project to 2.0.0"
+Upgrade my Rayfin project to Rayfin 2.0.0. Read
+https://rayfin.ai/docs/reference/changelog.md and
+https://rayfin.ai/docs/reference/sdk/rayfin-client.md first.
+
+1. Set every @microsoft/rayfin-* dependency, plus @microsoft/fabric-user-data-functions and
+   @microsoft/rayfin-local-dev where present, to exactly 2.0.0 in every package.json
+   (including the functions package). Add @microsoft/rayfin-auth and @microsoft/rayfin-data
+   — and @microsoft/rayfin-functions, -connectors, or -storage if the app uses them — to the
+   package that creates the client. Replace @microsoft/rayfin-connector-kusto with
+   @microsoft/rayfin-connector-eventhouse. Ensure the schema package uses TypeScript
+   ^5.7.2 or ^6.0.2. Run npm install.
+2. Replace every `new RayfinClient(`, `new ConnectorsRayfinClient(`,
+   `new RayfinServerClient(`, and `ExtendableRayfinClient` with a synchronous factory that
+   calls RayfinClient.create: browserSession() from @microsoft/rayfin-auth in browser code
+   (move authStorage to `storage`), suppliedToken({ accessToken }) in Node.js code, and
+   register only the services the app uses with dataService, functionsService,
+   connectorsService({ configs, runtime }), and storageService. Replace useProxy with
+   baseUrl: ''. Export `type AppClient = ReturnType<typeof createClient>`.
+3. Move imports from @microsoft/rayfin-core/experimental to @microsoft/rayfin-core, import
+   EntitySchema, FunctionsSchema, and connector types from their owning packages, and remove
+   any import from a dist/ path.
+4. Run the type-check. Where code reads fields from findById, findMany, or findFirst, select
+   them explicitly with .select([...]); add [] to to-many relationship selections such as
+   'notes[].title'; convert selected Date and boolean values explicitly.
+5. If a connector in rayfin/rayfin.yml has `type: kusto`, stop and list it for me: it must
+   move to `type: eventhouse`, `auth.type: application`, and saved queries in
+   additionalPayload as described at https://rayfin.ai/docs/connectors/eventhouse.md.
+6. Remove `storage` from RAYFIN_FEATURE_FLAGS and replace Storage `prefix` options with full
+   object paths.
+7. Run the type-check, tests, and build for every workspace including functions, then run
+   npx rayfin up --dry-run and report the result before deploying.
+```
+
+## Rayfin 2.0
+
+Released 2026-11-12. The headline changes:
+
+- **One composed client.** `RayfinClient.create`, with an explicit auth adapter and only
+  the services you register, replaces the 1.x client classes. Breaking.
+- **Results typed by what you select.** Query and mutation results contain only the fields
+  you request, and to-many selections use a `[]` marker. Breaking for code that read
+  unselected fields.
+- **Storage is generally available**, with `rayfin storage init` to add it to an app.
+- **Dynamic auth claims** mint app-defined claims into tokens from a `udf.authClaims`
+  function.
+- **Connectors.** Kusto is now Eventhouse and runs saved queries; the new Fabric IQ
+  connector answers natural-language questions over Power BI data.
+- **Functions.** Custom audiences, `ctx.user.id` for owner stamping, and experimental raw
+  SQL.
+- **Observability** (experimental) allocates an Application Insights resource per app and
+  queries it with `rayfin telemetry`.
+- **TypeScript 6** is supported for schema compilation.
+
+### Rayfin 2.0.0
+
+Released 2026-11-12.
+
+#### Client and SDK
+
+- `RayfinClient.create({ baseUrl, publishableKey, auth, services })` replaces
+  `new RayfinClient()`, `ConnectorsRayfinClient`, `ExtendableRayfinClient`,
+  `RayfinServerClient`, and the default export. Authentication is an explicit adapter —
+  `browserSession()` or `suppliedToken()` — and `client.data`, `client.functions`,
+  `client.connectors`, and `client.storage` exist only when you register their adapters.
+  [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client)
+- `@microsoft/rayfin-client` depends only on `@microsoft/rayfin-lib`; apps declare the
+  adapter packages they use, and import schema types from the owning packages.
+  [Install the packages your client uses](/docs/start/installation#install-the-packages-your-client-uses)
+- `client.dispose()` releases a client's resources; construction failures use
+  `ClientCompositionError` codes; `AuthError` is one class shared by every package.
+  [Client errors](/docs/reference/sdk/rayfin-client#errors)
+- Every package declares an `exports` map. `@microsoft/rayfin-core/experimental`,
+  `@microsoft/rayfin-core/decorators`, `@microsoft/rayfin-client/experimental`, and deep
+  `dist/` imports no longer resolve. [Package entry points](/docs/reference/sdk#package-entry-points)
+- `NetworkError` carries `serverErrorCode`, `retryAfterSeconds`, and `consentUrl`, and
+  access-token callbacks can be asynchronous. [`@microsoft/rayfin-lib`](/docs/reference/sdk/rayfin-lib)
+- `RayfinRuntimeConfig` adds `applicationInsightsConnectionString`.
+  [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client#runtime-configuration)
+
+#### Data
+
+- Result types follow the selection. Queries without `.select()` — including `findById`,
+  `findMany`, and `findFirst` — return the primary key only.
+  [Querying](/docs/data/querying#result-types-follow-your-selection)
+- The data client no longer converts date- and boolean-looking strings by inspecting their
+  values, so selected dates are typed `Date | string` and booleans
+  `boolean | 'true' | 'false'`, in row and aggregation results. Convert them explicitly.
+  [Field types](/docs/data/field-types#values-you-read-back)
+- To-many relationship selections need the `[]` marker, such as `'notes[].title'`;
+  malformed or conflicting paths fail before the request is sent.
+  [Querying](/docs/data/querying#select-nested-fields-with-dot-paths)
+- Mutation results contain the primary key plus the fields you sent, `delete` returns the
+  key only, and a relationship can be set with its object or its foreign key.
+  [Mutations](/docs/data/mutations#what-mutations-return)
+- `dataService<AppSchema>()` registers `client.data`; `EntitySchema` and
+  `TypedDataClients` come from `@microsoft/rayfin-data`. [Data](/docs/data#set-up-the-client)
+- Schema compilation supports TypeScript 6 and requires `^5.7.2 || ^6.0.2`.
+  [Modeling entities](/docs/data/modeling#supported-typescript-versions)
+- `rayfin init` writes NodeNext schema settings with `ESNext.Decorators` and Node types,
+  adds `@types/node`, and adds `rayfin/package.json` to apps that are not ES modules, which
+  makes `rayfin/` its own package boundary.
+  [Project structure](/docs/start/project-structure#rayfinpackagejson),
+  [Modeling entities](/docs/data/modeling#rayfinpackagejson-and-the-package-boundary)
+- The CLI rejects entity property names that are not valid GraphQL field names before
+  anything is applied; map odd column names with `{ column: '...' }`.
+  [Modeling entities](/docs/data/modeling#property-names)
+- Storage declarations and claims types are exported from the `@microsoft/rayfin-core`
+  root, and the `/experimental`, `/decorators`, `/analysis`, and `/schema` entry points are
+  removed. [`@microsoft/rayfin-core`](/docs/reference/sdk/rayfin-core#package-entry-points)
+- Functions can stamp owner fields with `ctx.user.id`, and policies can compare dynamic
+  claims. [Permissions](/docs/data/permissions#stamp-owner-fields-from-functions)
+- `@vitejs/plugin-react-swc` compiles entity classes once Stage 3 decorators are enabled,
+  and the templates enable them. [Form validation](/docs/data/validation)
+
+#### Auth
+
+- `browserSession()` from `@microsoft/rayfin-auth` provides `client.auth`; the 1.x
+  top-level client options `authStorage`, `persistSession`, `autoRefreshToken`, and
+  `multiTabSync` move into it, and apps install `@microsoft/rayfin-auth` themselves.
+  [Sessions](/docs/auth/sessions#create-the-client-with-a-browser-session)
+- Dynamic auth claims: declare `services.auth.dynamicClaims`, write one `udf.authClaims`
+  provider, filter on the claims in policies, and read them with `client.auth.getClaims()`
+  and `ctx.getClaims()`. [Dynamic auth claims](/docs/auth/dynamic-claims)
+- `isAuthenticated` is `false` while the access token is expired. Sessions refresh shortly
+  before expiry and retry transient failures, `signOut()` renews a lapsed token before
+  revoking it, and concurrent refreshes no longer replay a rotated refresh token.
+  [Sessions](/docs/auth/sessions#when-the-access-token-lapses)
+- `client.dispose()` releases auth timers and listeners without signing out; new and queued
+  refreshes then reject with `AUTH_DESTROYED`. [Sessions](/docs/auth/sessions#dispose-the-client)
+- Fabric sign-in rejects with `FABRIC_AUTH_POPUP_CLOSED` about a second after the user
+  closes the sign-in window instead of waiting five minutes, and the Fabric SSO docs list
+  every sign-in error code. [Fabric SSO](/docs/auth/fabric-sso#handle-sign-in-errors)
+- `FabricAuthOptions.tenantId`, sent to the portal as `ctid`, skips home-tenant discovery.
+  [Fabric SSO](/docs/auth/fabric-sso)
+- Fabric embedded hints take precedence over external embed host discovery.
+  [Embed in your own portal](/docs/auth/embed-host)
+- `signInWithEntraToken()` reports `SIGN_IN_DENIED` and `AUTH_CLAIMS_*` codes, and takes a
+  browser-session client's `auth` or a standalone `Auth`.
+  [Sign in with an Entra token](/docs/auth/entra-token)
+- `rayfin login` checks that Microsoft Entra ID is reachable before opening the browser,
+  ends network failures with recovery steps — including a WSL2 fix — and writes
+  device-code prompts to stderr so `--json` output stays one object.
+  [`rayfin login`](/docs/reference/cli/login)
+
+#### Functions
+
+- Register `functionsService<AppFunctionsSchema>()` from `@microsoft/rayfin-functions`,
+  install that package directly, and import `FunctionsSchema` from it.
+  [Calling functions](/docs/functions/calling-functions#register-the-functions-service)
+- Functions packages must use `@microsoft/fabric-user-data-functions@2.0.0`. The CLI writes
+  runtime metadata schema 3.0, blocks an older worker, and prints the `npm install` command
+  that fixes it. [Functions](/docs/functions#match-the-worker-package-to-the-cli)
+- `ctx.user.id` exposes the caller's subject ID for owner stamping.
+  [Writing functions](/docs/functions/writing-functions#stamp-the-owner-with-ctxuserid)
+- Custom audiences: declare an application ID or an `https://` or `api://` resource URI and
+  read its token from `ctx.Tokens`; `rayfin up` rejects an invalid audience before it
+  deploys. [Connections](/docs/functions/connections#call-your-own-entra-protected-api)
+- Raw SQL against the app database with `RayfinContext & WithSql` and `ctx.sql`.
+  [Experimental](/docs/reference/changelog#feature-status) [Raw SQL](/docs/functions/raw-sql)
+- The Vite adapter forwards function calls to the deployed backend when no local Functions
+  host is configured.
+  [Calling functions](/docs/functions/calling-functions#route-local-vite-calls-through-the-adapter)
+- `rayfin dev` warns when `host.json` allows an old Preview extension bundle, and when the
+  local Functions host cannot sign in without a terminal window, `rayfin dev` prints the
+  `host.json` fix instead of a generic hint.
+  [Run functions locally](/docs/functions/local-development#local-sign-in-fails-without-a-terminal-window)
+- `rayfin secret set --env-file` records every name in `rayfin.yml` and regenerates the
+  secret types, and deployed functions can cache a secret value for a few minutes after
+  you rotate it. [Secrets](/docs/deploy/secrets#bulk-set-secrets-from-a-dotenv-file)
+- `rayfin up functions deploy` explains a 404, and a project whose only function is
+  `udf.authClaims` deploys.
+  [Deploying functions](/docs/functions/deploying#fix-a-404-from-rayfin-up-functions-deploy)
+- A guide to CSV bulk import functions with row-level validation.
+  [Bulk import](/docs/functions/bulk-import)
+
+#### Storage
+
+- Storage is generally available, needs no feature flag, and is remote-only.
+  [Storage](/docs/storage)
+- `rayfin storage init` sets Storage up in local project files without deploying.
+  [`rayfin storage`](/docs/reference/cli/storage)
+- `rayfin up storage apply` and `rayfin dev storage apply` are always available, and a
+  Fabric-backed `rayfin dev` applies folder declarations to the remote backend.
+  [Apply Storage configuration](/docs/storage#apply-storage-configuration)
+- Folder declarations import from `@microsoft/rayfin-core`; the
+  `@microsoft/rayfin-core/experimental` path is removed.
+  [Migrate from 1.36 Storage](/docs/storage/migrate-from-1-36)
+- `storageService()` registers Storage on `RayfinClient.create`; `createStorageClient`
+  stays public. [`@microsoft/rayfin-storage`](/docs/reference/sdk/rayfin-storage)
+- Operations take complete object paths, the `prefix` option is removed, and invalid paths
+  throw `InvalidName`. [Upload and download files](/docs/storage/files)
+- Removing a folder declaration permanently deletes its objects, and removing a non-empty
+  folder needs `--force`. [Remove a folder](/docs/storage#remove-a-folder)
+
+#### Connectors
+
+- The Kusto connector is renamed Eventhouse — type, package, runtime, and types. It accepts
+  only application auth, where 1.36 `kusto` accepted only delegated, and runs only queries
+  saved in `additionalPayload`, called by `queryId`. New Eventhouse connectors are still
+  held back. [Eventhouse](/docs/connectors/eventhouse#know-what-changed-from-kusto)
+- The Fabric IQ connector (`fabriciqmcp`) asks natural-language questions over Power BI
+  data through MCP. [Fabric IQ](/docs/connectors/fabric-iq)
+- Category B connectors accept `additionalPayload`: kept verbatim, at most 64 KiB and 32
+  levels deep, rejected on Category A types, and never a place for secrets.
+  [Save queries in `additionalPayload`](/docs/connectors/eventhouse#save-queries-in-additionalpayload)
+- `connectorsService()` from `@microsoft/rayfin-connectors`, which apps now install
+  directly, replaces `ConnectorsRayfinClient`. Its host defaults to standalone, including in
+  Node.js, and each config is checked against its connector's marker type.
+  [Client setup](/docs/connectors/client-setup#register-connectorsservice)
+- Generated `src/lib/connectors.ts` files declare their configs with
+  `satisfies ConnectorConfigs<…>`; update files generated by 1.36.
+  [Client setup](/docs/connectors/client-setup#use-srclibconnectorsts-when-the-cli-generates-it)
+- Connector names are case-insensitive: `client.connectors.<name>` throws
+  `AMBIGUOUS_CONNECTOR` when two keys differ only by case, and `connector invoke --json`
+  lists the `candidates`. [Client setup](/docs/connectors/client-setup#keep-connector-keys-identical)
+- `rayfin connector add --auth` sets the identity at add time, `connector remove` keeps the
+  connector's files, and a connector that points at the app's own database is rejected.
+  [Adding a connector](/docs/connectors/adding)
+- Function-bridge calls wait up to five minutes, with a per-call `timeoutMs`.
+  [Semantic models](/docs/connectors/semantic-models#set-a-request-timeout)
+- Direct semantic-model `rayfin connector invoke` calls need Read and Build permissions on
+  the model instead of write access to the workspace.
+  [Semantic models](/docs/connectors/semantic-models#exercise-the-connector-from-the-cli)
+- SQL connector read results are typed by the fields you select, and SQL Database write
+  results type their columns as optional.
+  [SQL sources](/docs/connectors/sql-sources#read-result-types-follow-the-selection)
+- Connector `@role()` `include` and `exclude` lists are emitted as backing column names, so
+  fields mapped with `column:` match.
+  [Entity generation](/docs/connectors/entity-generation#write-row-level-policies-with-the-typed-dsl)
+
+#### Observability
+
+- `rayfin telemetry enable`, `disable`, and `query` and `services.telemetry` give a deployed
+  app its own Application Insights resource.
+  [Experimental](/docs/reference/changelog#feature-status) [Observability](/docs/deploy/observability)
+- `initTelemetry()` from `@microsoft/rayfin-telemetry/browser` sends browser telemetry to
+  that resource, with pinned OpenTelemetry peer dependencies.
+  [`@microsoft/rayfin-telemetry`](/docs/reference/sdk/rayfin-telemetry)
+- Rayfin CLI usage telemetry — separate from app Observability — labels runs from coding
+  agents such as GitHub Copilot CLI, and `npm create @microsoft/rayfin` records how long
+  each scaffold step took. [Telemetry](/docs/reference/cli/telemetry#rayfin-cli-usage-telemetry)
+
+#### CLI and deployment
+
+- `rayfin up` skips the static upload when nothing changed since the last successful
+  deploy; `--force-static-deploy` uploads anyway.
+  [Skip unchanged static content](/docs/reference/cli/up#skip-unchanged-static-content)
+- `rayfin up` checks connector `additionalPayload`, custom audiences, and the dynamic claims
+  contract before any remote call, and sends the claims contract after Functions deploy.
+  [What `rayfin up` does](/docs/reference/cli/up#what-it-does)
+- `rayfin init --services` accepts `storage`, which requires `data`.
+  [`rayfin init`](/docs/reference/cli/init#services)
+- `rayfin init` on an existing project moves its `dev` script to `dev:frontend` and points
+  `dev` at `rayfin dev`. [Existing `dev` script](/docs/reference/cli/init#existing-dev-script),
+  [Switch an existing project to `rayfin dev`](/docs/start/develop-locally#switch-an-existing-project-to-rayfin-dev)
+- `rayfin dev` applies Storage declarations to its Fabric backend, and the Vite adapter
+  proxies the backend's `/.well-known` routes so `client.auth.getClaims()` can validate
+  tokens during development.
+  [Route SDK calls through the Vite adapter](/docs/start/develop-locally#route-sdk-calls-through-the-vite-adapter)
+- `rayfin dev` warns when `host.json` allows a Preview extension bundle older than 4.49.0.
+  [Extension bundle warning](/docs/start/develop-locally#extension-bundle-warning)
+- `rayfin up db apply` adds `--drift-file`, `--overwrite`, and `--skip-drift-check`.
+  [`up db apply`](/docs/reference/cli/up#up-db-apply)
+- `rayfin init --list-templates -t <git-url>` lists the templates in a git source.
+  [List templates](/docs/reference/cli/templates#list-templates)
+- `rayfin init ai-files` adds the `rayfin-auth-claims` and `rayfin-schema-drift` skills and
+  installs the Storage skill by default.
+  [Managed items in 2.0.0](/docs/reference/cli/ai-files#managed-items-in-200)
+- `rayfin docs` serves the guides installed with the CLI when the project has no
+  `@microsoft/rayfin-guide` package. [Guide fallback](/docs/reference/cli/docs#guide-fallback)
+- Templates create the client with `RayfinClient.create`, declare the 2.0 adapter packages,
+  and enable Stage 3 decorators for the SWC plugin.
+  [Build a todo app](/docs/recipes/todo-app#5-wire-the-client),
+  [Templates](/docs/reference/cli/templates)
+- The Universal App requires Node.js 22.13 or later, follows the system light or dark
+  theme, and adds a `storage` capability pack.
+  [Universal App workspace](/docs/start/project-structure#universal-app-workspace)
 
 ## Upgrade to 1.36
 
@@ -170,8 +506,8 @@ Released 2026-09-29.
 - `rayfin connector add` writes `auth.type: application` for `fabric-sqlanalytics`,
   `fabric-warehouse`, and `fabric-sqldatabase`, and lowercases connector names.
   [Connector authentication](/docs/connectors/auth)
-- New Kusto (Eventhouse) connectors cannot be added; existing ones keep working.
-  [KQL databases](/docs/connectors/kusto)
+- New Kusto (Eventhouse) connectors cannot be added; existing ones keep working. 2.0
+  renamed the type to `eventhouse`. [Eventhouse](/docs/connectors/eventhouse)
 - `Source` and `AutoGenerated` moved to `@microsoft/rayfin-connectors`, and
   `ConnectorsRayfinClient` is exported from the stable `@microsoft/rayfin-client` entry.
   [Client setup](/docs/connectors/client-setup)
@@ -216,8 +552,9 @@ Released 2026-09-29.
   experimental decorators. [Field types](/docs/data/field-types)
 - `rayfin up db apply` retries transient database failures.
   [Migrations](/docs/data/migrations)
-- Storage remains [Experimental](/docs/reference/changelog#feature-status); its client
-  dropped unsupported per-call options and exports. [Storage](/docs/storage)
+- Storage remained [Experimental](/docs/reference/changelog#feature-status) in 1.36; its
+  client dropped unsupported per-call options and exports. It became generally available
+  in 2.0. [Storage](/docs/storage)
 
 #### Templates, SDK, and agent files
 
@@ -274,13 +611,17 @@ Released 2026-09-17.
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Data, permissions, querying, aggregations | Generally available | |
+| Data, permissions, querying, aggregations | Generally available | Anonymous permissions need the Fabric tenant setting **Enable anonymous data access for Fabric Apps (Preview)**. |
 | Fabric SSO | Generally available | The popup flow works from any origin in `allowedRedirectUris`, including `localhost`. |
 | Direct Entra token sign-in | Available since 1.36 | Requires `services.auth.fabric.externalEntraExchange: true` and the exchange in your Fabric environment. |
 | External embed host | Available since 1.36 | Requires `externalEntraExchange: true` on the embedded app. |
+| Dynamic auth claims | Generally available since 2.0 | The backend must have it enabled for the workspace's region. |
 | Functions | Generally available since 1.36 | Not available in every Fabric region or tenant. |
+| Raw SQL in functions (`& WithSql`) | Experimental | New in 2.0. The service enables it per tenant; deployed functions only. |
 | Connectors — SQL and semantic model | Generally available since 1.36 | |
+| Connectors — Fabric IQ | Available since 2.0 | Authoring is released; the backend adapter may not be enabled in every Fabric environment. |
 | `rayfin up connector apply` | Preview | |
-| Connectors — Kusto (Eventhouse) | Held in 1.36 | Existing connectors keep working; new ones cannot be added. |
-| Storage | Experimental | `RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled: true`. Not available in every region or tenant. |
+| Connectors — Eventhouse (formerly Kusto) | Experimental, held | Existing connectors keep working once migrated to `type: eventhouse`; new ones cannot be added. |
+| Storage | Generally available since 2.0 | Remote-only; no feature flag. Experimental in 1.35 and 1.36. |
+| Observability (`rayfin telemetry`) | Experimental | New in 2.0. Needs Fabric service-side enablement for the workspace. |
 | Deep linking | Rolling out per tenant | Check `isSupported()` before relying on it. |

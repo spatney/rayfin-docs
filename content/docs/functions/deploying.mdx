@@ -1,6 +1,6 @@
 ---
 title: Deploying functions
-description: Deploy Rayfin functions with rayfin up, deploy only function code, skip function deploys, and understand deploy-time packaging.
+description: Deploy Rayfin functions with rayfin up or deploy only function code, fix a 404 from functions deploy, skip function deploys, and understand packaging and validation.
 appliesTo: "@microsoft/rayfin-cli >= 1.36"
 ---
 
@@ -34,6 +34,8 @@ npx rayfin up
 ```
 
 A full deploy validates `services.functions.auth.type`, applies runtime settings, builds the functions package with `services.functions.buildCommand`, generates metadata, packages the functions, and uploads them with the rest of the app.
+
+Before it changes anything remotely, a full deploy also analyzes your function declarations and stops on an invalid [custom audience](/docs/functions/connections#call-your-own-entra-protected-api). `npx rayfin up --dry-run` runs the same check. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 Use this standard workflow after enabling Functions or changing application authentication:
 
@@ -83,6 +85,26 @@ npx rayfin up functions deploy
 
 Use this when the remote app already exists and you only need to upload function code. It does **not** validate or apply `services.functions.auth.type` to the remote app. After changing the auth mode in `rayfin.yml`, run a full `npx rayfin up`.
 
+A functions project whose only function is a `udf.authClaims` provider generates types and deploys like any other; see [Dynamic auth claims](/docs/auth/dynamic-claims). [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+## Fix a 404 from `rayfin up functions deploy`
+
+A `404` from the deploy endpoint usually means Functions are not enabled on the **remote** item, not that the endpoint is unavailable. The service hides every Functions route until the deployed project has `services.functions.enabled: true`, and `rayfin up functions deploy` uploads code without applying project settings.
+
+If you enabled Functions — for example with `npx rayfin functions init` — after your last full deployment, run a full deploy once to apply `rayfin.yml`, then retry:
+
+```bash
+npx rayfin up
+npx rayfin up functions deploy
+```
+
+When the deploy fails with a 404, the CLI prints this tip. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```text
+   • Functions may not be enabled on the remote item. Run a full 'rayfin up' to apply
+     services.functions from rayfin.yml, then retry this command
+```
+
 ## Skip functions during a full deploy
 
 ```bash
@@ -93,17 +115,17 @@ npx rayfin up --exclude-services functions
 
 ## How functions are packaged
 
-Rayfin 1.36 packages functions as a deploy artifact that includes generated deploy metadata and runtime metadata. By default, the CLI bundles the functions project with esbuild so workspace-hoisted dependencies and sibling packages are included in the uploaded ZIP.
+`rayfin up` packages functions as a deploy artifact that includes generated deploy metadata and runtime metadata. By default, the CLI bundles the functions project with esbuild so workspace-hoisted dependencies and sibling packages are included in the uploaded ZIP. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
 Deploy packaging excludes local-only and build-noise files such as `local.settings.json`, `node_modules`, `bin`, `obj`, source maps, `coverage`, and editor folders. `local.settings.json` is never deployed because it can contain local secrets.
 
-The local functions `host.json` extension bundle range affects only Core Tools local development. During deploy, `rayfin up` substitutes the CLI's `assets/functions/host.deploy.json`; in Rayfin 1.36.x that deploy file uses the stable `Microsoft.Azure.Functions.ExtensionBundle` range `[4.38.1, 5.0.0)`. Updating local `host.json` to `[4.49.0, 5.0.0)` for Rayfin 1.36.2 does not change deployed host settings. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
+The local functions `host.json` extension bundle range affects only Core Tools local development. During deploy, `rayfin up` substitutes the CLI's `assets/functions/host.deploy.json`, which in Rayfin 1.36 and 2.0 uses the stable `Microsoft.Azure.Functions.ExtensionBundle` range `[4.38.1, 5.0.0)`. Raising the local `host.json` floor to `[4.49.0, 5.0.0)` does not change deployed host settings. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
 
-The CLI also ensures `rayfin/functions/src/secrets.generated.ts` exists before the build, so handlers that read `ctx.Secrets.<NAME>` compile in fresh clones and CI.
+The CLI also ensures `secrets.generated.ts` exists in the functions package's `src/` folder before the build, so handlers that read `ctx.Secrets.<NAME>` compile in fresh clones and CI.
 
 ## Validate deploy-ready packages
 
-The deploy validator checks for required files such as `package.json` and `host.json`, compatible worker metadata support, and portable dependencies. If validation fails, the CLI starts the error with:
+The deploy validator checks that the functions package has its required files — `package.json`, `host.json`, and `src/function_app.ts` — and that the installed `@microsoft/fabric-user-data-functions` can read the runtime metadata this CLI writes. If validation fails, the CLI lists every problem with a suggested fix:
 
 ```text
 Cannot deploy: <functions-path> is not deploy-ready.
@@ -111,10 +133,10 @@ Cannot deploy: <functions-path> is not deploy-ready.
 Fix each of the following before retrying:
 ```
 
-Run `npx rayfin functions init` if the package is missing, or update the functions package dependencies if the worker version is incompatible.
+Run `npx rayfin functions init` if the package or one of its files is missing. If the worker is incompatible, install `@microsoft/fabric-user-data-functions` at the CLI's exact version with the `npm install` command the validator prints; Rayfin 2.0 requires `2.0.0`. See [Match the worker package to the CLI](/docs/functions#match-the-worker-package-to-the-cli). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```prompt title="Deploy Rayfin functions"
-In my Rayfin project, deploy functions to the Fabric app.
+In my Rayfin 2.0 project, deploy functions to the Fabric app.
 
-Confirm rayfin/rayfin.yml has services.functions.enabled: true and services.functions.auth.type: application. If the auth block was added or changed, run a full `npx rayfin up` so the remote app settings are applied. If only function code changed and the app is already configured, run `npx rayfin up functions deploy`. Do not deploy local.settings.json or any secret values. If deployment fails, capture the exact error text and inspect rayfin/functions/package.json, host.json, buildCommand, and worker package compatibility before retrying.
+Confirm rayfin/rayfin.yml has services.functions.enabled: true and services.functions.auth.type: application, and that the functions package depends on @microsoft/fabric-user-data-functions at the same exact version as the Rayfin CLI. If the auth block was added or changed, or Functions were enabled after the last full deploy, run a full `npx rayfin up` so the remote app settings are applied. If only function code changed and the app is already configured, run `npx rayfin up functions deploy`; if that returns 404, run a full `npx rayfin up` once and retry. Do not deploy local.settings.json or any secret values. If deployment fails, capture the exact error text and inspect rayfin/functions/package.json, host.json, buildCommand, and worker package compatibility before retrying.
 ```

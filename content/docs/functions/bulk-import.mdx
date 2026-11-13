@@ -1,0 +1,636 @@
+---
+title: Bulk import from CSV
+description: Build a CSV import on a Rayfin function — pasted-text UI, server-side parsing and per-row validation, idempotent reference lookups, owner stamping, and an imported/rejected result.
+appliesTo: "@microsoft/fabric-user-data-functions >= 2.0"
+---
+
+Use a function for any CSV or bulk import that validates rows and writes data. Keep the
+browser responsible for collecting the text and showing the result; keep parsing,
+validation, reference lookups, and writes inside the function, where a client cannot skip
+them.
+
+This page builds a complete import for an expense tracker: the user pastes CSV with
+`date`, `description`, `amount`, and `category` columns, and the function imports the valid
+rows, creates missing categories, and reports every rejected row with a reason.
+
+> [!NOTE]
+> Functions are not available in every Fabric region or tenant. Confirm that your target
+> workspace supports them before you build on them.
+
+## Define the data model
+
+`Category` is shared by all signed-in users and has a unique `normalizedName`, so the import
+can create a missing category exactly once. `Transaction` belongs to one user: its policy
+compares `owner_id` with the caller's `claims.sub`.
+
+```typescript title="rayfin/data/Category.ts"
+import { authenticated, entity, many, text, uuid } from '@microsoft/rayfin-core';
+import { Transaction } from './Transaction.js';
+
+@entity()
+@authenticated(['create', 'read'])
+export class Category {
+  @uuid() id!: string;
+  @text({ max: 200 }) name!: string;
+  @text({ max: 200, unique: true }) normalizedName!: string;
+  @many(() => Transaction) transactions?: Transaction[];
+}
+```
+
+```typescript title="rayfin/data/Transaction.ts"
+import { authenticated, date, decimal, entity, one, text, uuid } from '@microsoft/rayfin-core';
+import { Category } from './Category.js';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class Transaction {
+  @uuid() id!: string;
+  @date() date!: Date;
+  @text({ max: 500 }) description!: string;
+  @decimal() amount!: number;
+  @text({ max: 200 }) owner_id!: string;
+  @one(() => Category) category!: Category;
+}
+```
+
+```typescript title="rayfin/data/schema.ts"
+import type { Category } from './Category.js';
+import type { Transaction } from './Transaction.js';
+
+export type AppSchema = {
+  Category: Category;
+  Transaction: Transaction;
+};
+```
+
+Apply the schema with `npx rayfin dev` or `npx rayfin up`. See
+[Modeling data](/docs/data/modeling) and [Permissions](/docs/data/permissions).
+
+## Return a typed result for row problems
+
+The function returns how many rows it imported and why each other row was rejected. Row
+numbers match what the user sees when the CSV is opened in a spreadsheet: the header is
+row 1.
+
+```typescript
+type ImportRejectedRow = { row: number; reason: string };
+type ImportResult = { imported: number; rejected: ImportRejectedRow[] };
+```
+
+- Return a rejection for anything the user can fix in their CSV: a missing value, a bad
+  date, a duplicate row, or a write the data layer refuses for that row.
+- Throw only for failures the user cannot fix row by row, such as authentication, network,
+  or server errors. The frontend shows those in an alert.
+- Keep the result free of secrets, access tokens, raw provider responses, stack traces, and
+  personal data the user cannot already see in the app.
+
+## Parse the CSV on the server
+
+Parse in the function even if the browser also previews the file — browser checks are a
+convenience, not a control. The parser must handle quoted values, commas and line breaks
+inside quotes, doubled quotes, blank lines, and CRLF, LF, or CR line endings. This module
+also strips a leading byte-order mark, matches header names case-insensitively after
+trimming them, and rejects the whole file when a required column is missing instead of
+rejecting every row:
+
+```typescript title="rayfin/functions/src/csv.ts"
+export type CsvRecord = { row: number; values: Record<string, string> };
+
+export type CsvParseResult =
+  | { ok: true; records: CsvRecord[] }
+  | { ok: false; row: number; reason: string };
+
+type RawRecord = { row: number; fields: string[] };
+
+function splitRecords(text: string): { records: RawRecord[]; openQuoteRow?: number } {
+  const records: RawRecord[] = [];
+  let fields: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let quoteRow = 0;
+  let row = 1;
+
+  const endRecord = (): void => {
+    fields.push(field);
+    if (fields.length > 1 || fields[0]?.trim()) {
+      records.push({ row, fields });
+    }
+    fields = [];
+    field = '';
+    row += 1;
+  };
+
+  const start = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text.charAt(i);
+    if (inQuotes) {
+      if (char === '"' && text.charAt(i + 1) === '"') {
+        field += '"';
+        i += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        field += char;
+      }
+    } else if (char === '"' && field === '') {
+      inQuotes = true;
+      quoteRow = row;
+    } else if (char === ',') {
+      fields.push(field);
+      field = '';
+    } else if (char === '\r' || char === '\n') {
+      if (char === '\r' && text.charAt(i + 1) === '\n') i += 1;
+      endRecord();
+    } else {
+      field += char;
+    }
+  }
+
+  if (inQuotes) return { records, openQuoteRow: quoteRow };
+  if (field !== '' || fields.length > 0) endRecord();
+  return { records };
+}
+
+export function parseCsv(text: string, requiredColumns: readonly string[]): CsvParseResult {
+  const { records, openQuoteRow } = splitRecords(text);
+  if (openQuoteRow !== undefined) {
+    return { ok: false, row: openQuoteRow, reason: 'a quoted value is never closed' };
+  }
+
+  const [headerRecord, ...dataRecords] = records;
+  if (!headerRecord) {
+    return { ok: false, row: 1, reason: 'the CSV is empty' };
+  }
+
+  const header = headerRecord.fields.map((name) => name.trim().toLowerCase());
+  const missing = requiredColumns.filter((column) => !header.includes(column));
+  if (missing.length > 0) {
+    return { ok: false, row: headerRecord.row, reason: `missing column: ${missing.join(', ')}` };
+  }
+
+  return {
+    ok: true,
+    records: dataRecords.map(({ row, fields }) => ({
+      row,
+      values: Object.fromEntries(header.map((name, index) => [name, fields[index] ?? ''])),
+    })),
+  };
+}
+```
+
+## Validate and write each row
+
+The import function follows the same order for every file:
+
+1. Bound the input size before parsing, and cap the row count so the import finishes well
+   inside the 250-second function invocation limit.
+2. Parse the header and rows.
+3. Validate every row independently, and reject duplicate rows within the file.
+4. Resolve or create the referenced category idempotently.
+5. Create the row with the owner stamped from `ctx.user.id`.
+6. Return `{ imported, rejected }`.
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+import type { AppSchema } from '../../data/schema.js';
+import { parseCsv, type CsvRecord } from './csv.js';
+
+const udf = new UserDataFunctions();
+
+const MAX_CSV_BYTES = 256_000;
+const MAX_DATA_ROWS = 500;
+const REQUIRED_COLUMNS = ['date', 'description', 'amount', 'category'];
+const CSV_DATE_FORMAT = 'YYYY-MM-DD';
+const UNIQUE_VALUE_ERROR =
+  'GraphQL errors: A record with the same unique value already exists.';
+
+type ImportRejectedRow = { row: number; reason: string };
+type ImportResult = { imported: number; rejected: ImportRejectedRow[] };
+type TransactionRow = {
+  date: string;
+  description: string;
+  amount: number;
+  category: string;
+};
+type RowValidation = { ok: true; value: TransactionRow } | { ok: false; reason: string };
+type DataClient = ReturnType<RayfinContext<AppSchema>['getDataClient']>;
+
+function parseCsvDate(value: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function validateTransactionRow(record: CsvRecord): RowValidation {
+  const category = record.values['category']?.trim() ?? '';
+  const date = parseCsvDate(record.values['date']?.trim() ?? '');
+  const description = record.values['description']?.trim() ?? '';
+  const amountText = record.values['amount']?.trim() ?? '';
+
+  if (!category) return { ok: false, reason: 'missing category' };
+  if (category.length > 200) return { ok: false, reason: 'category is longer than 200 characters' };
+  if (!date) return { ok: false, reason: `invalid date (expected ${CSV_DATE_FORMAT})` };
+  if (description.length > 500) {
+    return { ok: false, reason: 'description is longer than 500 characters' };
+  }
+  if (!/^-?\d+(\.\d+)?$/.test(amountText)) return { ok: false, reason: 'invalid amount' };
+
+  const amount = Number(amountText);
+  if (amount <= 0) return { ok: false, reason: 'amount must be positive' };
+  if (!/^\d+(\.\d{1,2})?$/.test(amountText)) {
+    return { ok: false, reason: 'amount has more than two decimal places' };
+  }
+
+  return { ok: true, value: { date, description, amount, category } };
+}
+
+function normalizeName(name: string): string {
+  return name.trim().normalize('NFKC').toLowerCase();
+}
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return error instanceof Error && error.message === UNIQUE_VALUE_ERROR;
+}
+
+function expectedRowFailureReason(error: unknown): string | null {
+  if (isUniqueConstraintViolation(error)) return 'conflicts with existing data';
+  if (!(error instanceof Error) || !('status' in error)) return null;
+
+  const status = (error as Error & { status?: unknown }).status;
+  if (status === 400 || status === 422) return 'was rejected by data validation';
+  if (status === 403) return 'is not permitted for this caller';
+  if (status === 404 || status === 409) return 'references data that is missing or changed';
+  return null;
+}
+
+async function findOrCreateCategory(
+  data: DataClient,
+  name: string,
+  cache: Map<string, string>,
+): Promise<string> {
+  const normalizedName = normalizeName(name);
+  const cached = cache.get(normalizedName);
+  if (cached) return cached;
+
+  const existing = await data.Category.findFirst({ normalizedName: { eq: normalizedName } });
+  if (existing) {
+    cache.set(normalizedName, existing.id);
+    return existing.id;
+  }
+
+  try {
+    const created = await data.Category.create({ name: name.trim(), normalizedName });
+    cache.set(normalizedName, created.id);
+    return created.id;
+  } catch (error: unknown) {
+    if (!isUniqueConstraintViolation(error)) throw error;
+
+    const winner = await data.Category.findFirst({ normalizedName: { eq: normalizedName } });
+    if (!winner) throw error;
+    cache.set(normalizedName, winner.id);
+    return winner.id;
+  }
+}
+
+udf.func(
+  'importTransactionsCsv',
+  async (csvText: string, ctx: RayfinContext<AppSchema>): Promise<ImportResult> => {
+    if (new TextEncoder().encode(csvText).length > MAX_CSV_BYTES) {
+      return { imported: 0, rejected: [{ row: 1, reason: 'the CSV is larger than 256 KB' }] };
+    }
+
+    const parsed = parseCsv(csvText, REQUIRED_COLUMNS);
+    if (!parsed.ok) {
+      return { imported: 0, rejected: [{ row: parsed.row, reason: parsed.reason }] };
+    }
+    if (parsed.records.length > MAX_DATA_ROWS) {
+      return {
+        imported: 0,
+        rejected: [{ row: 1, reason: `the CSV has more than ${MAX_DATA_ROWS} data rows` }],
+      };
+    }
+
+    const data = ctx.getDataClient();
+    const ownerId = ctx.user.id;
+    const categoryIds = new Map<string, string>();
+    const firstRowByKey = new Map<string, number>();
+    const rejected: ImportRejectedRow[] = [];
+    let imported = 0;
+
+    for (const record of parsed.records) {
+      const validation = validateTransactionRow(record);
+      if (!validation.ok) {
+        rejected.push({ row: record.row, reason: validation.reason });
+        continue;
+      }
+      const row = validation.value;
+
+      const key = JSON.stringify([row.date, row.description, row.amount, normalizeName(row.category)]);
+      const firstRow = firstRowByKey.get(key);
+      if (firstRow !== undefined) {
+        rejected.push({ row: record.row, reason: `duplicates row ${firstRow}` });
+        continue;
+      }
+      firstRowByKey.set(key, record.row);
+
+      try {
+        const categoryId = await findOrCreateCategory(data, row.category, categoryIds);
+        await data.Transaction.create({
+          date: new Date(`${row.date}T00:00:00.000Z`),
+          description: row.description,
+          amount: row.amount,
+          owner_id: ownerId,
+          category: { id: categoryId },
+        });
+        imported += 1;
+      } catch (error: unknown) {
+        const reason = expectedRowFailureReason(error);
+        if (!reason) throw error;
+        rejected.push({ row: record.row, reason });
+      }
+    }
+
+    return { imported, rejected };
+  },
+  [],
+);
+```
+
+Only row-correctable outcomes become rejections: the unique-value conflict and the HTTP
+statuses `400`, `403`, `404`, `409`, and `422`. Authentication, network, server, and
+unclassified errors are rethrown and fail the whole invocation.
+
+## Validate rows without changing the data
+
+Reject a bad row with a clear reason. Never coerce it into a default that silently changes
+what the user meant.
+
+- **Required values are present.** A row with no category is rejected as
+  `missing category`, not imported as `Uncategorized`.
+- **Numbers parse and fit the domain.** An expense amount must be positive and have at most
+  two decimal places, matching the `@decimal()` column. Allow zero or negative amounts only
+  when the domain models refunds or credits.
+- **Dates match the declared format.** The value must be `YYYY-MM-DD` and a real calendar
+  date; `2026-02-30` is rejected.
+- **Text fits its column.** Lengths are checked against the `max` set on each `@text()`
+  field.
+- **Duplicates are handled on purpose.** A row identical to an earlier row in the same file
+  is rejected with the earlier row's number. Re-importing the same file creates the rows
+  again; add a unique natural key to the entity if re-imports must be idempotent.
+- **One bad row never stops the others.** Each failure is added to `rejected`, and the loop
+  continues.
+
+## Resolve references idempotently
+
+Look references up and create them through `ctx.getDataClient()`. That client uses the
+invocation's Rayfin token, so the caller's permissions apply to every read and write.
+
+Query by a natural key the caller can see, and back that key with a database uniqueness
+guarantee — an initial lookup alone does not stop two concurrent imports from creating the
+same category. In this model, `normalizedName` is declared with `unique: true`. The function
+normalizes the name once, before both the lookup and the create, and when a concurrent
+import wins the race it catches only the unique-value error and rereads the winning row.
+
+The conflict check matches the exact sanitized message the Rayfin data client reports for a
+unique-value violation, so it never treats an unrelated failure as a conflict. An in-memory
+lock is not a substitute: several function workers can run the same import at once.
+
+A unique field makes the key global. For categories scoped to each user or tenant, the key
+must include the scope, and `@entity()` cannot declare a constraint across several fields —
+design the natural key accordingly.
+
+## Stamp the owner with `ctx.user.id`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Set the owner field from `ctx.user.id`. It is the same caller subject id that the
+frontend session exposes as `session.user.id` and that data policies evaluate as
+`claims.sub`, so a row the function creates passes the same `owner_id` policy as a row the
+frontend creates.
+
+- Never decode `ctx.accessToken` to find the owner.
+- Keep the owner field name and stamping consistent between frontend creates and function
+  creates.
+- `ctx.user.id` throws when the function is invoked without a signed-in Rayfin session.
+- Treat the id as personal data: do not log it or return it to other users.
+
+See [Writing a function](/docs/functions/writing-functions#stamp-the-owner-with-ctxuserid).
+
+## Pass a relationship object or a foreign key, not both
+
+The example sets the relationship with `category: { id: categoryId }`. If your entity also
+declares the scalar foreign key — `category_id` — pass either `category_id` or the
+`category` object in one `create` or `update` call, never both. When both are present, the
+SDK sends one foreign key value and the relationship object wins.
+
+## Build the import panel
+
+Accept pasted text even if you also offer a file picker: keyboard-only users and automated
+testers can fill a labelled `<textarea>` reliably, while native file pickers are not always
+available. The panel needs:
+
+- A visible label tied to the textarea with `htmlFor` and `id`.
+- A clear submit button, such as **Import CSV**.
+- A persistent `role="status"` region for the expected outcome, such as `4 imported, 2 rejected`.
+- A per-row rejection list with the CSV row number and the reason.
+- A separate `role="alert"` region for unexpected invocation failures.
+
+Register the functions service on the client so `client.functions` is typed by the
+generated `AppFunctionsSchema`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
+import type { AppSchema } from '../../rayfin/data/schema';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types';
+
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+    functions: functionsService<AppFunctionsSchema>(),
+  },
+});
+
+export type AppClient = typeof rayfinClient;
+```
+
+```tsx title="src/components/CsvImportPanel.tsx"
+import { useState } from 'react';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types';
+import type { AppClient } from '../services/rayfinClient';
+
+type ImportResult = AppFunctionsSchema['importTransactionsCsv']['output'];
+
+type CsvImportPanelProps = {
+  client: AppClient;
+  onImported?: () => void | Promise<void>;
+};
+
+export function CsvImportPanel({ client, onImported }: CsvImportPanelProps) {
+  const [csvText, setCsvText] = useState('');
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [error, setError] = useState('');
+  const [refreshError, setRefreshError] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  async function refreshImportedData(): Promise<void> {
+    setIsRefreshing(true);
+    setRefreshError('');
+    try {
+      await onImported?.();
+    } catch {
+      setRefreshError('The import succeeded, but refreshing the data failed.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  async function handleImport(): Promise<void> {
+    setIsImporting(true);
+    setResult(null);
+    setError('');
+    setRefreshError('');
+
+    let next: ImportResult;
+    try {
+      next = await client.functions.importTransactionsCsv.invoke({ csvText });
+    } catch {
+      setError('The import failed unexpectedly. Try again or contact support.');
+      return;
+    } finally {
+      setIsImporting(false);
+    }
+
+    setResult(next);
+    if (next.imported > 0) {
+      await refreshImportedData();
+    }
+  }
+
+  return (
+    <section aria-labelledby="csv-import-heading">
+      <h2 id="csv-import-heading">Import CSV</h2>
+      <label htmlFor="csv-import-text">Paste CSV text</label>
+      <textarea
+        id="csv-import-text"
+        value={csvText}
+        onChange={(event) => setCsvText(event.target.value)}
+        rows={8}
+      />
+      <button type="button" onClick={handleImport} disabled={isImporting}>
+        {isImporting ? 'Importing…' : 'Import CSV'}
+      </button>
+
+      <div role="status" aria-live="polite">
+        {result ? (
+          <>
+            <p>
+              {result.imported} imported, {result.rejected.length} rejected.
+            </p>
+            {isRefreshing ? <p>Refreshing imported data…</p> : null}
+            {result.rejected.length > 0 ? (
+              <ul>
+                {result.rejected.map((item) => (
+                  <li key={`${item.row}-${item.reason}`}>
+                    Row {item.row}: {item.reason}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        ) : (
+          <p>{isImporting ? 'Importing…' : 'No import has run.'}</p>
+        )}
+      </div>
+
+      {error ? <div role="alert">{error}</div> : null}
+      {refreshError ? (
+        <div role="alert">
+          <p>{refreshError}</p>
+          <button type="button" onClick={refreshImportedData} disabled={isRefreshing}>
+            {isRefreshing ? 'Refreshing…' : 'Retry refresh'}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+```
+
+Render the panel only for signed-in users — for example
+`<CsvImportPanel client={rayfinClient} onImported={reloadTransactions} />` on a page behind
+your sign-in gate — and pass an `onImported` callback that reloads every list, total, or
+chart that reads the imported rows. Keep the result on screen: do not replace it with a
+route change, a collapsed drawer, or a toast that disappears.
+
+## Verify the import before shipping
+
+Type checks prove that the function is registered and that the generated client types
+match it. They do not prove that row validation, relationship writes, or dashboard refreshes
+work. Before you call an import done:
+
+1. Run the type check and build for the frontend and the functions package. If your template
+   provides a functions validator — the Universal App's functions capability adds
+   `npm run validate:functions` — run it too.
+2. Run the import through the UI, with `npm run dev` or against the deployed app, using a
+   fixture that mixes valid and invalid rows.
+3. Import one row first and confirm the caller can read the row the function created.
+4. Confirm the `role="status"` region shows the expected imported and rejected counts, and
+   that each rejected row shows the expected row number and reason.
+5. Reload the page and confirm the imported rows, and any totals or charts built on them,
+   come from the saved data.
+
+This fixture has three valid rows and three invalid ones:
+
+```text title="fixtures/transactions-import.csv"
+date,description,amount,category
+2026-01-05,Groceries,54.20,Food
+2026-01-06,"Bus pass, monthly",75.00,Transport
+2026-01-07,Coffee,4.50,
+2026-01-08,Refund,-20.00,Food
+2026-02-30,Snacks,3.25,Food
+2026-01-09,Cinema,18.00,Entertainment
+```
+
+The panel should report `3 imported, 3 rejected.` and list:
+
+| Row | Reason |
+| --- | --- |
+| 4 | `missing category` |
+| 5 | `amount must be positive` |
+| 6 | `invalid date (expected YYYY-MM-DD)` |
+
+If your domain models refunds, replace row 5 with a different domain violation.
+
+```prompt title="Add a CSV import function to my Rayfin app"
+In my Rayfin 2.0 project, add a CSV import for <entity> with these columns and rules: <columns, required fields, formats, and domain rules>.
+
+Function: in rayfin/functions/src/function_app.ts, register `udf.func('<name>', async (csvText: string, ctx: RayfinContext<AppSchema>) => ..., [])`. Reject inputs over a size limit and cap the row count so the call finishes inside the 250-second invocation limit. Parse the CSV on the server, handling quoted values, commas and line breaks inside quotes, doubled quotes, blank lines, a leading BOM, and CRLF/LF/CR endings. Match header names case-insensitively after trimming, and reject the whole import with one reason when a required column is missing. Validate every row independently and return `{ imported, rejected: [{ row, reason }] }`, numbering rows the way a spreadsheet shows them (header is row 1). Never coerce missing or out-of-domain values into defaults. Resolve or create referenced records with `ctx.getDataClient()` by a normalized natural key that has a unique constraint, and reread the winner after a unique-value conflict. Stamp the owner field with `ctx.user.id`; never decode `ctx.accessToken`. Pass either a relationship object or its foreign key scalar, never both. Turn only row-correctable failures into rejections and rethrow authentication, network, and unclassified errors.
+
+Frontend: register `functions: functionsService<AppFunctionsSchema>()` (from @microsoft/rayfin-functions) in the existing `RayfinClient.create` call. Add a panel with a labelled <textarea> for pasted CSV, an "Import CSV" button, a persistent role="status" region showing "<n> imported, <m> rejected" with each rejected row number and reason, and a separate role="alert" region for unexpected failures. Refresh the views that read the imported data after a successful import.
+
+Verify with a fixture that mixes valid and invalid rows through the UI, and report the counts and reasons the panel shows.
+```

@@ -1,10 +1,53 @@
 ---
 title: Sessions
-description: "Use Rayfin's opaque auth session safely: read documented fields, subscribe with onSessionChange, refresh, and sign out."
+description: "Use Rayfin's opaque auth session safely: configure browserSession, read documented fields, subscribe with onSessionChange, refresh, sign out, and dispose clients."
 ---
 
 Every supported Rayfin sign-in path installs the same opaque session on `client.auth`.
 Fabric SSO popup, Fabric embedded auth, direct Entra token sign-in, and external embed host differ in how the session is acquired, not in how your app reads it.
+
+## Create the client with a browser session
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`client.auth` exists only when you create the client with `browserSession()` from `@microsoft/rayfin-auth`.
+Session options are arguments to `browserSession()`:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import type { AppSchema } from '../../rayfin/data/schema';
+
+export const client = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({
+    storage: true,
+    persistSession: true,
+    autoRefreshToken: true,
+  }),
+  services: {
+    data: dataService<AppSchema>(),
+  },
+});
+```
+
+A client created with `suppliedToken()` has no `client.auth`: your code owns that token and its refresh.
+
+## Configure session options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `storage` | Browser `localStorage` when available | `true` for the default storage, `false` for a memory-only session, or a custom `AuthStorage` implementation. |
+| `storageKeyPrefix` | None | Prefix for the stored session and PKCE keys, for isolating several sessions in one storage. |
+| `persistSession` | `true` | When `false`, skips all storage reads and writes. |
+| `autoRefreshToken` | `true` | When `false`, disables scheduled renewal and automatic renewal on `401`. |
+| `multiTabSync` | On in browsers with `localStorage` | When `false`, tabs do not share sign-in, refresh, and sign-out. |
+| `refreshTimeout` | `10000` | Milliseconds allowed for the renewal Rayfin runs before sending a request whose token is about to expire. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+
+In Rayfin 1.x, `authStorage`, `persistSession`, `autoRefreshToken`, and `multiTabSync` were top-level `RayfinClient` options.
+In 2.0, passing them to `RayfinClient.create()` fails with `INVALID_AUTH_CONFIG`; pass them to `browserSession()` instead, with `authStorage` renamed to `storage`.
 
 ## Sessions are opaque
 
@@ -25,8 +68,8 @@ interface OpaqueSession {
 | Field | Description |
 | --- | --- |
 | `user` | The signed-in user, or `null` when no user is signed in. |
-| `isAuthenticated` | `true` when a valid authenticated session is installed. |
-| `isAnonymous` | `true` for an anonymous or signed-out session. |
+| `isAuthenticated` | `true` only while the session holds an access token that has not expired. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `isAnonymous` | `true` for an anonymous session. |
 | `role` | The user's role when known. |
 | `expiresAt` | When the current Rayfin access token expires. |
 
@@ -35,14 +78,36 @@ interface OpaqueSession {
 > Do not depend on session internals. Rayfin can change those without breaking apps that use only the documented fields.
 
 ```typescript title="src/auth/checkSession.ts"
-const session = client.auth.getSession();
+import type { User } from '@microsoft/rayfin-auth';
+import { client } from '../services/rayfinClient';
 
-if (session.isAuthenticated && session.user) {
-  showApp(session.user);
-} else {
-  showSignInPage();
+export type AuthView =
+  | { kind: 'signed-in'; user: User }
+  | { kind: 'renewing'; user: User }
+  | { kind: 'signed-out' };
+
+export function currentAuthView(): AuthView {
+  const session = client.auth.getSession();
+  if (session.isAuthenticated && session.user) {
+    return { kind: 'signed-in', user: session.user };
+  }
+  if (session.user && client.auth.hasRefreshToken()) {
+    // The access token lapsed, for example while offline. Rayfin renews it when it can.
+    return { kind: 'renewing', user: session.user };
+  }
+  return { kind: 'signed-out' };
 }
 ```
+
+## When the access token lapses
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+If the access token expires before Rayfin can renew it — for example, the device slept or was offline — `isAuthenticated` reads `false` while `user` stays set and `hasRefreshToken()` returns `true`.
+Rayfin renews the token when it can and then emits `AUTH_REFRESH`.
+No event fires at the moment the token lapses, so read `getSession()` when you need the current state.
+
+In Rayfin 1.x, `isAuthenticated` stayed `true` after the access token expired.
 
 ## Read the current session once
 
@@ -50,16 +115,20 @@ if (session.isAuthenticated && session.user) {
 Call it once on startup, then rely on `onSessionChange` for updates.
 
 ```typescript title="src/auth/currentSession.ts"
+import { client } from '../services/rayfinClient';
+
 const session = client.auth.getSession();
 console.log('Authenticated:', session.isAuthenticated);
 ```
 
 ## Subscribe with onSessionChange
 
-`onSessionChange` fires after sign-in, sign-out, token refresh, user updates, and expiration.
+`onSessionChange` fires after sign-in, sign-out, token renewal, and session expiry.
 It returns an unsubscribe function.
 
 ```typescript title="src/auth/subscribe.ts"
+import { client } from '../services/rayfinClient';
+
 const unsubscribe = client.auth.onSessionChange((session) => {
   if (session?.isAuthenticated) {
     console.log('Signed in as', session.user?.email);
@@ -78,54 +147,115 @@ unsubscribe();
 
 See [React integration](/docs/auth/react) for a complete `AuthProvider` and `useAuth()` hook.
 
-## Let Rayfin handle tokens
+## How Rayfin renews tokens
 
-Rayfin attaches the current session to `client.data.*` and `client.functions.*` calls.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Rayfin attaches the current session to every request made through the client's services, such as `client.data.*` and `client.functions.*`.
 Application code should not read, store, or forward Rayfin tokens.
+With `autoRefreshToken` on and a refresh token available, Rayfin keeps the access token fresh:
+
+- **Before expiry.** It renews the token up to 60 seconds before it expires — halfway through its lifetime for very short-lived tokens — so a healthy session never holds a lapsed token. In 1.x, renewal ran when the token expired.
+- **Before a request.** When a request would use a token that expires within 60 seconds, Rayfin renews it first and waits up to `refreshTimeout`. If that renewal fails for a transient reason while the token is still valid, the request goes out with the current token; if the token has already expired, the request fails with the renewal error instead of sending a lapsed token.
+- **After a transient failure.** A network or server error keeps the session and retries after 5 seconds, doubling up to 60 seconds between attempts. In 1.x, a failed background renewal was not retried on a schedule.
+- **When the tab wakes.** When a tab becomes visible, regains focus, or comes back online, Rayfin renews a token that is about to expire.
+- **On a `401` response.** Rayfin renews the token once and retries the request.
+
+When the refresh token is rejected — expired, revoked, or no longer valid for the user — the session ends: Rayfin clears it, emits `AUTH_SESSION_EXPIRED` and `AUTH_LOGOUT`, and `refreshSession()` rejects with `SESSION_EXPIRED`.
+A [dynamic claims](/docs/auth/dynamic-claims) denial during renewal ends the session the same way, and `refreshSession()` rejects with `SIGN_IN_DENIED`. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Direct Entra token sign-in stores a Rayfin session, not the supplied Entra token.
+Later renewals use the Rayfin refresh token.
+If renewal can no longer establish a Rayfin session, acquire another delegated Entra token and sign in again.
+
+## Refresh the session yourself
+
+Most browser apps never call `refreshSession()`.
+Call it when you need a new token now — for example, to pick up changed [dynamic claims](/docs/auth/dynamic-claims#pick-up-changed-claims).
 
 | Method | Description |
 | --- | --- |
 | `hasRefreshToken()` | Returns whether a Rayfin refresh token is available. |
-| `refreshSession()` | Refreshes the current session using the stored Rayfin refresh token. Concurrent calls share one in-flight request. |
-| `startAutoRefresh()` | Re-enables scheduled refresh when `autoRefreshToken: false` was used. |
-| `stopAutoRefresh()` | Cancels scheduled refresh when `autoRefreshToken: false` was used. |
-| `destroy()` | Removes listeners and timers. Use it when a standalone `Auth` instance is no longer needed. |
-
-`refreshSession()` exists to satisfy the refresh contract, not as a supported way to extract a token for reuse elsewhere.
-A Node.js script that constructs `Auth` with `storage: false` does not have a stored browser refresh token until a provider installs a session.
-See [Seeding data](/docs/data/seeding#what-a-seed-script-can-authenticate-as) for what a script can authenticate as.
-
-Rayfin schedules a refresh automatically as the access token approaches expiry when a refresh token is available.
-Most browser apps do not need to call `refreshSession()` directly.
+| `refreshSession(options?)` | Renews the session with the stored refresh token. Concurrent calls share one in-flight request. `options.timeout` (milliseconds) and `options.signal` (an `AbortSignal`) bound the call. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `startAutoRefresh()` | Re-enables scheduled renewal when `autoRefreshToken: false` was used. |
+| `stopAutoRefresh()` | Cancels scheduled renewal when `autoRefreshToken: false` was used. |
+| `destroy()` | Removes listeners and timers. `client.dispose()` calls it for you. |
 
 ```typescript title="src/auth/refresh.ts"
-if (client.auth.hasRefreshToken()) {
+import { AuthError } from '@microsoft/rayfin-client';
+import { client } from '../services/rayfinClient';
+
+/** Renews the session now. Returns false when the session has ended. */
+export async function refreshNow(): Promise<boolean> {
+  if (!client.auth.hasRefreshToken()) return false;
   try {
-    await client.auth.refreshSession();
-  } catch {
-    await client.auth.signOut();
+    await client.auth.refreshSession({ timeout: 10_000 });
+    return true;
+  } catch (error) {
+    if (
+      error instanceof AuthError &&
+      (error.code === 'SESSION_EXPIRED' || error.code === 'SIGN_IN_DENIED')
+    ) {
+      return false; // The session has ended; send the user to sign in again.
+    }
+    throw error; // A transient failure: the session is kept.
   }
 }
 ```
 
-Direct Entra token sign-in stores a Rayfin session, not the supplied Entra token.
-Later refreshes use the Rayfin refresh token.
-If refresh can no longer establish a Rayfin session, acquire another delegated Entra token and sign in again.
+`refreshSession()` exists to satisfy the refresh contract, not as a supported way to extract a token for reuse elsewhere.
+After a failed renewal, an immediate retry can reject with `REFRESH_BACKOFF` until the backoff window passes.
+
+## Share a session across tabs
+
+With `multiTabSync` on, the tabs of one app share a session.
+A sign-in or renewal in one tab is adopted by the others after they validate its access token, and adopting it emits `AUTH_REFRESH`.
+A sign-out in one tab signs the others out.
+
+A tab that adopts a session renews it on that session's schedule instead of refreshing again, and concurrent renewals — in one tab or across tabs — wait on a shared lock and never replay a refresh token that has already been rotated. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Sign out
 
 `signOut()` revokes the current access token and clears the local session.
+The local session is cleared even if the server call fails; `signOut()` then rethrows that error.
+
+- If the access token has lapsed, `signOut()` renews it first so the server accepts the revocation. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+- A renewal that completes after sign-out no longer restores the session. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript title="src/auth/signOut.ts"
-await client.auth.signOut();
+import { client } from '../services/rayfinClient';
+
+export async function signOut(): Promise<void> {
+  try {
+    await client.auth.signOut();
+  } catch (error) {
+    // The local session is already cleared; only the server-side revocation failed.
+    console.warn('Sign-out could not reach the server:', error instanceof Error ? error.message : error);
+  }
+}
 ```
 
 `signOutAll()` revokes every active session for the current user across devices and returns `{ count }`.
 
 ```typescript title="src/auth/signOutAll.ts"
+import { client } from '../services/rayfinClient';
+
 const result = await client.auth.signOutAll();
 console.log(`Revoked ${result.count} sessions`);
 ```
+
+## Dispose the client
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Call `client.dispose()` when the scope that owns the client ends — for example, at the end of a script or in a test teardown.
+Disposal calls `Auth.destroy()` on `client.auth`:
+
+- Timers and browser listeners stop, and new or queued renewals reject with `AUTH_DESTROYED`.
+- It does not sign out, revoke tokens, or delete the persisted session, so the next page load restores it.
+- A renewal already sent to the server can still finish and persist the rotated refresh token, so the stored session stays usable.
+
+Requests made through a disposed client fail with `CLIENT_DISPOSED`.
 
 ## Auth events
 
@@ -135,22 +265,45 @@ For narrower lifecycle handling, subscribe to a named event with `on(event, hand
 | Event | Fires when |
 | --- | --- |
 | `AUTH_LOGIN` | A session is established. |
-| `AUTH_LOGOUT` | The user signs out. |
-| `AUTH_REFRESH` | The session refreshes. |
-| `AUTH_SESSION_EXPIRED` | The access token expires and no refresh token can recover the session. |
+| `AUTH_LOGOUT` | The session is cleared — by sign-out in this tab or another tab, or because it ended. |
+| `AUTH_REFRESH` | The access token is renewed, or this tab adopts a session renewed in another tab. |
+| `AUTH_SESSION_EXPIRED` | The session ends because its token lapsed and could not be renewed: there is no refresh token, or it was rejected. |
 
 ```typescript title="src/auth/expired.ts"
+import { client } from '../services/rayfinClient';
+
 const unsubscribe = client.auth.on('AUTH_SESSION_EXPIRED', () => {
-  redirectToSignIn();
+  window.location.assign('/sign-in');
 });
 
+// Later, when the listener is no longer needed:
 unsubscribe();
+```
+
+## Read token claims
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`client.auth.getClaims()` validates the current access token and returns its claims without exposing the token: the base claims `sub`, `email`, and `role`, plus any app-defined [dynamic claims](/docs/auth/dynamic-claims), which arrive as strings.
+It rejects with an `AuthError` whose code is `NO_SESSION` when no one is signed in.
+Use claims for UI hints and keep authorization in [entity policies](/docs/data/permissions).
+
+```typescript title="src/auth/subject.ts"
+import { client } from '../services/rayfinClient';
+
+export async function getSignedInSubject(): Promise<string | null> {
+  if (!client.auth.getSession().isAuthenticated) return null;
+  const claims = await client.auth.getClaims();
+  return claims.sub;
+}
 ```
 
 ## Server or script cleanup
 
-When you construct `Auth` directly for Node.js or a short-lived server operation, use memory-only storage and call `destroy()` in `finally`.
-Use a separate `Auth` instance per user session in server code.
+In Node.js, keep sessions in memory and release them when the work ends.
+A script that creates a `RayfinClient` with `browserSession({ storage: false })` calls `client.dispose()` in `finally`; see [Sign in with an Entra token](/docs/auth/entra-token) for a complete example.
+When you construct `Auth` directly, pass `{ storage: false }` and call `destroy()` in `finally`.
+Use a separate `Auth` instance or client per user in server code.
 
 ```typescript title="scripts/authCleanup.ts"
 import { Auth } from '@microsoft/rayfin-auth';
@@ -165,16 +318,20 @@ const auth = new Auth(apiClient, { storage: false });
 auth.attachToClient(apiClient);
 
 try {
-  await runWork(auth);
+  // Sign in with signInWithEntraToken(auth, { entraToken }), then call the backend through apiClient.
+  console.log('Authenticated:', auth.getSession().isAuthenticated);
 } finally {
   auth.destroy();
 }
 ```
 
+A Node.js script with no stored browser session has no refresh token until a sign-in helper installs a session.
+See [Seeding data](/docs/data/seeding#what-a-seed-script-can-authenticate-as) for what a script can authenticate as.
+
 ```prompt title="Gate a page behind authentication"
-In my Rayfin React app, gate the main app route behind authentication.
+In my Rayfin 2.0 React app, gate the main app route behind authentication.
 
-On mount, read client.auth.getSession() once, then subscribe with client.auth.onSessionChange(...) to keep it in sync. Do not use onAuthStateChange; it does not exist on the Rayfin auth client.
+The client is created with RayfinClient.create({ ..., auth: browserSession({ storage: true }) }), importing browserSession from @microsoft/rayfin-auth, so client.auth exists. On mount, await initEmbeddedAuth(client.auth, fabricOptions) from @microsoft/rayfin-auth-provider-fabric (it resolves to null instead of rejecting), then read client.auth.getSession() and subscribe with client.auth.onSessionChange(...) to keep it in sync. Do not use onAuthStateChange; it does not exist on the Rayfin auth client.
 
-Show a loading state until the first session check completes, then render the app if session.isAuthenticated and session.user are present, or redirect to a sign-in page otherwise. Do not introspect any session fields beyond isAuthenticated, isAnonymous, user, role, and expiresAt.
+Show a loading state until that first check completes. Render the app when session.isAuthenticated is true. When isAuthenticated is false but session.user is set and client.auth.hasRefreshToken() is true, the token lapsed and Rayfin is renewing it — keep the user on the page with a reconnecting notice instead of redirecting. Otherwise redirect to the sign-in page. Do not introspect any session fields beyond isAuthenticated, isAnonymous, user, role, and expiresAt.
 ```

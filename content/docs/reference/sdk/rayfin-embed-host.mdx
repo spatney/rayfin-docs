@@ -14,6 +14,10 @@ appliesTo: "@microsoft/rayfin-embed-host >= 1.36"
 npm install @microsoft/rayfin-embed-host
 ```
 
+The package declares an `exports` map; import from `@microsoft/rayfin-embed-host` only, never from a `dist/` path. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The embedded Rayfin app needs `@microsoft/rayfin-auth-provider-fabric` and a client created with `browserSession()`; see [Embed in your own portal](/docs/auth/embed-host).
+
 ## Exports
 
 ```typescript
@@ -92,6 +96,8 @@ The host handles two message families on channel `fabric-auth`:
 | `response` | parent to iframe | Correlated success or error response. |
 
 The host ignores readiness and handoff messages from origins outside `allowedOrigins`. Handoff requests must come from the same window and origin that completed readiness.
+
+The embedded app sends `externalEmbed.ready` only when it has no Fabric embedded hint — the `fabricEmbedded` option, a `?fabricEmbedded=true` URL parameter, or the Fabric flag remembered in its `sessionStorage` — and it waits 300 ms for `externalEmbed.ack`. Without an acknowledgement in that window, the app does not use the external embed flow. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## HandoffRequest and HandoffResult
 

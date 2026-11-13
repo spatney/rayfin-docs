@@ -24,16 +24,20 @@ npx rayfin init [directory]
 ```
 
 `[directory]` defaults to the current directory and doubles as the default project name.
+When you choose **Start from scratch**, init also moves an existing `dev` script to
+`dev:frontend` and sets `dev` to `rayfin dev`; see [Existing `dev` script](#existing-dev-script).
+[New in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Interactive prompts
 
 Without flags, `rayfin init` asks for the template/source first. In scratch mode it then
-asks which services to enable, which auth method to use, and whether static hosting should
-be configured. Fabric SSO is the supported auth method. The Data dialect defaults to
-`mssql` because managed Fabric apps use MSSQL.
+asks which services to enable (Auth, Data, Storage, and Functions), which auth method to
+use, and whether static hosting should be configured. Storage is listed without a feature
+flag. [Changed in 2.0](/docs/reference/changelog#rayfin-20) Fabric SSO is the supported
+auth method. The Data dialect defaults to `mssql` because managed Fabric apps use MSSQL.
 
 The default interactive template path is the `blankapp` built-in, displayed as
-`✨ Use default template` and backed by the Universal App in 1.36. Choose **Start from scratch** only when you want the CLI to write
+`✨ Use default template` and backed by the Universal App since 1.36. Choose **Start from scratch** only when you want the CLI to write
 a minimal `rayfin.yml` instead of copying a template.
 
 ## Reconfiguring an existing project
@@ -54,9 +58,9 @@ settings and applies only explicit command-line choices such as `--project-name`
 | `--project-name <name>` | directory name | Override the project name and update `rayfin.yml` without changing the directory. |
 | `-t, --template <uri>` | prompt | Template name, git URL, or local path to create the project from. |
 | `--template-name <name>` | prompt for multi-template sources | Pick one template from a multi-template source non-interactively. |
-| `-l, --list-templates` | `false` | List all available project templates and exit. |
+| `-l, --list-templates` | `false` | List available templates (built-in, local registry, and, with `--template <url>`, the remote source) as JSON and exit. Listing a remote git source is new. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `--dialect <dialect>` | `mssql` when Data is enabled | Database dialect. Fabric supports `mssql`. |
-| `--services <list>` | `auth,data` in non-interactive scratch init | Comma-separated services to enable: `auth`, `data`, `functions`. `functions` is accepted without a feature flag. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `--services <list>` | `auth,data` in non-interactive scratch init | Comma-separated services to enable: `auth`, `data`, `storage`, `functions`. `functions` is accepted without a feature flag [Changed in 1.36](/docs/reference/changelog#rayfin-136); `storage` is accepted and requires `data` [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `--auth-methods <list>` | `fabric` | Comma-separated auth methods. `fabric` is the supported value. |
 | `--static-hosting` | `true` | Scaffold a static frontend. |
 | `--overwrite` | `false` | Overwrite existing configuration files. |
@@ -68,19 +72,29 @@ Root `-y, --yes`, `--output <mode>`, `--json`, and `--verbose` also apply.
 
 ## Services
 
-Auth and Data are regular services. Functions are regular in 1.36; use
+Auth and Data are regular services. Functions are generally available since 1.36; use
 `--services auth,data,functions` to scaffold the Functions block and starter package.
-Storage remains experimental and is only offered when `RAYFIN_FEATURE_FLAGS=storage` or an
-existing config enables storage.
+
+Storage is generally available in 2.0 and no longer needs a feature flag.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20) Selecting it writes
+`services.storage.enabled: true` and creates an empty `rayfin/storage/` folder. Storage
+requires Data, so `--services auth,storage` fails with `Storage requires the Data service.`;
+pass `--services auth,data,storage`. To add Storage to an existing app with a starter
+folder, dependencies, and client wiring, run `rayfin storage init` instead — see
+[Storage](/docs/storage).
 
 ## What init writes
 
-For a scratch 1.36 project, `rayfin init` writes:
+For a scratch project (**Start from scratch**), `rayfin init` writes:
 
 - `rayfin/rayfin.yml` with `id`, `name`, `version`, and a `services` block.
 - `services.staticHosting.assetAccess: protected` when static hosting is scaffolded. [New in 1.35.1](/docs/reference/changelog#rayfin-1351)
 - `services.functions.auth.type: application` when Functions are selected. [New in 1.36](/docs/reference/changelog#rayfin-136)
+- `services.storage.enabled: true` and an empty `rayfin/storage/` when Storage is selected. [New in 2.0](/docs/reference/changelog#rayfin-20)
 - `rayfin/data/` when Data is enabled.
+- `rayfin/tsconfig.json`, the schema compile config, with NodeNext `module` and `moduleResolution`. Since 2.0 it also sets `ESNext.Decorators` in `lib` and `node` in `types`; when the project has a root `tsconfig.json`, it extends it and keeps that file's `lib` and `types` entries. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+- `@types/node` (`^22.0.0`) in `devDependencies` when `package.json` does not declare it yet. [New in 2.0](/docs/reference/changelog#rayfin-20)
+- `rayfin/package.json` containing `{ "type": "module" }` when the app's package scope is not ESM and the file does not exist yet. [New in 2.0](/docs/reference/changelog#rayfin-20)
 - A Functions package when Functions are enabled, unless the template already supplies one.
 - `.gitignore` entries for local Rayfin state.
 - Agent files: `AGENTS.md` one time, `mcpServers.rayfin` in `.mcp.json`, and Rayfin skills under `.agents/skills/`.
@@ -88,14 +102,85 @@ For a scratch 1.36 project, `rayfin init` writes:
 When a template already ships `rayfin.yml`, the CLI preserves the authored service shape
 and only applies explicit identity, dialect, and `--services` edits.
 
+### Schema files under NodeNext
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+The schema files under `rayfin/` compile as ES modules, either because the app's
+`package.json` sets `"type": "module"` or because init added the `rayfin/package.json`
+marker. That has two consequences:
+
+- Relative imports between schema files need a `.js` extension, for example
+  `import { Todo } from './Todo.js';`. Without it, TypeScript reports `TS2835`.
+- When the `rayfin/package.json` marker exists, `rayfin/` is its own package boundary:
+  root `package.json` `imports` aliases and package self-references do not resolve
+  there. Use relative imports.
+
+Schema compilation uses the app's TypeScript first, and an installed TypeScript must match
+`^5.7.2 || ^6.0.2`.
+
+## Existing `dev` script
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+A scratch scaffold rewires an existing project's `dev` script to match the bundled
+templates: the previous command moves to `dev:frontend`, and `dev` becomes `rayfin dev`.
+Before:
+
+```json title="package.json"
+{
+  "name": "my-app",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@microsoft/rayfin-cli": "^2.0.0"
+  }
+}
+```
+
+After `npx rayfin init . --project-name my-app --yes`, which also installs the Rayfin
+packages and declares `@types/node`:
+
+```json title="package.json"
+{
+  "name": "my-app",
+  "scripts": {
+    "dev": "rayfin dev",
+    "build": "vite build",
+    "dev:frontend": "vite"
+  },
+  "devDependencies": {
+    "@microsoft/rayfin-cli": "^2.0.0",
+    "@types/node": "^22.0.0"
+  },
+  "dependencies": {
+    "@microsoft/rayfin-auth": "^2.0.0",
+    "@microsoft/rayfin-client": "^2.0.0",
+    "@microsoft/rayfin-core": "^2.0.0",
+    "@microsoft/rayfin-data": "^2.0.0"
+  }
+}
+```
+
+The CLI prints
+`🔧 Updated package.json: "dev" now runs "rayfin dev" (previous command moved to "dev:frontend")`.
+The rewrite happens only when `@microsoft/rayfin-cli` was installed by the run or is
+already declared as a dependency. It is skipped when `dev` already runs `rayfin dev`, and
+`dev` is left unchanged when `dev:frontend` already holds a different command. Template
+scaffolds keep the template's scripts.
+
 ## Template selection
 
 Built-in templates use stable CLI names such as `dataapp`, `gettingstartedauth`, and
-`todoapp`. The `blankapp` built-in remains the visible default template name; in 1.36 it is backed by `universal-app` and displayed as `✨ Use default template`. Plugin automation can still pass `--template universal-app`.
+`todoapp`. The `blankapp` built-in remains the visible default template name; since 1.36 it is backed by `universal-app` and displayed as `✨ Use default template`. Plugin automation can still pass `--template universal-app`.
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
 Run `npx rayfin init --list-templates` in the target project to see names accepted by the
-installed CLI. See [Templates](/docs/reference/cli/templates).
+installed CLI. Add `--template <git-url>` to also list the entries in a remote template
+source. [Changed in 2.0](/docs/reference/changelog#rayfin-20) See
+[Templates](/docs/reference/cli/templates).
 
 ## Next steps
 
@@ -106,7 +191,7 @@ npx rayfin up
 ```
 
 Use `npm run dev` for the local Fabric-backed session. Use `rayfin up` to publish static
-content and Functions.
+content and Functions and to apply Data and Storage declarations.
 
 ## Agent files subcommand
 
@@ -117,4 +202,15 @@ Create a new Rayfin project named orders-app with the current CLI. Use
 `npm create @microsoft/rayfin@latest orders-app -- --services auth,data,functions --auth-methods fabric --yes`,
 then show the generated rayfin/rayfin.yml and confirm it contains
 `services.staticHosting.assetAccess: protected` and `services.functions.auth.type: application`.
+```
+
+```prompt title="Add Rayfin to my existing Vite project"
+Add Rayfin 2.0 to my existing Vite + TypeScript project. Run
+`npm install --save-dev @microsoft/rayfin-cli@^2.0.0`, then
+`npx rayfin init . --project-name <name> --services auth,data --yes` from the project
+root. Afterwards confirm that package.json has "dev": "rayfin dev" with my previous dev
+command moved to "dev:frontend", that @types/node is in devDependencies, that
+rayfin/tsconfig.json uses NodeNext, and that rayfin/package.json contains
+{"type": "module"} unless my package.json already sets "type": "module". Then run
+`npx rayfin login` and `npm run dev`.
 ```

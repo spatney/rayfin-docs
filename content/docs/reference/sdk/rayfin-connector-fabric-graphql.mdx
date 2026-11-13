@@ -4,18 +4,20 @@ description: Marker APIs for Category A Fabric SQL connectors that expose typed 
 appliesTo: "@microsoft/rayfin-connector-fabric-graphql >= 1.36"
 ---
 
-`@microsoft/rayfin-connector-fabric-graphql` supplies marker types for Category A connectors. It has no runtime behavior. The entity proxy comes from
+`@microsoft/rayfin-connector-fabric-graphql` supplies marker types for Category A connectors.
+It has no runtime behavior. The entity proxy comes from
 [`@microsoft/rayfin-connectors`](/docs/reference/sdk/rayfin-connectors). See
 [Generating entity files](/docs/connectors/entity-generation) for the guide workflow.
 
 ## Installation
 
 ```bash
-npm install @microsoft/rayfin-connector-fabric-graphql@1.36.2
+npm install @microsoft/rayfin-connector-fabric-graphql@2.0.0 @microsoft/rayfin-connectors@2.0.0
 ```
 
-This package is not a dependency of `@microsoft/rayfin-client`, so a fresh app is missing
-it until you install it explicitly. Pin the version to the Rayfin CLI release you are using.
+Neither package is a dependency of `@microsoft/rayfin-client`, so a fresh app is missing them
+until you install them explicitly. Pin the version to the Rayfin CLI release you are using;
+`rayfin connector add` prints the exact command.
 
 ## `GraphQLBackedConnector`
 
@@ -23,11 +25,14 @@ it until you install it explicitly. Pin the version to the Rayfin CLI release yo
 connector types: `fabric-sqlanalytics`, `fabric-warehouse`, and `fabric-sqldatabase`.
 Per-type marker names such as `FabricWarehouse` do not exist.
 
-```typescript
+```typescript title="rayfin/connectors/sales/schema.ts"
 import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
 import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
-import type { Customer } from './Customer';
-import type { Order } from './Order';
+import type { Customer } from './Customer.js';
+import type { Order } from './Order.js';
+
+export type { Customer } from './Customer.js';
+export type { Order } from './Order.js';
 
 export const connectorConfig = {
   connector: 'fabric-warehouse',
@@ -38,7 +43,7 @@ export const connectorConfig = {
   },
 } as const satisfies ConnectorConfig;
 
-export type SalesWarehouseConnector = GraphQLBackedConnector<
+export type SalesSchema = GraphQLBackedConnector<
   {
     Customer: typeof Customer;
     Order: typeof Order;
@@ -47,13 +52,23 @@ export type SalesWarehouseConnector = GraphQLBackedConnector<
 >;
 ```
 
-`TSchema` maps entity names to their classes with `typeof`. `connectorConfig.entities` can register either string arrays of scalar field names or decorated entity classes. Prefer string arrays in browser-loaded code. Use class entries only when relationship selections need `@one` / `@many` cardinality, and verify the production bundle loads; see [Decorated entity classes can break a browser bundle](/docs/reference/known-limitations#decorated-entity-classes-can-break-a-browser-bundle).
-
-The constructor type carries
-the primary-key phantom from the entity source metadata; a bare instance type is treated as
+`TSchema` maps entity names to their classes with `typeof`. The constructor type carries the
+primary-key phantom from the entity source metadata; a bare instance type is treated as
 keyless. `TConfig` should be `typeof connectorConfig`, with the value declared
 `as const satisfies ConnectorConfig` so the `connector` and `operations` literals are not
 widened.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The marker also declares `TConfig` as the configuration it accepts, so `connectorsService`
+requires the generated `connectorConfig` itself for this connector. A config rebuilt by hand
+or annotated as `ConnectorConfig` no longer satisfies `ConnectorConfigs<AppConnectorsSchema>`.
+
+`connectorConfig.entities` registers either string arrays of scalar property names or
+decorated entity classes. Prefer string arrays in browser-loaded code. Use class entries only
+when relationship selections need `@one` / `@many` cardinality, and make sure the frontend
+bundler compiles TC39 decorators; see
+[Let the bundler compile entity decorators](/docs/connectors/client-setup#let-the-bundler-compile-entity-decorators).
 
 ## Restricted CRUD surface
 
@@ -79,12 +94,24 @@ type RestrictedEntityClient<
 `CrudOperation` is re-exported from `@microsoft/rayfin-connectors`. The marker reads
 `connectorConfig.operations` and keeps only the methods mapped to those CRUD verbs. It also
 drops `findByKey`, `update`, and `delete` for entities that do not declare a usable primary
-key.
+key. The dialect, `connectorConfig.connector`, decides the mutation result: Fabric Warehouse
+returns `DbOperationResult`, and other writable dialects return the row's registered scalar
+columns.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Read result types follow the selection: explicit field lists return exactly those fields, and
+reads without a selection return every scalar field as optional, without relationships. See
+[Read result types follow the selection](/docs/connectors/sql-sources#read-result-types-follow-the-selection).
 
 ## Runtime dependency
 
 The marker gates methods at compile time only. Runtime routing, GraphQL execution,
 read-after-write behavior, and `OPERATION_NOT_ALLOWED` checks live in
-`@microsoft/rayfin-connectors`, mounted by `ConnectorsRayfinClient` from
-`@microsoft/rayfin-client`. Link the generated connector schema into that
-client as described in [Wiring connectors into your app](/docs/connectors/client-setup).
+`@microsoft/rayfin-connectors`, registered on the client with `connectorsService`.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Register the generated `connectorConfig` under the connector's `rayfin.yml` name in
+`connectorsService({ configs })`; Category A connectors take no runtime entry. See
+[Wiring connectors into your app](/docs/connectors/client-setup).

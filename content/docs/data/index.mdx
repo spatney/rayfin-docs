@@ -35,46 +35,69 @@ policy declared above.
 
 ## Set up the client
 
-Construct one `RayfinClient` and reuse it across your app. Type it with your `AppSchema` so
-every entity access is fully typed.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Create one client with `RayfinClient.create` and reuse it across your app. Register the data
+service with `dataService<AppSchema>()` so every entity access is fully typed. The 2.0 client
+depends only on `@microsoft/rayfin-lib`, so install the auth and data packages yourself:
+
+```bash
+npm install @microsoft/rayfin-client @microsoft/rayfin-auth @microsoft/rayfin-data
+```
 
 ```typescript title="src/services/rayfinClient.ts"
 import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
 import type { AppSchema } from '../../rayfin/data/schema';
 
-export const rayfinClient = new RayfinClient<AppSchema>({
+export const rayfinClient = RayfinClient.create({
   baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
-  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY ?? '',
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+  },
 });
+
+export type AppClient = typeof rayfinClient;
 ```
 
 `VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` are generated into `.env.local` by
 `rayfin dev` during development, and by deployment/environment commands for deployed flows — see [Schema changes](/docs/data/migrations) for the apply workflow that produces them.
 
-That one client also carries [`client.auth`](/docs/auth) and, when enabled,
-[`client.functions`](/docs/functions/calling-functions). To additionally reach existing
-Fabric data sources, swap it for `ConnectorsRayfinClient` — see
-[Wiring connectors into your app](/docs/connectors/client-setup).
+The client exposes only what you register: `auth: browserSession()` adds
+[`client.auth`](/docs/auth), and `services.data` adds `client.data`. The 1.x form
+`new RayfinClient<AppSchema>(...)` was removed in 2.0, and the `EntitySchema` and
+`TypedDataClients` types now come from `@microsoft/rayfin-data` instead of the client package.
+See [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client) for every option and the
+1.x migration. [Removed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Register other capabilities on the same client. `functionsService` from
+`@microsoft/rayfin-functions` adds [`client.functions`](/docs/functions/calling-functions), and
+`connectorsService` from `@microsoft/rayfin-connectors` adds `client.connectors` for existing
+Fabric data sources — see [Wiring connectors into your app](/docs/connectors/client-setup).
 
 ## Model your schema
 
 - **[Modeling entities](/docs/data/modeling)** — `@entity()`, file layout, primary keys,
-  and the `schema.ts` registration step.
+  property names, the `schema.ts` registration step, and the TypeScript versions and module
+  settings schema compilation needs.
 - **[Field types](/docs/data/field-types)** — every field decorator and its options,
   including the MSSQL text-length rule.
 - **[Relationships](/docs/data/relationships)** — `@one()` / `@many()`, foreign key
-  columns, and the many-to-many workaround.
+  columns, reading related records, and the many-to-many workaround.
 - **[Permissions](/docs/data/permissions)** — `@role()`, `@anonymous()`,
-  `@authenticated()`, and the row-level policy DSL.
+  `@authenticated()`, the row-level policy DSL, and stamping owner fields from functions.
 
 ## Read and write
 
-- **[Querying](/docs/data/querying)** — the `select` / `where` / `orderBy` / `execute`
-  chain, filtering, and pagination.
+- **[Querying](/docs/data/querying)** — the `select` / `where` / `orderBy` / `execute` chain,
+  filtering, pagination, and result types that contain only the fields you select.
 - **[Aggregations](/docs/data/aggregations)** — sums, averages, and counts computed on the
   server with `groupBy()` and `aggregate()`.
-- **[Creating, updating, deleting](/docs/data/mutations)** — writes, and setting
-  relationships correctly.
+- **[Creating, updating, deleting](/docs/data/mutations)** — writes, what each mutation
+  returns, and setting relationships correctly.
 - **[Form validation](/docs/data/validation)** — generate form validation from the same
   entity, with no separate schema library.
 
@@ -83,6 +106,27 @@ Fabric data sources, swap it for `ConnectorsRayfinClient` — see
 - **[Schema changes](/docs/data/migrations)** — how edits to `rayfin/data/` reach the
   database, and how to verify they actually did.
 - **[Seeding data](/docs/data/seeding)** — populate a database from a Node.js script.
+
+```prompt title="Upgrade Rayfin data code to 2.0"
+Upgrade the Rayfin data code in my project to Rayfin 2.0. Install @microsoft/rayfin-client,
+@microsoft/rayfin-auth, @microsoft/rayfin-data, and @microsoft/rayfin-core at 2.0.0, and make
+sure TypeScript is ^5.7.2 or ^6.0.2. Replace `new RayfinClient<AppSchema>(...)` with
+`RayfinClient.create({ baseUrl, publishableKey, auth: browserSession({ storage: true }),
+services: { data: dataService<AppSchema>() } })`, importing browserSession from
+@microsoft/rayfin-auth and dataService from @microsoft/rayfin-data. Import EntitySchema and
+TypedDataClients from @microsoft/rayfin-data, and anything imported from
+@microsoft/rayfin-core/experimental from @microsoft/rayfin-core. Make every relative import
+between files under rayfin/ end in .js.
+
+Then fix queries and mutations for the 2.0 result types. Results contain only the fields passed
+to .select(), and findById, findFirst(filter), and findMany(filter) return only the primary
+key, so replace reads of other fields with .select([...]).where({ id: { eq: id } }).findFirst().
+Always use the builder that .select() returns. Add the [] marker to every one-to-many selection
+path ('notes.title' becomes 'notes[].title'). Convert selected date fields with new Date(value)
+and boolean fields with value === true || value === 'true'. create and update now return only
+the primary key plus the fields you passed, and delete returns only the primary key. Run the
+type-checker and fix every remaining error.
+```
 
 ```prompt title="Model your first entity"
 In my Rayfin project, create a new entity in rayfin/data/ that models [describe your

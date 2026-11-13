@@ -7,6 +7,34 @@ Use this page when you upgrade a Rayfin project or see a deprecation warning. Th
 list what changed and what to use instead; the [Changelog](/docs/reference/changelog) has
 the full upgrade steps for each release.
 
+## Removed or changed in 2.0
+
+2.0 is a major release. Its removals have no compatibility shims, so code that uses them
+no longer compiles or runs. See [Upgrade to 2.0](/docs/reference/changelog#upgrade-to-20).
+
+| Old | Use instead | Status |
+| --- | --- | --- |
+| `new RayfinClient(config)` and the default export of `@microsoft/rayfin-client` | `RayfinClient.create({ baseUrl, publishableKey, auth, services })`. See [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client). | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `ConnectorsRayfinClient` | Register `connectorsService({ configs, runtime })` from `@microsoft/rayfin-connectors`. See [Wiring connectors](/docs/connectors/client-setup). | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `ExtendableRayfinClient` and `RayfinClientBase` subclasses | Synchronous service factories in `services`, such as `storageService()`. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `RayfinServerClient` | `RayfinClient.create({ ..., auth: suppliedToken({ accessToken }) })`. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `@microsoft/rayfin-client/experimental` | The main `@microsoft/rayfin-client` entry plus adapters from their owning packages. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| Client options `authStorage`, `persistSession`, `autoRefreshToken`, `multiTabSync` | `browserSession({ storage, persistSession, autoRefreshToken, multiTabSync })` from `@microsoft/rayfin-auth`. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| Client options `accessToken`, `getAccessToken`, `onRefreshNeeded`, `onAuthExhausted` | `suppliedToken({ accessToken })`, or a custom auth factory. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `useProxy` on the client | `baseUrl: ''`. `RayfinClient.create` rejects `useProxy` with `INVALID_CONFIG`. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `EntitySchema`, `TypedDataClients`, `FunctionsSchema`, and connector types imported from `@microsoft/rayfin-client` | Import them from `@microsoft/rayfin-data`, `@microsoft/rayfin-functions`, and `@microsoft/rayfin-connectors`. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `@microsoft/rayfin-core/experimental` | `@microsoft/rayfin-core` for `blob`, `StorageObject`, `ContentTypes`, `bytes`, `kb`, `mb`, `gb`, `BlobFolderOptions`, `ByteSize`, `MimeGlob`, and the claims types. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `@microsoft/rayfin-core/decorators` and deep `dist/` imports into any package | The package root or another documented entry point. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| Storage `prefix` option on `upload`, `download`, `list`, and `delete` | Pass the full relative object path, such as `'users/42/avatar.png'`; `list(directoryPath)` takes the directory. See [Storage](/docs/storage). | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `RAYFIN_FEATURE_FLAGS=storage` | Nothing. Storage is generally available. | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| Connector `type: kusto`, `@microsoft/rayfin-connector-kusto`, `kusto()`, and `Kusto*` types | `type: eventhouse` with `auth.type: application`, `@microsoft/rayfin-connector-eventhouse`, `eventhouse()`, and `Eventhouse*` types. See [Eventhouse](/docs/connectors/eventhouse). | [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| Raw KQL in Eventhouse `executeQuery({ query })` and `executeCommand({ command })` | Saved queries in the connector's `additionalPayload`, called with `{ queryId, parameters }`. | [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| To-many relationship selections without a marker, such as `'notes.title'` | `'notes[].title'`. To-one paths such as `'notebook.name'` are unchanged. See [Querying](/docs/data/querying). | [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| Reading non-key fields from `findById`, `findMany`, or `findFirst` results | `.select([...])` the fields you need; those helpers return the primary key only. | [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| Relying on the client to turn `"true"`/`"false"` and ISO date strings into booleans and `Date` objects | Convert selected values explicitly; results are typed `Date \| string` and `boolean \| 'true' \| 'false'`. See [Field types](/docs/data/field-types#values-you-read-back). | [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| TypeScript 5.0–5.7.1, 6.0.0, or 6.0.1 for schema compilation | TypeScript `^5.7.2` or `^6.0.2`. | [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `@microsoft/fabric-user-data-functions` at a version older than the CLI | The exact CLI version. The 2.0 CLI blocks older workers before type generation or deployment. | [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+
 ## Deprecated or removed in 1.36
 
 | Old | Use instead | Status |
@@ -15,13 +43,13 @@ the full upgrade steps for each release.
 | `ctx.getSecret('API_KEY')` in a function | `ctx.Secrets.API_KEY`, after declaring the secret with `rayfin secret set API_KEY --describe="..."`. See [Secrets in functions](/docs/functions/secrets). | [Deprecated in 1.36](/docs/reference/changelog#rayfin-136) |
 | Enabled Functions with no `services.functions.auth` | `services.functions.auth.type: application`. Function connections now run as the app identity. | [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 | `AudienceType.CosmosDB`, `KeyVault`, `EventGrid`, `Kusto`, `WorkIQ` | No replacement audience. For services that accept keys, store a credential with `rayfin secret set`. | [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `entity`, field decorators, and `RayfinPrimaryKey` from `@microsoft/rayfin-core/experimental` | Import them from `@microsoft/rayfin-core`. Only `blob` and the storage helpers remain on the experimental path. | [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `entity`, field decorators, and `RayfinPrimaryKey` from `@microsoft/rayfin-core/experimental` | Import them from `@microsoft/rayfin-core`. In 1.36 only `blob` and the storage helpers stayed on the experimental path, which 2.0 removed. | [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
 | `Source` and `AutoGenerated` from `@microsoft/rayfin-core/experimental` | Import them from `@microsoft/rayfin-connectors`. | [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `ConnectorsRayfinClient` from `@microsoft/rayfin-client/experimental` | Import it from `@microsoft/rayfin-client`. The experimental path still re-exports it. | [Deprecated in 1.36](/docs/reference/changelog#rayfin-136) |
+| `ConnectorsRayfinClient` from `@microsoft/rayfin-client/experimental` | In 1.36, import it from `@microsoft/rayfin-client`. 2.0 removed the class and the experimental path; register `connectorsService()` instead. | [Deprecated in 1.36](/docs/reference/changelog#rayfin-136) |
 | `services.connectors.enabled` in `rayfin.yml` | Remove it. The `rayfin connector` commands are always available. | [Deprecated in 1.36](/docs/reference/changelog#rayfin-136) |
 | `RAYFIN_FEATURE_FLAGS=functions` or `=connectors` | Nothing. Functions and connectors no longer need a flag. | [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `rayfin connector add --type kusto` | Keep existing Kusto connectors; new ones cannot be added in 1.36. | [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
-| Storage per-call options such as `onProgress` and `onConflict`, and the `StorageConflictMode` / `UploadProgressEvent` exports | See [Storage](/docs/storage) for the 1.36 client surface. Storage is experimental. | [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `rayfin connector add --type kusto` | Keep existing Kusto connectors; 1.36 stopped new ones from being added. 2.0 renamed the type to `eventhouse`. | [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| Storage per-call options such as `onProgress` and `onConflict`, and the `StorageConflictMode` / `UploadProgressEvent` exports | See [Storage](/docs/storage) for the current client surface. | [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
 
 ## Deprecated in 1.35.1
 
@@ -33,7 +61,7 @@ the full upgrade steps for each release.
 
 | Old | Use instead | Warning code |
 | --- | --- | --- |
-| The `useProxy` client option | Set `baseUrl` instead: an empty string (`''`) keeps requests same-origin so a dev-server proxy can forward them, and an absolute URL calls the backend directly. `useProxy` has no effect. | `RAYFIN_DEP_USE_PROXY` |
+| The `useProxy` client option | Set `baseUrl` instead: an empty string (`''`) keeps requests same-origin so a dev-server proxy can forward them, and an absolute URL calls the backend directly. `useProxy` has no effect on `ApiClient`, and 2.0's `RayfinClient.create` rejects it. | `RAYFIN_DEP_USE_PROXY` |
 
 ## How deprecation warnings work
 
@@ -47,7 +75,8 @@ usage. TypeScript also marks deprecated members, such as `ctx.getToken()`, with
 
 Call `setDeprecationsSilenced(true)` once you've reviewed the warnings and want to hide
 them for a specific environment. Import it from `@microsoft/rayfin-client` and call it
-early in application startup, before creating Rayfin clients or using deprecated APIs.
+early in application startup, before calling `RayfinClient.create` or using deprecated
+APIs.
 
 ```typescript
 import { setDeprecationsSilenced } from '@microsoft/rayfin-client';

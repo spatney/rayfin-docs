@@ -1,6 +1,6 @@
 ---
 title: Functions
-description: Run server-side TypeScript in Rayfin with typed frontend calls, typed secrets, and app-identity connections to Azure and Fabric resources.
+description: Run server-side TypeScript in Rayfin with typed frontend calls, typed secrets, app-identity connections, and raw SQL for queries the data client cannot express.
 appliesTo: "@microsoft/rayfin-cli >= 1.36"
 ---
 
@@ -19,7 +19,10 @@ Use a function when code needs a server boundary:
 - **Business logic users must not edit** — enforce rules that a browser client could bypass.
 - **Server-side validation** — validate before writing data or calling external services.
 - **Aggregation and transformation** — combine data before returning it to the frontend.
-- **External resources** — call Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, or Azure DevOps with server-side tokens.
+- **External resources** — call Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, Azure DevOps, or your own Entra-protected API with server-side tokens.
+- **Bulk imports** — parse and validate pasted or uploaded CSV on the server. See [Bulk import from CSV](/docs/functions/bulk-import).
+- **Reports the data client cannot express** — run parameterized T-SQL against the app database. See [Raw SQL in functions](/docs/functions/raw-sql). [Experimental](/docs/reference/changelog#feature-status)
+- **Custom sign-in claims** — compute app-defined claims when a user signs in. See [Dynamic auth claims](/docs/auth/dynamic-claims). [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 For normal reads and writes against your Rayfin entities, call [`client.data.<Entity>`](/docs/data/querying) from the frontend instead of adding a function hop.
 
@@ -45,6 +48,28 @@ services:
 
 `auth.type: application` is required when Functions are enabled. New 1.36 scaffolds write it automatically; existing apps must add it explicitly and run a full `npx rayfin up` to apply the remote setting. Standalone commands such as `npx rayfin up functions deploy` upload code but do not migrate the remote auth mode.
 
+## Match the worker package to the CLI
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Your functions compile against `@microsoft/fabric-user-data-functions`, the worker package that also hosts them. `rayfin functions init` pins it to the exact version of the CLI that ran, and it must stay on the CLI's version: the Rayfin 2.0 CLI writes runtime metadata schema 3.0, which earlier workers cannot read.
+
+Before `rayfin dev`, `rayfin dev functions apply`, `rayfin functions init`, or `rayfin up` generates types or builds a deployment, the CLI checks the installed worker. An incompatible worker stops the command with the install command to run:
+
+```text
+  • The installed @microsoft/fabric-user-data-functions@1.36.2 only reads runtime metadata schema '2.0' and compatible minors, but this CLI writes '3.0'. Deploying would make function invocations fail because the worker rejects the runtime metadata.
+    ↳ Upgrade @microsoft/fabric-user-data-functions by running `npm install @microsoft/fabric-user-data-functions@2.0.0` in <functions-path>
+```
+
+Run that command in the functions package — `services.functions.path`, `rayfin/functions` by default — then retry:
+
+```bash
+cd rayfin/functions
+npm install @microsoft/fabric-user-data-functions@2.0.0
+```
+
+A plain `npm install` keeps the version already pinned in the functions `package.json`, and rerunning `rayfin functions init` without `--force` preserves it, so neither upgrades the worker.
+
 ## Understand the two identities
 
 Deployed functions use two authentication paths:
@@ -52,9 +77,14 @@ Deployed functions use two authentication paths:
 | Access path | API | Identity used |
 | --- | --- | --- |
 | Rayfin data | `ctx.getDataClient()` | The signed-in caller's Rayfin token and database permissions. |
-| External resources | `ctx.Tokens.<Audience>` | The Fabric app's application identity. For current Fabric apps, this is the owner of the Fabric app item. |
+| External resources | `ctx.Tokens.<Audience>`, or `ctx.Tokens['<custom audience>']` for your own API | The Fabric app's application identity. For current Fabric apps, this is the owner of the Fabric app item. |
 
-Grant external resources to the app identity. Declaring an audience or deploying the function does not grant SQL, Storage, Fabric REST, Azure AI, or Azure DevOps permissions.
+Grant external resources to the app identity. Declaring an audience or deploying the function does not grant SQL, Storage, Fabric REST, Azure AI, Azure DevOps, or custom API permissions.
+
+Two more server-side capabilities follow from these paths:
+
+- `ctx.user.id` is the signed-in caller's subject id, for stamping owner fields. See [Writing a function](/docs/functions/writing-functions#stamp-the-owner-with-ctxuserid). [New in 2.0](/docs/reference/changelog#rayfin-20)
+- `ctx.sql` runs raw SQL as the app, not as the caller, so entity permissions do not apply. See [Raw SQL in functions](/docs/functions/raw-sql). [Experimental](/docs/reference/changelog#feature-status)
 
 ## Project structure
 
@@ -93,15 +123,17 @@ Use these focused commands when needed:
 
 ## In this section
 
-- [Writing a function](/docs/functions/writing-functions) — register handlers, use `RayfinContext`, and keep generated types current.
+- [Writing a function](/docs/functions/writing-functions) — register handlers, use `RayfinContext` and `ctx.user.id`, and keep generated types current.
 - [Secrets in functions](/docs/functions/secrets) — declare secrets with the CLI and read them through `ctx.Secrets`.
-- [Connections](/docs/functions/connections) — use application-auth tokens for Fabric and Azure resources.
-- [Calling functions from your app](/docs/functions/calling-functions) — invoke functions through `RayfinClient`.
+- [Connections](/docs/functions/connections) — use application-auth tokens for Fabric, Azure, and your own Entra-protected APIs.
+- [Raw SQL in functions](/docs/functions/raw-sql) — run parameterized T-SQL against the app database with `ctx.sql`. [New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+- [Calling functions from your app](/docs/functions/calling-functions) — register `functionsService` and invoke functions through `RayfinClient`.
+- [Bulk import from CSV](/docs/functions/bulk-import) — validate and import pasted CSV in a function, with per-row results.
 - [Run functions locally](/docs/functions/local-development) — start, route, debug, and troubleshoot the local host.
 - [Deploying functions](/docs/functions/deploying) — deploy functions with `rayfin up` or `rayfin up functions deploy`.
 
 ```prompt title="Add a Rayfin function for server-side logic"
 In my Rayfin project, add a server-side function for this task: <describe the trusted backend logic>.
 
-Use Rayfin 1.36 or later. If rayfin/functions/ does not exist, run `npx rayfin functions init`. Ensure rayfin/rayfin.yml has services.functions.enabled: true and services.functions.auth.type: application. Register the handler in rayfin/functions/src/function_app.ts with `udf.func(name, handler, [])`. Use `RayfinContext<AppSchema>` for typed data access, `ctx.Secrets.<NAME>` for declared secrets, and `RayfinContext<AppSchema, AudienceType.X>` plus `ctx.Tokens.X` for external resources. Do not expose secrets or tokens to the frontend. Run the smallest build or typegen command that validates the change, then tell me how to call the function from the frontend.
+Use Rayfin 2.0. If rayfin/functions/ does not exist, run `npx rayfin functions init`. Ensure rayfin/rayfin.yml has services.functions.enabled: true and services.functions.auth.type: application, and that the functions package depends on @microsoft/fabric-user-data-functions at the exact version of the Rayfin CLI. Register the handler in rayfin/functions/src/function_app.ts with `udf.func(name, handler, [])`. Use `RayfinContext<AppSchema>` for typed data access, `ctx.user.id` to stamp owner fields, `ctx.Secrets.<NAME>` for declared secrets, and `RayfinContext<AppSchema, AudienceType.X>` plus `ctx.Tokens.X` for external resources. Do not expose secrets or tokens to the frontend. Run the smallest build or typegen command that validates the change, then show how the frontend calls it through `client.functions.<name>.invoke(...)` on a client that registers `functionsService<AppFunctionsSchema>()`.
 ```

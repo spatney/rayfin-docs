@@ -1,0 +1,209 @@
+---
+title: Upload and download files
+description: Upload, download, list, and delete Rayfin Storage objects by complete path — path rules, operation options and results, typed metadata, and StorageError handling.
+appliesTo: "@microsoft/rayfin-storage >= 2.0"
+---
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Use the typed folder clients on `client.storage` to move files in and out of a deployed Fabric app. Each key in your `AppStorageSchema` is a folder client, such as `client.storage.Attachment` or `client.storage['profile-images']`. Set up the folders and the client first — see [Storage](/docs/storage).
+
+## Use object paths
+
+Address every object by its complete path relative to the folder, including the file name. Pass that path to `upload()`, `download()`, and `delete()`. Pass a directory path to `list()`, or nothing to list from the folder root. The `prefix` option is gone; put directory segments in the path. [Removed in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript title="src/services/profileImages.ts"
+import { rayfinClient } from './rayfinClient';
+
+const folder = rayfinClient.storage['profile-images'];
+
+// Partition by the signed-in user's subject claim, never by an ID taken from input.
+async function avatarDirectory(): Promise<string> {
+  const { sub } = await rayfinClient.auth.getClaims();
+  return `avatars/${sub}`;
+}
+
+export async function uploadAvatar(file: File) {
+  const directory = await avatarDirectory();
+  const { object } = await folder.upload(`${directory}/${file.name}`, file);
+  return object;
+}
+
+export async function listAvatars() {
+  const { items } = await folder.list(await avatarDirectory(), { limit: 20 });
+  return items;
+}
+
+// `path` is an item's `path` from listAvatars().
+export async function downloadAvatar(path: string) {
+  return folder.download(path);
+}
+
+export async function deleteAvatar(path: string) {
+  await folder.delete(path);
+}
+```
+
+`rayfinClient` is the client from [Add Storage to the client](/docs/storage#add-storage-to-the-client). `client.auth.getClaims()` returns the signed-in user's claims, including `sub`. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+## Path rules
+
+The SDK rejects a path that breaks these rules with an `InvalidName` `StorageError` before it sends a request:
+
+- Separate segments with `/`. Backslashes are not separators and are rejected.
+- Do not start or end a path with `/`, and do not use empty, `.`, or `..` segments.
+- An object at the folder root is its file name alone, such as `photo.png`.
+- Other characters and casing are preserved.
+
+The same rules apply to the directory path you pass to `list()`; an empty string lists from the root.
+
+Paths organize objects; they do not grant access. The folder's `@role()` policy decides what the current session can reach. Add directory segments only when your app needs them, and derive any per-user segment from the authenticated session, as in the example above — never from user input.
+
+## Operations
+
+| Operation | Options | Result |
+| --- | --- | --- |
+| `upload(path, data, options?)` | `signal`, `contentType`, `contentDisposition`, `cacheControl`, `expiresInSeconds`, `fields` | `{ object, correlationId }` |
+| `download(path, options?)` | `signal`, `expiresInSeconds` | `{ stream, contentType?, contentDisposition?, contentLength?, etag?, correlationId }` |
+| `list(directoryPath?, options?)` | `limit`, `continuation`, `signal` | `{ items, continuation?, correlationId }` [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `delete(path, options?)` | `signal` | `{ success, deleted, correlationId }` |
+
+- `upload()` accepts a `Blob`, `File`, `ArrayBuffer`, `Uint8Array`, `ReadableStream`, or string. Without `contentType`, it uses the `Blob` type, or `application/octet-stream` for other data.
+- `contentDisposition` and `cacheControl` are stored as object metadata and set on the file in OneLake.
+- `expiresInSeconds` sets the lifetime of the temporary upload or download URL, not of the object. The service clamps it.
+- `upload()` builds `object` from the request, because the service does not return the committed object: `id` is empty, and `size` is `0` for a `ReadableStream`. Use `list()` to read server-assigned values.
+- `list()` returns at most `limit` items. Pass the returned `continuation` to the next call for another page.
+- `delete()` resolves after the service finishes the delete.
+
+Every operation creates one `correlationId`, sends it on every request it makes, and returns it — include it when you report a problem.
+
+This upload stores explicit response metadata and asks for a five-minute upload URL:
+
+```typescript title="src/services/reports.ts"
+import { rayfinClient } from './rayfinClient';
+
+export async function saveReport(pdfBytes: Uint8Array) {
+  return rayfinClient.storage.Attachment.upload('reports/2026/report.pdf', pdfBytes, {
+    contentType: 'application/pdf',
+    contentDisposition: 'inline',
+    cacheControl: 'private, max-age=3600',
+    expiresInSeconds: 300,
+  });
+}
+```
+
+## Show a downloaded image
+
+`download()` returns a `ReadableStream`. Turn it into a `Blob` for an `<img>` element, and revoke the object URL when the image is replaced or removed:
+
+```typescript title="src/services/avatarUrl.ts"
+import { rayfinClient } from './rayfinClient';
+
+export async function avatarObjectUrl(path: string): Promise<string> {
+  const result = await rayfinClient.storage['profile-images'].download(path);
+  const blob = await new Response(result.stream, {
+    headers: result.contentType ? { 'Content-Type': result.contentType } : undefined,
+  }).blob();
+  // Call URL.revokeObjectURL() on this value when you no longer show the image.
+  return URL.createObjectURL(blob);
+}
+```
+
+`contentType` and `contentDisposition` are the headers OneLake returns; the SDK does not change or invent them.
+
+## Store typed metadata
+
+Decorated fields on a folder class become typed metadata on its objects:
+
+```typescript title="rayfin/storage/TeamDocument.ts"
+import { blob, role, StorageObject, text } from '@microsoft/rayfin-core';
+
+@blob()
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class TeamDocument extends StorageObject {
+  @text({ max: 100 })
+  team_id!: string;
+}
+```
+
+Register the class in `rayfin/storage/schema.ts`, and list its fields in the client's type map:
+
+```typescript title="rayfin/storage/client-schema.ts"
+export type AppStorageSchema = {
+  Attachment: object;
+  TeamDocument: { team_id: string };
+};
+```
+
+Send values with `fields`, and read them directly on listed items — the SDK flattens them, so `item.team_id` works:
+
+```typescript title="src/services/teamDocuments.ts"
+import { rayfinClient } from './rayfinClient';
+
+export async function uploadTeamPlan(teamId: string, file: File) {
+  await rayfinClient.storage.TeamDocument.upload(`${teamId}/plan.pdf`, file, {
+    fields: { team_id: teamId },
+  });
+}
+
+export async function listTeamDocuments(teamId: string) {
+  const { items } = await rayfinClient.storage.TeamDocument.list(teamId);
+  return items.map((item) => ({ path: item.path, teamId: item.team_id }));
+}
+```
+
+Custom fields are optional on returned items, because an individual object may not have every field. Do not send intrinsic `StorageObject` fields such as `owner_id` in `fields`; the server manages them.
+
+## Handle Storage errors
+
+Storage operations throw a `StorageError` with `code`, `status`, `correlationId`, and `retryable`. Narrow unknown errors with `isStorageError`. The SDK never retries a failed multi-step operation for you; when `retryable` is `true`, call the operation again, and it starts over.
+
+```typescript title="src/services/uploadAttachment.ts"
+import { isStorageError } from '@microsoft/rayfin-storage';
+
+import { rayfinClient } from './rayfinClient';
+
+export async function uploadAttachment(file: File): Promise<string> {
+  try {
+    await rayfinClient.storage.Attachment.upload(file.name, file);
+    return 'Uploaded.';
+  } catch (error) {
+    if (!isStorageError(error)) throw error;
+
+    switch (error.code) {
+      case 'Conflict':
+        return 'A file with that name already exists.';
+      case 'TooLarge':
+        return 'The file is larger than this folder allows.';
+      case 'UnsupportedContentType':
+        return 'This folder does not accept that file type.';
+      case 'InvalidName':
+        return 'That file name is not a valid object path.';
+      case 'PermissionDenied':
+      case 'Unauthenticated':
+        return 'Sign in with an account that can upload here.';
+      case 'Aborted':
+        return 'The upload was cancelled.';
+      default:
+        return error.retryable
+          ? `Upload failed; try again. Correlation ID: ${error.correlationId}`
+          : `Upload failed. Correlation ID: ${error.correlationId}`;
+    }
+  }
+}
+```
+
+`Aborted` means the `AbortSignal` you passed was aborted. `NotFound` means the folder or object does not exist. The complete code list is in the [`@microsoft/rayfin-storage` reference](/docs/reference/sdk/rayfin-storage#errors).
+
+```prompt title="Add file upload and download to a Rayfin app"
+In my Rayfin 2.0 app, add a small file manager for the existing Storage folder `Attachment` (client.storage.Attachment on the client created with RayfinClient.create and storage: storageService<AppStorageSchema>()).
+
+1. Upload: a file input that calls client.storage.Attachment.upload(path, file), where path is the complete object path. Use file.name alone unless I ask for directories. Paths must not start or end with '/', contain empty, '.', or '..' segments, or use backslashes. There is no prefix option.
+2. List: show client.storage.Attachment.list({ limit: 20 }) results with item.path and item.size, and load more pages by passing the returned continuation.
+3. Download: call download(item.path), turn result.stream into a Blob with new Response(result.stream).blob(), and offer it with an object URL that is revoked afterwards.
+4. Delete: call delete(item.path) after a confirmation, then refresh the list.
+5. Catch errors with isStorageError from @microsoft/rayfin-storage and show a message for Conflict, TooLarge, UnsupportedContentType, InvalidName, PermissionDenied, and Unauthenticated, including error.correlationId for anything else. Do not retry automatically.
+Do not create a second Rayfin client, and do not construct Storage HTTP or SAS requests yourself.
+```

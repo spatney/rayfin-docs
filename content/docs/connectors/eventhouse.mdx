@@ -1,0 +1,731 @@
+---
+title: Eventhouse (KQL databases)
+appliesTo: "@microsoft/rayfin-connector-eventhouse >= 2.0"
+description: Run saved KQL queries against an existing Fabric Eventhouse KQL database from a Rayfin app, and migrate a Rayfin 1.36 kusto connector to the 2.0 eventhouse type.
+---
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+Use this page when your Rayfin project already declares an Eventhouse connector, or declared
+a `kusto` connector on Rayfin 1.36 and you are upgrading to 2.0. Eventhouse is the Fabric
+product, `eventhouse` is the connector type in `rayfin.yml`, and KQL is its query language.
+
+Rayfin 2.0 renames the `kusto` connector type to `eventhouse`, and an Eventhouse connector
+now runs only the queries you save in `rayfin.yml`. App code names a saved query and passes
+parameter values; it never sends KQL text.
+
+> [!WARNING]
+> New Eventhouse connectors cannot be added in Rayfin 2.0.0. `rayfin connector types` and
+> `rayfin connector search` omit the type, and `rayfin connector add --type eventhouse` fails
+> before writing anything. A project that already declares an Eventhouse connector still
+> validates, deploys with `rayfin up`, and answers calls. The connector is experimental, and
+> its shape can still change. Do not remove an existing Eventhouse connector: you cannot add
+> it back with `connector add`.
+
+`connector add --type eventhouse` prints:
+
+```text
+Connector type "eventhouse" is not available in this release. Supported types: [fabric-sqlanalytics, fabric-warehouse, fabric-sqldatabase, fabric-semanticmodel, fabriciqmcp].
+```
+
+Reach for Eventhouse when the app reads large, append-only, time-series data — telemetry,
+logs, events, metrics — that already lives in an Eventhouse KQL database. For small
+relational lookups or for writes, use a [Fabric SQL source](/docs/connectors/sql-sources)
+instead. Eventhouse is a [Category B connector](/docs/connectors#the-two-categories): it
+exposes `executeQuery` and `executeCommand`, no entities, and no writes.
+
+## Know what changed from `kusto`
+
+| Rayfin 1.36 (`kusto`) | Rayfin 2.0 (`eventhouse`) |
+| --- | --- |
+| `type: kusto` | `type: eventhouse`. `rayfin up` rejects `type: kusto` as an unsupported type. |
+| `auth.type: delegated`, the only allowed value | `auth.type: application`, the only allowed value |
+| Package `@microsoft/rayfin-connector-kusto` | Package `@microsoft/rayfin-connector-eventhouse` |
+| Runtime `kusto()` added the cluster, the database, and a request id to each call | Runtime `eventhouse()` adds only a request id |
+| `executeQuery({ query })` sent KQL text | `executeQuery({ queryId, parameters })` names a query saved in `rayfin.yml` |
+| `executeCommand({ command })` sent a management command | `executeCommand({ queryId })` names a saved `.show` command |
+| Cluster and database came from the generated `schema.ts` | Cluster, database, and saved queries come from `additionalPayload` in `rayfin.yml` |
+| Types `Kusto`, `KustoConnectorConfig`, `KustoQueryResult`, `KustoTable`, and the other `Kusto*` types | `Eventhouse`, `EventhouseConnectorConfig`, `EventhouseQueryResult`, `EventhouseTable`, and the matching `Eventhouse*` types |
+| Request ids `KPC.rayfin_kusto_v1;<uuid>` | Request ids `KPC.rayfin_eventhouse_v1;<uuid>` |
+
+Every call now runs as the app's identity (the app owner), not as the signed-in user, so any
+row-level security in the KQL database is evaluated against the app owner. Enforce per-user
+access in your app. A saved query can be run by any signed-in user of the app.
+
+## Migrate a 1.36 `kusto` connector
+
+Do these steps by hand. `connector add` cannot regenerate an Eventhouse connector while
+authoring is held. The examples use a connector named `telemetry`.
+
+### 1. Upgrade the packages
+
+All `@microsoft/rayfin-*` packages share one version. Upgrade the CLI and SDK packages to
+2.0.0 together, then replace the Kusto package with the Eventhouse package at the exact
+version of your project's `@microsoft/rayfin-cli`:
+
+```bash
+npm uninstall @microsoft/rayfin-connector-kusto
+npm install @microsoft/rayfin-connector-eventhouse@2.0.0 @microsoft/rayfin-connectors@2.0.0
+```
+
+### 2. Change the type and the auth
+
+In `rayfin/rayfin.yml`, change the connector's `type: kusto` to `type: eventhouse` and its
+`auth.type` to `application`. Keep its `name`, `version`, `config.workspaceId`,
+`config.itemId`, and `operations`.
+
+Until you do, `rayfin up` stops at connector validation with
+`Connector "telemetry" has unsupported type "kusto".`, or with
+`Connector "telemetry" (eventhouse) does not support auth type "delegated".`
+
+### 3. Save the app's queries
+
+Turn every KQL query and management command the app used to send into a named template under
+`additionalPayload.queries`. Values the user chooses become declared parameters. The
+complete entry looks like this:
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: telemetry
+    type: eventhouse
+    version: "1"
+    config:
+      workspaceId: <workspace-id>
+      itemId: <kql-database-item-id>
+    auth:
+      type: application
+    operations:
+      - name: executeQuery
+      - name: executeCommand
+    additionalPayload:
+      queryServiceUri: "https://<cluster>.kusto.fabric.microsoft.com"
+      database: "<kql-database-item-id>"
+      queries:
+        errorsByState:
+          operation: executeQuery
+          text: |
+            declare query_parameters(severity:string);
+            AppEvents
+            | where Severity == severity
+            | summarize ErrorCount = count() by State
+            | top 10 by ErrorCount desc
+          parameters:
+            severity: string
+        recentEvents:
+          operation: executeQuery
+          text: |
+            declare query_parameters(since:datetime, maxRows:long);
+            AppEvents
+            | where Timestamp > since
+            | take min_of(maxRows, 1000)
+          parameters:
+            since: datetime
+            maxRows: long
+        showTables:
+          operation: executeCommand
+          text: .show tables
+          parameters: {}
+```
+
+Copy `queryServiceUri` from the `queryServiceUri` in your 1.36 `schema.ts`, or from
+**Query URI** in the KQL database details in Fabric. Set `database` to the same value as
+`config.itemId`. See [Save queries in `additionalPayload`](#save-queries-in-additionalpayload)
+for every rule the templates must follow.
+
+### 4. Rewrite the connector schema
+
+Replace `rayfin/connectors/telemetry/schema.ts`. Keep the `queryServiceUri` and
+`databaseName` values from the 1.36 file:
+
+```typescript title="rayfin/connectors/telemetry/schema.ts"
+import type {
+  Eventhouse,
+  EventhouseConnectorConfig,
+} from '@microsoft/rayfin-connector-eventhouse';
+
+export type TelemetrySchema = Eventhouse<'executeQuery' | 'executeCommand'>;
+
+export const connectorConfig = {
+  connector: 'eventhouse',
+  queryServiceUri: 'https://<cluster>.kusto.fabric.microsoft.com',
+  databaseName: '<database-name>',
+} as const satisfies EventhouseConnectorConfig;
+```
+
+Leave out the `// @generated — do not edit.` banner: while authoring is held, you maintain
+this file. Name the type after the connector in PascalCase plus `Schema` (`my-logs` gives
+`MyLogsSchema`), and list exactly the connector's declared operations in `Eventhouse<...>`.
+
+`queryServiceUri` and `databaseName` are informational. The `eventhouse()` runtime never
+sends them; the connector function reads the cluster and database from `additionalPayload`.
+Keep the file anyway: without it, when `rayfin/` has no other TypeScript file, the connector
+step of `rayfin up` fails with `error TS18003: No inputs were found in config file`.
+
+### 5. Register the runtime on the client
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Register the connector with `connectorsService` and pass `eventhouse()` in its `runtime` map
+under the same connector name. See [Register the runtime](#register-the-runtime) for the
+complete client file.
+
+If your app has a `src/lib/connectors.ts` generated by Rayfin 1.36, replace its `kusto`
+import and runtime entry with `eventhouse`, and update it to the 2.0 shape shown in
+[Wiring connectors into your app](/docs/connectors/client-setup#use-srclibconnectorsts-when-the-cli-generates-it).
+When the CLI next regenerates that file, it writes the same `eventhouse()` entry.
+
+### 6. Call saved queries by id
+
+Replace each `executeQuery({ query })` call with `executeQuery({ queryId, parameters })`, and
+each `executeCommand({ command })` call with `executeCommand({ queryId })`. Change imports
+from `@microsoft/rayfin-connector-kusto` to `@microsoft/rayfin-connector-eventhouse`, rename
+the `Kusto*` types to `Eventhouse*`, and generate request ids with the
+`KPC.rayfin_eventhouse_v1;` prefix. See [Call a saved query](#call-a-saved-query).
+
+### 7. Deploy and test every saved query
+
+Run `npx rayfin up`, then run every saved query once from the deployed app, as
+[Test every saved query](#test-every-saved-query) shows.
+
+```prompt title="Migrate a Rayfin 1.36 kusto connector to Eventhouse"
+My Rayfin project is upgrading from 1.36 to 2.0.0, and rayfin/rayfin.yml declares a connector
+with `type: kusto`. Migrate it to the 2.0 `eventhouse` connector by hand. Do not run
+`rayfin connector add --type eventhouse` (it is held in 2.0.0 and refuses) and do not run
+`rayfin connector remove` on this connector.
+
+1. Uninstall @microsoft/rayfin-connector-kusto and install
+   @microsoft/rayfin-connector-eventhouse and @microsoft/rayfin-connectors at exactly the
+   version of the project's @microsoft/rayfin-cli (2.0.0). Keep every @microsoft/rayfin-*
+   package on that version.
+2. In rayfin/rayfin.yml, change the entry's `type: kusto` to `type: eventhouse` and
+   `auth.type` to `application`. Keep its name, version, config.workspaceId,
+   config.itemId, and operations.
+3. Find every KQL query and management command the app sends (executeQuery({ query }) and
+   executeCommand({ command }) calls). Add `additionalPayload` to the connector entry with:
+   `queryServiceUri` (the root https://<cluster>.kusto.fabric.microsoft.com URI — reuse the
+   queryServiceUri value in rayfin/connectors/<name>/schema.ts), `database` (the same value
+   as config.itemId), and `queries` (1–256 templates keyed by a queryId of ASCII letters,
+   digits, or underscores that does not start with a digit). Each template has `operation`
+   (executeQuery or executeCommand), `text`, and `parameters` ({} when there are none).
+   Turn every user-supplied value into a parameter declared at the start of the text with
+   `declare query_parameters(...)`, using the same names and types in `parameters`; write
+   `long`, never `int`. Use only `//` comments and never write `/*`. Bound row counts in the
+   text, for example `take min_of(maxRows, 1000)`. An executeCommand template must be exactly
+   one of: .show tables, .show table T, .show table T schema as json, .show table T cslschema,
+   .show database schema, .show database schema as json, .show database cslschema,
+   .show functions, .show function F, .show materialized-views — with `parameters: {}`.
+   Never put secrets in additionalPayload.
+4. Rewrite rayfin/connectors/<name>/schema.ts without the `// @generated` banner:
+   `import type { Eventhouse, EventhouseConnectorConfig } from '@microsoft/rayfin-connector-eventhouse';`,
+   `export type <PascalCaseName>Schema = Eventhouse<...the declared operations...>;`, and
+   `export const connectorConfig = { connector: 'eventhouse', queryServiceUri: '<same value>', databaseName: '<same value>' } as const satisfies EventhouseConnectorConfig;`.
+5. In the app's Rayfin client, register the connector with `connectorsService` from
+   @microsoft/rayfin-connectors under `services.connectors` in `RayfinClient.create`, with
+   `runtime: { <name>: eventhouse() }` instead of kusto(). Update src/lib/connectors.ts the
+   same way if it exists. Rename every Kusto* import to its Eventhouse* equivalent.
+6. Change every call to executeQuery({ queryId, parameters, clientRequestId }) or
+   executeCommand({ queryId, clientRequestId }), with
+   clientRequestId = `KPC.rayfin_eventhouse_v1;${crypto.randomUUID()}`, then normalize with
+   toQueryResult(response, { clientRequestId }). Never send KQL text from app code.
+7. Run `npx rayfin up`. Add a small test page that calls every saved queryId once with sample
+   parameter values, open the deployed app, and report the row count or error code for each.
+```
+
+## Save queries in `additionalPayload`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+The app runs only queries saved in the connector's `additionalPayload` in `rayfin.yml`.
+Rayfin saves the object on `rayfin up` and forwards it unchanged with every call. The
+connector function (`rayfin_eventhouse_v1`) defines the format, validates it, and runs the
+saved text with the caller's parameter values.
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: telemetry
+    type: eventhouse
+    version: "1"
+    config:
+      workspaceId: <workspace-id>
+      itemId: <kql-database-item-id>
+    auth:
+      type: application
+    operations:
+      - name: executeQuery
+    additionalPayload:
+      queryServiceUri: "https://<cluster>.kusto.fabric.microsoft.com"
+      database: "<kql-database-item-id>"
+      queries:
+        stormsByState:
+          operation: executeQuery
+          text: |
+            declare query_parameters(state:string, maxRows:long);
+            StormEvents
+            | where State == state
+            | summarize Events = count() by EventType
+            | top min_of(maxRows, 1000) by Events
+          parameters:
+            state: string
+            maxRows: long
+```
+
+- `additionalPayload` takes only `queryServiceUri`, `database`, and `queries`.
+- `queryServiceUri` is the root `https://<cluster>.kusto.fabric.microsoft.com` endpoint,
+  with no path. Copy it from **Query URI** in the KQL database details in Fabric.
+- `database` is the KQL database item ID — the same value as `config.itemId`. Never use the
+  parent Eventhouse ID or the database name.
+- `queries` holds 1 to 256 templates. Each key is a `queryId` of 1 to 128 ASCII letters,
+  digits, or underscores that does not start with a digit.
+- Each template has `operation` (`executeQuery` or `executeCommand`), `text` of up to 65,536
+  characters, and `parameters` (`{}` when there are none). Leave out `roles`, so that every
+  signed-in user of the app can run the template.
+
+`rayfin up` does not check the templates. The connector function checks every saved template
+on each call, so one invalid template makes every query of the connector fail with
+`INVALID_QUERY_POLICY`. Test every saved query after each `rayfin up`.
+
+### How Rayfin handles `additionalPayload`
+
+| Rule | Detail |
+| --- | --- |
+| Category B only | `rayfin up`, `rayfin up connector apply`, and `rayfin dev` reject `additionalPayload` on a Category A connector, even `additionalPayload: {}`, before writing anything. |
+| Eventhouse only, in practice | Eventhouse is the only connector type that uses it. Another Category B type, such as `fabric-semanticmodel`, passes CLI validation but is rejected by the backend when you deploy. |
+| Kept verbatim | `${VAR}` references inside it are not interpolated, unlike the rest of `rayfin.yml`. |
+| JSON only | The value must be a mapping. `.inf`, `.nan`, integers beyond ±9007199254740991 (quote them as strings), `!!set`, `!!binary`, and recursive aliases are rejected. |
+| Size limits | At most 65,536 bytes as compact JSON and 32 levels of mappings and lists. The backend escapes non-ASCII characters and `<`, `>`, `&`, `'`, and `+` before it measures, so an object close to the limit can still be rejected at deploy time. |
+| Not a secret store | It is stored in plain text in `rayfin.yml` and in the deployed app. Never put connection strings or keys in it. |
+| Never in browser code | It is not written to the generated `schema.ts` or `src/lib/connectors.ts`, and app code and `connector invoke` never send it. Local edits take effect after the next `rayfin up`. |
+
+When local validation fails, `--json` output reports the `invalid-connectors` code with a
+`hint`. The deployed backend still decides whether it accepts the object. If it rejects it,
+`rayfin up` fails at the runtime settings step and shows the backend's error. If the backend
+saves the settings without the object, `rayfin up` fails with
+`connector-additional-payload-not-acknowledged` and names the connector.
+
+## Write templates the connector function accepts
+
+Put every filter, aggregation, and limit into the saved KQL. Kusto reduces the data
+server-side, and whatever the query returns crosses the wire and is held in memory by
+`toQueryResult`. Return only the rows the app renders.
+
+The connector function and Kusto enforce these rules on the saved text:
+
+- Comments are `//` only. The text must not contain `/*` anywhere, even inside a string
+  literal; send such a value as a parameter.
+- An `executeQuery` text is a query, not a management command: after white space and `//`
+  comments, it must not start with `.`.
+- Every saved text runs read-only, with remote entities and callouts disabled, so a
+  reference to another cluster fails.
+
+Also follow these rules:
+
+- Read only the connector's database. Do not reference other databases or clusters.
+- When a parameter sets the row count, bound it in the text: `take min_of(maxRows, 1000)` or
+  `top min_of(maxRows, 1000) by ...`.
+- Do not write `union *`, `search`, or `table(<parameter>)` templates unless you mean every
+  signed-in user to read every table in the database.
+
+## Pass user input as parameters
+
+User input travels only as `parameters`. The connector function sends each value to Kusto as
+a query parameter, so a value can never change the saved query text.
+
+- Declare every parameter at the start of the text with `declare query_parameters(...)`,
+  using the same names and types as the template's `parameters` map. Write `long` in both,
+  never `int`.
+- A parameter name is 1 to 128 ASCII letters, digits, or underscores, and does not start with
+  a digit. A KQL keyword such as `to` or `from` fails unless the text brackets it as
+  `['to']`.
+- A template has at most 128 parameters. A call sends exactly the declared parameters, and no
+  value is `null`.
+
+| Type | Send | Limits |
+| --- | --- | --- |
+| `string` | A string | Up to 65,536 characters |
+| `long` | A whole number | A JavaScript number is exact only up to `Number.MAX_SAFE_INTEGER` in magnitude |
+| `real` | A finite number | |
+| `bool` | `true` or `false`, not a string | |
+| `datetime` | An ISO 8601 string with a time and `Z` or an offset, such as `new Date(value).toISOString()` | A date-only value is refused; an offset is at most ±14:00 |
+| `guid` | A hyphenated `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` string | |
+| `timespan` | A string such as `"7d"`, `"90m"`, `"100ms"`, or `"1.02:03:04"` | |
+| `dynamic` | A flat array of strings, numbers, booleans, or `null` | Up to 1,000 items and 100,000 characters; no objects or nested arrays |
+
+All parameter values of one call together are at most 1,048,576 characters as Kusto
+literals. Table, column, and function names cannot be parameters: when the user picks among
+tables or views, save one query per choice and map the choice to a `queryId` through a fixed
+allow-list.
+
+## Save management commands
+
+`executeCommand` runs one saved metadata command against the connector's database. Save it
+with `operation: executeCommand` and `parameters: {}`:
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: telemetry
+    type: eventhouse
+    version: "1"
+    config:
+      workspaceId: <workspace-id>
+      itemId: <kql-database-item-id>
+    auth:
+      type: application
+    operations:
+      - name: executeQuery
+      - name: executeCommand
+    additionalPayload:
+      queryServiceUri: "https://<cluster>.kusto.fabric.microsoft.com"
+      database: "<kql-database-item-id>"
+      queries:
+        showTables:
+          operation: executeCommand
+          text: .show tables
+          parameters: {}
+```
+
+The text must be exactly one of these commands, with no comments, pipes, further statements,
+or database names. `T` and `F` stand for a table or function name, written plain or
+bracketed as `['My Table']`:
+
+- `.show tables`
+- `.show table T`
+- `.show table T schema as json`
+- `.show table T cslschema`
+- `.show database schema`
+- `.show database schema as json`
+- `.show database cslschema`
+- `.show functions`
+- `.show function F`
+- `.show materialized-views`
+
+Declare `executeCommand` under `operations` only when the app needs one of these commands. A
+read-only dashboard needs `executeQuery` alone.
+
+## Register the runtime
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Register `eventhouse()` in the `runtime` map of `connectorsService`, under the exact
+connector name. It adds a `clientRequestId` to each call that lacks one and otherwise
+forwards the input unchanged; it never adds the cluster or database.
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { connectorsService } from '@microsoft/rayfin-connectors';
+import { eventhouse } from '@microsoft/rayfin-connector-eventhouse';
+import {
+  connectorConfig as telemetryConfig,
+  type TelemetrySchema,
+} from '../../rayfin/connectors/telemetry/schema';
+
+type AppConnectorsSchema = {
+  telemetry: TelemetrySchema;
+};
+
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    connectors: connectorsService<AppConnectorsSchema>({
+      configs: { telemetry: telemetryConfig },
+      runtime: { telemetry: eventhouse() },
+    }),
+  },
+});
+
+export type AppClient = typeof rayfinClient;
+```
+
+The connector name must match in `rayfin.yml`, `AppConnectorsSchema`, `configs`, and
+`runtime`. See [Wiring connectors into your app](/docs/connectors/client-setup) for apps
+with more than one connector.
+
+## Call a saved query
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Call a saved query by its `queryId` and pass its parameter values. The connector function
+relays the Kusto response bytes untouched, so correlation ids never appear in the response
+body: generate the `clientRequestId` yourself and pass the same value to `executeQuery` and
+to `toQueryResult`. The connector function forwards it as the `x-ms-client-request-id`
+header.
+
+```typescript title="src/features/telemetry/loadErrorsByState.ts"
+import { toQueryResult } from '@microsoft/rayfin-connector-eventhouse';
+import { rayfinClient } from '../../services/rayfinClient';
+
+export async function loadErrorsByState(severity: string) {
+  const clientRequestId = `KPC.rayfin_eventhouse_v1;${crypto.randomUUID()}`;
+  const response = await rayfinClient.connectors.telemetry.executeQuery({
+    queryId: 'errorsByState',
+    parameters: { severity },
+    clientRequestId,
+  });
+
+  const result = toQueryResult(response, { clientRequestId });
+  if (result.status === 'error') {
+    throw new Error(
+      `${result.error.code ?? 'Eventhouse error'}: ${result.error.message} ` +
+        `(client request id ${result.clientRequestId})`,
+    );
+  }
+
+  const [table] = result.tables;
+  if (!table) return [];
+
+  return table.rows.map((row) => {
+    const record = Object.fromEntries(
+      table.columns.map((column, index) => [column.name, row[index]]),
+    );
+    return {
+      state: String(record.State ?? ''),
+      errorCount: Number(record.ErrorCount ?? 0),
+    };
+  });
+}
+```
+
+A call that the connector function refuses does not return a result: it throws a
+`NetworkError` (exported from `@microsoft/rayfin-client`) whose `serverErrorCode` is one of
+the [error codes](#error-codes). A `clientRequestId` is a nonblank ASCII string of at most
+256 characters, without control characters.
+
+## Call a saved management command
+
+Call a saved command by its `queryId` the same way. It returns the same native `{ Tables }`
+document as a query, so normalize it with `toQueryResult`:
+
+```typescript title="src/features/telemetry/listTables.ts"
+import { toQueryResult } from '@microsoft/rayfin-connector-eventhouse';
+import { rayfinClient } from '../../services/rayfinClient';
+
+export async function listTables() {
+  const clientRequestId = `KPC.rayfin_eventhouse_v1;${crypto.randomUUID()}`;
+  const response = await rayfinClient.connectors.telemetry.executeCommand({
+    queryId: 'showTables',
+    clientRequestId,
+  });
+
+  const result = toQueryResult(response, { clientRequestId });
+  if (result.status === 'error') {
+    throw new Error(result.error.message);
+  }
+  return result.tables;
+}
+```
+
+## Read the result
+
+`executeQuery` and `executeCommand` resolve to the native Kusto v1 `{ Tables }` document.
+`toQueryResult(response, { clientRequestId })` turns it into a discriminated union:
+
+```typescript
+type EventhouseQueryResult =
+  | {
+      status: 'success';
+      tables: EventhouseTable[];
+      clientRequestId: string;
+      activityId?: string;
+    }
+  | {
+      status: 'error';
+      error: { message: string; code?: string };
+      clientRequestId: string;
+      activityId?: string;
+    };
+
+type EventhouseTable = {
+  name: string;
+  columns: { name: string; type: string }[];
+  rows: unknown[][];
+};
+```
+
+Rows are row-major arrays aligned with `columns`. A query with several result sets returns
+several tables in order; the first is the primary result. Both variants carry the
+`clientRequestId` you passed (empty when you pass none) and an optional `activityId`.
+
+```typescript title="src/features/telemetry/EventhouseTables.tsx"
+import type { EventhouseQueryResult } from '@microsoft/rayfin-connector-eventhouse';
+
+export function EventhouseTables({ result }: { result: EventhouseQueryResult }) {
+  if (result.status === 'error') {
+    return <p>{result.error.code ? `${result.error.code}: ` : ''}{result.error.message}</p>;
+  }
+
+  return (
+    <>
+      {result.tables.map((table) => (
+        <section key={table.name}>
+          <h2>{table.name}</h2>
+          <table>
+            <thead>
+              <tr>
+                {table.columns.map((column) => (
+                  <th key={column.name}>{column.name}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {table.columns.map((column, columnIndex) => (
+                    <td key={column.name}>{String(row[columnIndex] ?? '')}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ))}
+    </>
+  );
+}
+```
+
+## Test every saved query
+
+After each `rayfin up`, run every saved query once through the deployed app before you build
+anything on the connector:
+
+1. Add a small test page or button, outside the app's main navigation, that calls every saved
+   `queryId` once with its template's operation and sample parameter values that return rows,
+   and shows the row count or the error code for each call.
+2. Run `npx rayfin up`, open the app URL it prints, sign in, and run the test.
+3. Continue only when every query returns rows. If one fails, fix `rayfin.yml`, run
+   `npx rayfin up`, and run the whole test again.
+
+```typescript title="src/features/telemetry/runSavedQueryChecks.ts"
+import { NetworkError } from '@microsoft/rayfin-client';
+import {
+  toQueryResult,
+  type EventhouseQueryResponse,
+  type ExecuteCommandInput,
+  type ExecuteQueryInput,
+} from '@microsoft/rayfin-connector-eventhouse';
+import { rayfinClient } from '../../services/rayfinClient';
+
+type SavedQueryCheck =
+  | { operation: 'executeQuery'; input: ExecuteQueryInput }
+  | { operation: 'executeCommand'; input: ExecuteCommandInput };
+
+const checks: SavedQueryCheck[] = [
+  { operation: 'executeQuery', input: { queryId: 'errorsByState', parameters: { severity: 'Error' } } },
+  {
+    operation: 'executeQuery',
+    input: {
+      queryId: 'recentEvents',
+      parameters: { since: new Date(Date.now() - 86_400_000).toISOString(), maxRows: 10 },
+    },
+  },
+  { operation: 'executeCommand', input: { queryId: 'showTables' } },
+];
+
+export async function runSavedQueryChecks() {
+  const outcomes: { queryId: string; outcome: string }[] = [];
+
+  for (const check of checks) {
+    const clientRequestId = `KPC.rayfin_eventhouse_v1;${crypto.randomUUID()}`;
+    let outcome: string;
+    try {
+      const telemetry = rayfinClient.connectors.telemetry;
+      const response: EventhouseQueryResponse =
+        check.operation === 'executeQuery'
+          ? await telemetry.executeQuery({ ...check.input, clientRequestId })
+          : await telemetry.executeCommand({ ...check.input, clientRequestId });
+      const result = toQueryResult(response, { clientRequestId });
+      outcome =
+        result.status === 'success'
+          ? `${result.tables[0]?.rows.length ?? 0} rows`
+          : (result.error.code ?? result.error.message);
+    } catch (error) {
+      outcome =
+        error instanceof NetworkError && error.serverErrorCode
+          ? error.serverErrorCode
+          : String(error);
+    }
+    outcomes.push({ queryId: check.input.queryId, outcome });
+  }
+
+  return outcomes;
+}
+```
+
+## Error codes
+
+The connector function returns these codes. The message gives the details; for a problem in a
+saved template, it names the template.
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `QUERY_POLICY_REQUIRED` | `additionalPayload` or its `queries` map is missing or empty. | Save at least one template, then run `rayfin up`. |
+| `INVALID_QUERY_POLICY` | A saved template, or the shape of `additionalPayload`, is not valid. One invalid template makes every query of the connector fail. | Fix what the message names, run `rayfin up`, and test every saved query again. |
+| `INVALID_CONNECTOR_TARGET` | `queryServiceUri` is not a root Fabric Kusto endpoint, `database` is not a KQL database item ID, or `database` differs from `config.itemId`. | Correct `additionalPayload`, then run `rayfin up`. |
+| `QUERY_NOT_ALLOWED` | No saved template has this `queryId`, or the call used a different operation than the template's. | Call a saved `queryId` with its template's operation. |
+| `INVALID_QUERY_INPUT` | The call sent a field other than `queryId`, `parameters`, and `clientRequestId` (for example KQL text), an invalid `queryId` or `clientRequestId`, a missing, extra, or `null` parameter, or a value of the wrong type. | Send exactly the template's declared parameters, each in the form its type requires. |
+| `QUERY_ROLE_NOT_ALLOWED` | The caller is not signed in, or the template lists `roles` the caller does not have. | Sign in, or remove `roles` from the template. |
+| `EVENTHOUSE_UNREACHABLE` | The connector function could not reach `queryServiceUri`. | Check `queryServiceUri`, then try again later. |
+| `INVALID_CALLER_CONTEXT` | The platform sent the connector function an invalid caller context. | Not app configuration. Report it. |
+
+Errors Kusto returns, for example for an unknown table or column in a saved text, are not in
+this list: the connector function relays them unchanged.
+
+## Exercise the connector from the CLI
+
+`connector inspect` does not support Eventhouse; it fails with
+`Unsupported connector type: eventhouse`. `connector invoke` posts to the deployed item, so it
+needs a prior `npx rayfin up`, and its payload names a saved query:
+
+```json title="rayfin/queries/errors-by-state.json"
+{
+  "queryId": "errorsByState",
+  "parameters": { "severity": "Error" }
+}
+```
+
+```bash
+npx rayfin up
+npx rayfin connector invoke telemetry executeQuery --file rayfin/queries/errors-by-state.json
+```
+
+The CLI exits non-zero when the call fails. The deployed app remains the proof that the
+connector works: run the [saved-query test](#test-every-saved-query) from a signed-in browser
+session.
+
+## Troubleshoot Eventhouse connectors
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `rayfin up` reports `has unsupported type "kusto"` | The entry still uses the 1.36 type. | Follow [Migrate a 1.36 `kusto` connector](#migrate-a-136-kusto-connector). |
+| `rayfin up` reports `(eventhouse) does not support auth type "delegated"` | Eventhouse accepts only application auth. | Set `auth.type: application`. |
+| `connector add --type eventhouse` reports `is not available in this release` | New Eventhouse authoring is held in 2.0.0. | Keep existing connectors; do not substitute another source. |
+| `Cannot find module '@microsoft/rayfin-connector-eventhouse'` | The package is not installed. | Install it and `@microsoft/rayfin-connectors` at the CLI's exact version. |
+| `rayfin up` fails with `error TS18003: No inputs were found in config file` | `rayfin/connectors/<name>/schema.ts` is missing and `rayfin/` has no other TypeScript file. | Recreate `schema.ts` as shown in [Rewrite the connector schema](#4-rewrite-the-connector-schema). |
+| A call fails with `INVALID_QUERY_INPUT` | The call sent KQL text or cluster fields instead of a saved `queryId`. | Save the query in `additionalPayload`, redeploy, and call it by `queryId` with values in `parameters`. |
+| Every call fails with `INVALID_QUERY_POLICY` | One saved template is invalid. | Fix the template the message names, run `rayfin up`, and retest every query. |
+| A query returns the app owner's data instead of the caller's | Eventhouse runs as the app's identity. | Expected. Enforce per-user access in your app. |
+| `toQueryResult` returns `clientRequestId: ''` | The id was not passed to `toQueryResult`. | Pass the same `clientRequestId` to the operation and to `toQueryResult`. |
+| `client.connectors.telemetry` is not typed | The connector key differs across `rayfin.yml`, `AppConnectorsSchema`, `configs`, or `runtime`. | Use the `rayfin.yml` name in every place. |
+
+```prompt title="Add a saved query to an Eventhouse connector"
+In my Rayfin 2.0 project, rayfin/rayfin.yml already declares an `eventhouse` connector. Add
+one saved KQL query for a new app feature (ask me what data it should return, which table to
+read, and which values the user chooses). Do not run `rayfin connector add` — Eventhouse
+authoring is held in 2.0.0.
+
+Add a template under the connector's `additionalPayload.queries` with a new queryId (ASCII
+letters, digits, or underscores, not starting with a digit), `operation: executeQuery`, the
+KQL `text`, and a `parameters` map. Start the text with `declare query_parameters(...)` for
+every user-chosen value, using the same names and types as the map; write `long`, never
+`int`. Use only `//` comments, never `/*`; do not start the text with `.`; read only the
+connector's own database; bound row counts with `take min_of(maxRows, 1000)`. Never write
+`union *`, `search`, or `table(<parameter>)`.
+
+In app code, call `client.connectors.<name>.executeQuery({ queryId, parameters,
+clientRequestId })` with clientRequestId = `KPC.rayfin_eventhouse_v1;${crypto.randomUUID()}`,
+normalize with `toQueryResult(response, { clientRequestId })` from
+@microsoft/rayfin-connector-eventhouse, and branch on `result.status`. Then run
+`npx rayfin up` and call every saved queryId once from the deployed app.
+```

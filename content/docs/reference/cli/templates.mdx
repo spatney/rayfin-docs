@@ -1,6 +1,6 @@
 ---
 title: Templates
-description: Use built-in, local, git, and registered Rayfin templates, including the 1.36 universal-app starter and registry behavior.
+description: Use built-in, local, git, and registered Rayfin templates, including the Universal App default starter, registries, remote listing, and template authoring.
 ---
 
 Templates scaffold the files for a Rayfin project before `rayfin init` applies Rayfin
@@ -25,7 +25,7 @@ Run the installed CLI to see the exact names available in your version:
 npx rayfin init --list-templates
 ```
 
-In Rayfin 1.36.2 the visible built-ins are:
+In Rayfin 2.0.0 the visible built-ins are:
 
 | CLI name | Display name | Notes |
 | --- | --- | --- |
@@ -38,6 +38,10 @@ In Rayfin 1.36.2 the visible built-ins are:
 
 Every bundled template's `dev` script is `rayfin dev`; `dev:frontend` starts the frontend
 without recursively invoking the CLI.
+
+The bundled templates pin every Rayfin dependency to the CLI's release line (`^2.0.0` for
+the 2.0 CLI), so a generated app does not mix Rayfin release lines.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Scaffold from a built-in template
 
@@ -54,8 +58,24 @@ npm create @microsoft/rayfin@latest my-app -- --template universal-app
 ## List templates
 
 `--list-templates` prints JSON with `schemaVersion`, `bundled`, `registry`, and optional
-`warnings` fields. It lists built-ins and registry entries only; arbitrary git URLs passed
-to `-t` are not listed.
+`warnings` fields. It lists built-ins and registry entries.
+
+```bash
+npx rayfin init --list-templates
+```
+
+To see the entries in a git source before you scaffold from it, pass the URL with `-t`.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+```bash
+npx rayfin init --list-templates -t https://github.com/example-org/rayfin-templates.git#v1.0.0
+```
+
+The CLI clones the source and adds a `remote` object with the source's `url`,
+`displayName`, `description`, and a `templates` array of `name` and `displayPath` entries.
+If the clone or manifest fails, the JSON carries an `error` field that starts with
+`Failed to list templates from remote source:` and the command exits with code `1`. Only
+git URLs are listed this way; a local path passed to `-t` is not.
 
 ## Scaffold from a local directory
 
@@ -102,7 +122,7 @@ interactive picker.
 | Project-local | `.rayfin\template-registries.yml` |
 | Bundled | `@microsoft/rayfin-cli` `assets/template-registries.yml` |
 
-The bundled 1.36.2 registry contains a protected first-class `dataapp` entry pointing at
+The bundled 2.0.0 registry contains a protected first-class `dataapp` entry pointing at
 `https://github.com/microsoft/fabric-apps-analytic-templates` with `ref: v1` and
 `templateName: Data App`.
 
@@ -257,9 +277,11 @@ After scaffolding, `rayfin init` installs Rayfin-managed agent files from the in
 Template authors should design around that ownership model:
 
 - The CLI owns `.agents/skills/rayfin/`, `.agents/skills/rayfin-functions/`,
-  `.agents/skills/rayfin-connectors/`, and the storage skill when storage is enabled. Do
-  not ship files in `.agents/skills/rayfin/` or other Rayfin-owned skill directories from
-  a template.
+  `.agents/skills/rayfin-connectors/`, `.agents/skills/rayfin-storage/`,
+  `.agents/skills/rayfin-auth-claims/`, and `.agents/skills/rayfin-schema-drift/`. Since
+  2.0 the storage skill no longer depends on Storage being enabled. Do not ship files in
+  these Rayfin-owned skill directories from a template.
+  [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 - The CLI owns only the `mcpServers.rayfin` key inside `.mcp.json`. A template may ship a
   `.mcp.json` with its own MCP servers, but it must not include `mcpServers.rayfin`; the
   initializer adds or updates that key.
@@ -363,8 +385,9 @@ npx rayfin --help
 
 ## Gotchas
 
-- `--list-templates` lists built-in and registered templates only. A raw git URL passed to
-  `-t` is never included in that list.
+- `--list-templates` lists built-in and registered templates. A raw git URL passed to `-t`
+  is never added to those lists; with `--list-templates -t <git-url>` its entries appear
+  under `remote` instead.
 - A bare `-t` value is a template or registry name, not a file path. Use `.\`, `..\`, or
   an absolute path for local folders.
 - Non-interactive scaffolding from a multi-entry source needs `--template-name`; otherwise

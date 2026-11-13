@@ -13,10 +13,13 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 ## Versions
 
 - Every `@microsoft/rayfin-*` package — SDK, connectors, CLI — shares one version number.
-  Install them all at the **same exact version** (for example `1.36.2`). Mixed versions
-  produce type errors or two copies of `@microsoft/rayfin-data`.
+  Install them all at the **same exact version** (for example `2.0.0`), including
+  `@microsoft/fabric-user-data-functions` in the functions project. Mixed versions produce
+  type errors or two copies of `@microsoft/rayfin-data`.
 - Read the project's `package.json` before you use an API. Anything tagged
-  "New in 1.36" on this site does not exist in older packages.
+  "New in 2.0" or "Changed in 2.0" on this site does not exist in older packages, and 2.0
+  client code does not compile against 1.x packages. To move a 1.x project forward, follow
+  [Upgrade to 2.0](/docs/reference/changelog#upgrade-to-20).
 - Run the CLI from the project with `npx rayfin`, so it matches the installed packages.
 
 ## Platform
@@ -24,6 +27,12 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Rayfin uses **TC39 Stage 3 decorators**. Never enable `experimentalDecorators` or
   `emitDecoratorMetadata`.
 - Include `ESNext.Decorators` in the tsconfig `lib` array.
+- The schema package needs TypeScript `^5.7.2 || ^6.0.2`.
+- Relative imports between files under `rayfin/` end in `.js`
+  (`import { Category } from './Category.js'`). Keep `rayfin/package.json` when
+  `rayfin init` creates it.
+- If the frontend imports an entity class as a value and uses `@vitejs/plugin-react-swc`,
+  enable Stage 3 decorators in the plugin, as the templates do.
 - Rayfin has one deployment target: a managed **Fabric app** (MSSQL only).
 - Prefer `npm create @microsoft/rayfin@latest` for new projects — it generates a correct
   tsconfig, schema boilerplate, and agent files.
@@ -44,6 +53,23 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Leave `rayfin dev --provider` at its `fabric` default. The managed backend always runs in
   Fabric.
 
+## Client
+
+- Build the client with `RayfinClient.create`, never `new RayfinClient(...)`:
+  `RayfinClient.create({ baseUrl, publishableKey, auth: browserSession(), services: { data: dataService<AppSchema>() } })`.
+- Import `browserSession` from `@microsoft/rayfin-auth`, `dataService` from
+  `@microsoft/rayfin-data`, `functionsService` from `@microsoft/rayfin-functions`,
+  `connectorsService` from `@microsoft/rayfin-connectors`, and `storageService` from
+  `@microsoft/rayfin-storage`. Register only the services the app uses, and declare each
+  package in `package.json`.
+- Derive the type from a factory — `export type AppClient = ReturnType<typeof createClient>` —
+  instead of writing `RayfinClient<AppSchema>`.
+- Resolve configuration with `resolveRayfinConfig()` before calling `create`, so a
+  promoted bundle reads the deployed `rayfin.config.json`.
+- In Node.js scripts and servers use `auth: suppliedToken({ accessToken })`; that client
+  has no `client.auth`. Call `client.dispose()` when the script ends.
+- There is no `useProxy`. Use `baseUrl: ''` for same-origin routing.
+
 ## Data modeling
 
 - Define entities with `@entity()` in `rayfin/data/`, and register each one in
@@ -51,7 +77,10 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - Every field needs exactly one type decorator: `@uuid`, `@text`, `@int`, `@decimal`,
   `@boolean`, `@date`, `@email`, `@set`.
 - Fields are **required by default**. For a nullable field use `{ optional: true }` and
-  `?` together.
+  `?` together. Do not add `| null` to a decorated field's type — the decorator rejects it
+  at compile time (`TS1240`).
+- Property names must be valid GraphQL names (letters, digits, `_`; not starting with
+  `__`). Map an odd column name with `{ column: '$price' }`.
 - `@text()`'s length option is `max`, not `maxLength` — `@text({ max: 200 })`. Always set
   it on MSSQL; see
   [Known limitations](/docs/reference/known-limitations#text-without-max-breaks-graphql-schema-generation-on-mssql).
@@ -75,6 +104,9 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 - **Every entity needs an explicit permission decorator** (`@role`, `@anonymous`,
   `@authenticated`). Omitting one silently applies `authenticated: *` — full CRUD for any
   signed-in user — which is almost never what you want in production.
+- Default to `@authenticated(...)`. `@anonymous(...)` deploys only when a Fabric tenant
+  admin has turned on **Enable anonymous data access for Fabric Apps (Preview)**; otherwise
+  schema apply fails with `ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`.
 - Add a policy for row-level filtering on user-scoped data:
   `policy: (claims, item) => claims.sub.eq(item.user_id)`.
 - Use `exclude` in role options to hide sensitive fields, e.g. `exclude: ['secret']`.
@@ -93,10 +125,20 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
 ## Querying
 
 - The query chain is `.select()` → `.where()` → `.orderBy()` → `.execute()`.
-- Fetch a single record with `client.data.Entity.findById('uuid')` — there is no
-  `findByPk`.
+- Results contain **only the selected fields**. A query without `.select()` returns the
+  primary key only — and so do `findById()`, `findMany()`, and `findFirst(filter)` on the
+  entity client. To read one record, write
+  `client.data.Entity.select(['id', 'title']).where({ id: { eq: id } }).findFirst()`.
+  There is no `findByPk`.
+- Always use the builder `select()` returns.
+- Select a to-one relationship field with `'notebook.name'` and a to-many one with
+  `'notes[].title'`. Only one relationship level per path.
+- Selected `Date` fields are typed `Date | string` and booleans `boolean | 'true' | 'false'`.
+  Convert them explicitly before using date methods or truthiness.
 - Filter by foreign key columns using `{property}_id` (`customer_id`), not a dot-path
   (`customer.id`). Dot-paths are for `.select()` only.
+- In a mutation, set a relationship with either the object (`notebook: { id }`) or the
+  foreign key (`notebook_id`), not both.
 - Sort directions are lowercase: `'asc'` or `'desc'`.
 - Use `.first(n).executePaginated()` with `.after(endCursor)` for pagination. Collection
   queries return a single page otherwise; the default page size is 100.
@@ -115,11 +157,18 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
   exist.** See
   [Known limitations](/docs/reference/known-limitations#the-callback-is-onsessionchange-not-onauthstatechange).
 - Session objects are opaque. Gate UI on `isAuthenticated` or the presence of a `user`
-  property — do not introspect the session.
+  property — do not introspect the session. `isAuthenticated` is `false` while the access
+  token is expired, even when `user` is still set.
 - Await `initEmbeddedAuth()` at startup before rendering authenticated content, even when
   a stored session already exists — in an embedded app it may belong to a different user.
+  It never rejects: when it resolves `null`, show the sign-in button.
 - Call `ensureSignedInWithFabric()` directly from a click handler, never on page load or
   after an `await`, or the popup is blocked.
+- **Surface every sign-in error.** Catch errors from each sign-in call and render
+  `error.message` on the sign-in screen. Never swallow them with an empty `catch` or by
+  only resetting the user to signed out.
+- `client.auth.getClaims()` returns app-defined claims as strings. Make authorization
+  decisions in server-side policies, not in the browser.
 - After changing `services.auth` in `rayfin.yml`, restart `rayfin dev` or redeploy with
   `rayfin up` so the backend picks up the new settings.
 
@@ -132,8 +181,9 @@ Full detail lives in [Known limitations](/docs/reference/known-limitations),
   [Known limitations](/docs/reference/known-limitations#dialect-is-required-when-the-data-module-is-enabled).
 - If `services.functions.enabled` is `true`, `services.functions.auth.type: application`
   is required.
-- `RAYFIN_FEATURE_FLAGS` is not needed for Functions or connectors. Of the documented
-  features, only experimental [storage](/docs/storage) still uses it (`storage`).
+- No documented feature needs `RAYFIN_FEATURE_FLAGS` in 2.0. Do not set `storage`,
+  `functions`, `connectors`, or `dynamicclaims`; enable dynamic claims with
+  `services.auth.dynamicClaims.enabled: true` instead.
 
 ## Functions
 
@@ -152,7 +202,15 @@ Read [Functions](/docs/functions) before writing function code.
   `ctx.Tokens.<Audience>` after declaring the audience in
   `RayfinContext<Schema, AudienceType.X>`. `ctx.getSecret()` and `ctx.getToken()` are
   deprecated.
-- `AudienceType` has five members: `Sql`, `Storage`, `Fabric`, `AzureAI`, `ADO`.
+- `AudienceType` has five members: `Sql`, `Storage`, `Fabric`, `AzureAI`, `ADO`. For any
+  other Entra-protected resource, declare its application ID or `https://` / `api://`
+  resource URI as a string — `RayfinContext<Schema, 'api://contoso-api'>` — and read
+  `ctx.Tokens['api://contoso-api']`. Never declare a `/.default` scope.
+- Stamp owner fields with `ctx.user.id` and write through `ctx.getDataClient()`. Never
+  decode `ctx.accessToken`.
+- Prefer `ctx.getDataClient()` over raw SQL. `RayfinContext<Schema> & WithSql` is
+  experimental, bypasses entity policies, and runs only in deployed functions where the
+  service has enabled it.
 - Deployed functions use `ctx.Tokens` **as the app identity**, not the signed-in user.
   Grant the app identity access to each resource. `ctx.getDataClient()` stays scoped to the
   caller. See [Delegated and application access](/docs/auth/delegated-access).
@@ -169,9 +227,10 @@ before writing connector code.
 - The `rayfin connector` command group is always available as of 1.36. Do not set
   `RAYFIN_FEATURE_FLAGS=connectors` or `services.connectors.enabled`.
 - The `connector add` flag is `--type`, not `--connector`. The type literals are
-  `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, and
-  `fabric-semanticmodel`. **There is no `fabric-sql`.** New `kusto` connectors cannot be
-  added in 1.36; existing ones keep working.
+  `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`,
+  `fabric-semanticmodel`, and `fabriciqmcp`. **There is no `fabric-sql`.** `kusto` was
+  renamed `eventhouse` in 2.0, and new Eventhouse connectors cannot be added; existing ones
+  must use `type: eventhouse`.
 - `connector add` lowercases connector names, scaffolds files, and installs nothing. Run
   the version-pinned `npm install` it prints, verbatim — never drop the version.
 - `connector add` discovers schema only from literal `--workspace-id` and `--item-id`
@@ -185,26 +244,45 @@ before writing connector code.
   Re-add the connector to regenerate them.
 - `GraphQLBackedConnector` is the marker for all three Category A types. Per-type names like
   `FabricWarehouse` do not exist.
-- Import `ConnectorsRayfinClient` from `@microsoft/rayfin-client`, and `Source` /
-  `AutoGenerated` from `@microsoft/rayfin-connectors`.
-- Category B connectors need the runtime map as the client's second constructor argument —
+- Register connectors with
+  `connectorsService<AppConnectorsSchema>({ configs, runtime })` from
+  `@microsoft/rayfin-connectors` in `RayfinClient.create`. Import `Source` /
+  `AutoGenerated` and the connector types from `@microsoft/rayfin-connectors` too.
+- Category B connectors need their runtime in the `runtime` map —
   `fabricSemanticModel()` decodes the response. Omit it and calls do not work.
 - A query chain with `.where()`, `.orderBy()`, or `.first()` needs an explicit
   `.select([...])`, or it throws `SELECTION_REQUIRED`.
-- `auth.type` is lowercase, `delegated` or `application`. `connector add` writes
-  `application` for the three SQL types; set `delegated` for per-user access, and set it
-  again after re-adding. `fabric-semanticmodel` accepts only `delegated`. See
+- `auth.type` is lowercase, `delegated` or `application`, and `connector add --auth` sets
+  it. `connector add` writes `application` for the three SQL types; set `delegated` for
+  per-user access. `fabric-semanticmodel` and `fabriciqmcp` accept only `delegated`;
+  `eventhouse` accepts only `application`. See
   [Connector authentication](/docs/connectors/auth).
+- An Eventhouse connector runs only queries saved in its `additionalPayload`. Send a
+  `queryId` and typed `parameters`, never KQL text.
 - Pass DAX to `rayfin connector invoke` with `--file` pointing at a JSON payload such as
   `{"query":"EVALUATE ..."}`, not a raw `.dax` file and not inline `--input`.
 - Prove a connector returns rows with `rayfin connector invoke` or `rayfin connector inspect`
   before you build UI on it.
 
+## Storage
+
+- Storage is generally available in 2.0 and remote-only. Add it with
+  `npx rayfin storage init`; there is no local emulator.
+- Import `blob`, `StorageObject`, `ContentTypes`, and the size helpers from
+  `@microsoft/rayfin-core`. The `/experimental` entry point no longer exists.
+- Every folder needs an authenticated `@role` policy; anonymous Storage permissions are not
+  supported. Register each folder in `rayfin/storage/schema.ts`.
+- Register `storageService<AppStorageSchema>()` on the client, and pass full relative
+  object paths such as `'reports/2026/q1.pdf'`. There is no `prefix` option.
+- Removing a folder declaration and applying it permanently deletes the folder's objects.
+
 ## Deployment
 
 - `rayfin up` is the canonical command for "deploy this change", "apply this schema
   change", or "push my entity update". It builds and deploys the static app, deploys
-  Functions, and applies pending schema migrations in one step.
+  Functions, and applies pending schema migrations in one step. It skips the static upload
+  when nothing changed since the last successful deploy; pass `--force-static-deploy` to
+  upload anyway.
 - `rayfin up db apply`, `rayfin up staticapp deploy`, and `rayfin up functions deploy` are
   narrow subcommands. Use them only when you explicitly want to update one part.
 - In automation, pass `-y` and an explicit workspace (`--workspace-id`) so the deploy never
@@ -222,14 +300,18 @@ before writing connector code.
 | Don't | Do |
 | --- | --- |
 | Raw `fetch()` or hand-built GraphQL for data | `client.data.<Entity>` — typed queries with automatic auth |
+| `new RayfinClient(...)` or `ConnectorsRayfinClient` | `RayfinClient.create({ auth, services })` with `dataService()`, `connectorsService()`, and the other adapters |
 | Entities with no permission decorator | An explicit `@anonymous()`, `@authenticated()`, or `@role()` |
 | `@text()` with no `max` on MSSQL | `@text({ max: N })` — `NVARCHAR(MAX)` breaks GraphQL schema generation |
 | `@text()` for a foreign key column | `@uuid()`, to match the referenced primary key |
 | An entity named `Date`, `Query`, or another GraphQL built-in | A distinct name such as `EventDate` |
 | `onAuthStateChange` | `onSessionChange` |
-| `findByPk` | `findById` |
+| `findByPk`, or reading fields from `findById()` | `.select([...]).where({ id: { eq: id } }).findFirst()` |
+| `'notes.title'` for a to-many relationship | `'notes[].title'` |
+| An empty `catch` around sign-in | Render `error.message` on the sign-in screen |
 | `rayfin up --exclude-services staticHosting` plus a separate Vite server as the dev loop | `npm run dev`, which runs `rayfin dev` |
 | `ctx.getToken(AudienceType.Sql)` / `ctx.getSecret('KEY')` | `ctx.Tokens.Sql` / `ctx.Secrets.KEY` |
-| `RAYFIN_FEATURE_FLAGS=functions,connectors` | Nothing — both are generally available in 1.36 |
+| `RAYFIN_FEATURE_FLAGS=storage,functions,connectors` | Nothing — all three are generally available |
+| Storage `prefix` options | The full relative object path |
 | Mixing Rayfin package versions | One exact version for every `@microsoft/rayfin-*` package |
 | Guessing at an API surface | Fetch the relevant `<route>.md` page, or use the [MCP server](/docs/reference/cli/docs#mcp-server) |

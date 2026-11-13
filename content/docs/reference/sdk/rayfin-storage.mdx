@@ -1,70 +1,156 @@
 ---
 title: "@microsoft/rayfin-storage"
-description: Type-safe client SDK for experimental Rayfin Storage folders, including client composition, operation options, result shapes, and error codes.
-appliesTo: "@microsoft/rayfin-storage >= 1.36"
+description: SDK reference for Rayfin Storage — storageService and createStorageClient, path-based upload, download, list, and delete signatures, options, result shapes, and error codes.
+appliesTo: "@microsoft/rayfin-storage >= 2.0"
 ---
 
-`@microsoft/rayfin-storage` is the typed client for Rayfin Storage folders declared with `@blob()`.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-[Experimental](/docs/reference/changelog#feature-status) [Changed in 1.36](/docs/reference/changelog#rayfin-136)
-
-> [!WARNING]
-> Storage is experimental and is not available in every Fabric region or tenant. Enable it with `services.storage.enabled: true` or `RAYFIN_FEATURE_FLAGS=storage` before relying on storage CLI commands or agent skills.
+`@microsoft/rayfin-storage` is the typed client for Rayfin Storage folders declared with `@blob()`. Storage is generally available from Rayfin 2.0. For setup, folder declarations, and deployment, see [Storage](/docs/storage); for task-oriented examples, see [Upload and download files](/docs/storage/files).
 
 ## Installation
 
-Install the exact same version as every other `@microsoft/rayfin-*` package in the project:
+Install the exact same version as every other `@microsoft/rayfin-*` package, in the package that creates your Rayfin client. The 2.0 `@microsoft/rayfin-client` does not bring Storage in, so add it yourself:
 
 ```bash
-npm install @microsoft/rayfin-storage@1.36.2
+npm install @microsoft/rayfin-storage@2.0.0
 ```
+
+The package depends on `@microsoft/rayfin-core` and `@microsoft/rayfin-lib` at the same version. It has one entry point, `@microsoft/rayfin-storage`; imports of files under `dist/` are not exported. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Exports
 
 ```typescript
+export { storageService } from './storageService.js';
 export { StorageFolderClient } from './StorageFolderClient.js';
 export { StorageApi, createStorageClient } from './StorageClient.js';
 export type {
-  StorageClient,
-  StorageCustomFields,
-  StorageDeleteResult,
-  StorageDownloadResult,
   StorageError,
-  StorageErrorCode,
-  StorageListResult,
+  StorageCustomFields,
   StorageObjectRef,
-  StorageSchema,
   StorageUploadResult,
+  StorageDownloadResult,
+  StorageDeleteResult,
+  StorageListResult,
   UploadOptions,
   DownloadOptions,
   DeleteOptions,
   ListOptions,
-} from '@microsoft/rayfin-storage';
-export { STORAGE_ERROR_CODES, isStorageError } from '@microsoft/rayfin-storage';
+} from './StorageFolderClient.js';
+export type { StorageSchema, StorageClient } from './StorageClient.js';
+export { STORAGE_ERROR_CODES, isStorageError, type StorageErrorCode } from './storageErrorCodes.js';
 ```
 
-`StorageConflictMode` and `UploadProgressEvent` are not exported in 1.36. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
+## `storageService`
 
-## Client shape
+[New in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript
-function createStorageClient<TSchema extends StorageSchema>(apiClient: ApiClient): StorageClient<TSchema>;
+function storageService<TSchema extends StorageSchema>(): ClientServiceFactory<StorageClient<TSchema>>;
+```
 
-class StorageApi<TSchema extends StorageSchema = StorageSchema> extends ServicePlugin {
-  getFolderClient<K extends keyof TSchema & string>(
-    folderName: K
-  ): StorageFolderClient<StorageObjectRef & Partial<StorageCustomFields<TSchema[K]>>>;
-  getInstantiatedFolderNames(): (keyof TSchema)[];
-}
+Registers typed folders on a client built with `RayfinClient.create`. The factory runs `createStorageClient` on the client's shared, authenticated transport, so Storage calls use the same session as data and function calls.
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { storageService } from '@microsoft/rayfin-storage';
+import type { AppStorageSchema } from '../../rayfin/storage/client-schema';
+
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    storage: storageService<AppStorageSchema>(),
+  },
+});
+```
+
+`rayfinClient.storage` is a `StorageClient<AppStorageSchema>`.
+
+## `StorageSchema` and `StorageClient`
+
+```typescript
+type StorageSchema = Record<string, object>;
 
 type StorageClient<TSchema extends StorageSchema> = {
   [K in keyof TSchema]: StorageFolderClient<
     StorageObjectRef & Partial<StorageCustomFields<TSchema[K]>>
   >;
 } & StorageApi<TSchema>;
+
+type StorageCustomFields<TObject> = Omit<TObject, keyof StorageObjectRef | keyof StorageObject>;
 ```
 
-Custom metadata fields declared on the `@blob()` class are optional on returned objects. The SDK omits intrinsic storage fields and `StorageObject` fields from `StorageCustomFields<T>`.
+Each schema key is a folder name — the `@blob` class name, or its `@blob({ name })` value. Each value is either the decorated class or an object type that lists the folder's custom metadata fields (`object` when there are none). The client adds the `StorageObjectRef` envelope itself; do not intersect schema values with `StorageObjectRef`. Custom fields are optional on returned objects.
+
+The client normalizes a key to a folder name (lowercase letters, digits, and single hyphens) before it sends a request, so `client.storage.Attachment` addresses the `attachment` folder.
+
+## `createStorageClient` and `StorageApi`
+
+```typescript
+function createStorageClient<TSchema extends StorageSchema = StorageSchema>(
+  apiClient: ApiClient,
+): StorageClient<TSchema>;
+
+class StorageApi<TSchema extends StorageSchema = StorageSchema> extends ServicePlugin {
+  getFolderClient<K extends keyof TSchema & string>(
+    folderName: K,
+  ): StorageFolderClient<StorageObjectRef & Partial<StorageCustomFields<TSchema[K]>>>;
+  getInstantiatedFolderNames(): (keyof TSchema)[];
+}
+```
+
+`createStorageClient` stays public for code that owns an `ApiClient` from `@microsoft/rayfin-lib` directly. Application clients use `storageService()`. Composing Storage through `ExtendableRayfinClient` from `@microsoft/rayfin-client/experimental` no longer works. [Removed in 2.0](/docs/reference/changelog#rayfin-20)
+
+## `StorageFolderClient`
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript
+class StorageFolderClient<TObject extends StorageObjectRef = StorageObjectRef> {
+  upload(
+    path: string,
+    data: Blob | ArrayBuffer | Uint8Array | ReadableStream | string,
+    options?: UploadOptions<TObject>,
+  ): Promise<StorageUploadResult<TObject>>;
+
+  download(path: string, options?: DownloadOptions): Promise<StorageDownloadResult>;
+
+  list(options?: ListOptions): Promise<StorageListResult<TObject>>;
+  list(directoryPath: string, options?: ListOptions): Promise<StorageListResult<TObject>>;
+
+  delete(path: string, options?: DeleteOptions): Promise<StorageDeleteResult>;
+}
+```
+
+`path` is the complete object path relative to the folder, including the file name, such as `avatars/photo.png`. `list()` takes an optional directory path; omit it, or pass an empty string, to list from the folder root.
+
+| Path rule | Example that fails |
+| --- | --- |
+| Segments are separated by `/` | `avatars\photo.png` |
+| No leading or trailing `/` | `/avatars/photo.png`, `avatars/` |
+| No empty, `.`, or `..` segments | `avatars//photo.png`, `../photo.png` |
+
+A path that breaks a rule throws a `StorageError` with code `InvalidName` and status `400` before any request is sent. Other characters and casing are preserved.
+
+## Options
+
+| Type | Properties |
+| --- | --- |
+| `UploadOptions<TObject>` | `signal?`, `contentType?`, `contentDisposition?`, `cacheControl?`, `expiresInSeconds?`, `fields?: Partial<StorageCustomFields<TObject>>` |
+| `DownloadOptions` | `signal?`, `expiresInSeconds?` |
+| `ListOptions` | `limit?`, `continuation?`, `signal?` |
+| `DeleteOptions` | `signal?` |
+
+`prefix` is removed from all four option types; put directory segments in the path instead. [Removed in 2.0](/docs/reference/changelog#rayfin-20)
+
+- `contentType` overrides the type inferred from `Blob` data. Other data defaults to `application/octet-stream`.
+- `contentDisposition` and `cacheControl` are stored as object metadata and set on the file in OneLake.
+- `expiresInSeconds` requests the lifetime of the temporary upload or download URL. The service clamps upload URLs to 60–3600 seconds. It does not affect how long the object is kept.
+- `fields` sends custom metadata declared on the `@blob` class. Do not send intrinsic `StorageObject` fields.
+- `signal` aborts the operation with code `Aborted`.
 
 ## `StorageObjectRef`
 
@@ -86,32 +172,7 @@ interface StorageObjectRef {
 }
 ```
 
-`storedPath` and `userMetadata` are no longer part of `StorageObjectRef`. Custom list metadata is flattened onto the returned item instead. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
-
-## Operation signatures
-
-```typescript
-class StorageFolderClient<TObject extends StorageObjectRef = StorageObjectRef> {
-  upload(
-    name: string,
-    data: Blob | ArrayBuffer | Uint8Array | ReadableStream | string,
-    options?: UploadOptions<TObject>
-  ): Promise<StorageUploadResult<TObject>>;
-
-  download(name: string, options?: DownloadOptions): Promise<StorageDownloadResult>;
-  list(options?: ListOptions): Promise<StorageListResult<TObject>>;
-  delete(name: string, options?: DeleteOptions): Promise<StorageDeleteResult>;
-}
-```
-
-| Option type | Properties |
-| --- | --- |
-| `UploadOptions<TObject>` | `prefix?`, `signal?`, `contentType?`, `contentDisposition?`, `cacheControl?`, `expiresInSeconds?`, `fields?: Partial<StorageCustomFields<TObject>>` |
-| `DownloadOptions` | `prefix?`, `signal?`, `expiresInSeconds?` |
-| `ListOptions` | `prefix?`, `limit?`, `continuation?`, `signal?` |
-| `DeleteOptions` | `prefix?`, `signal?` |
-
-`declaredSize`, `onProgress`, `userMetadata`, per-call `onConflict`, download `range`, download content header overrides, and caller-supplied `correlationId` are removed. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
+`path` is the complete relative object path, including the file name, and `name` is its last segment. [Changed in 2.0](/docs/reference/changelog#rayfin-20) `size` is capped at `Number.MAX_SAFE_INTEGER`; `sizeBig` carries the exact size of larger objects. `list()` flattens each item's custom `fields` onto the returned object, so a `team_id` field is read as `item.team_id`.
 
 ## Results
 
@@ -143,7 +204,10 @@ interface StorageDeleteResult {
 }
 ```
 
-`download().contentDisposition` is the value returned by OneLake when present; the SDK does not synthesize it. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+- `upload()` transfers the bytes directly to OneLake through a temporary signed URL, commits the upload, and waits for the operation to succeed. The service does not return the committed object yet, so `object` is built from the request: `id` is an empty string, and `size` is `0` for a `ReadableStream`.
+- `download()` returns the OneLake response as a stream. `contentType` and `contentDisposition` are the headers OneLake returns; the SDK does not override or synthesize them.
+- `delete()` resolves after the service's delete operation succeeds.
+- Each operation uses one `correlationId` for every request it makes and returns it.
 
 ## Errors
 
@@ -155,6 +219,45 @@ interface StorageError extends Error {
   response?: Response;
   retryable: boolean;
 }
+
+function isStorageError(error: unknown): error is StorageError;
 ```
 
-Stable codes are exported as `STORAGE_ERROR_CODES`: `InvalidFolder`, `InvalidPath`, `InvalidName`, `InvalidPrefix`, `InvalidSasExpiry`, `TooLarge`, `UnsupportedContentType`, `Conflict`, `NotFound`, `PermissionDenied`, `Unauthenticated`, `InvalidContinuation`, `UploadSessionExpired`, `CommitFailed`, `RateLimited`, `Unexpected`, `Aborted`, `MissingOrMalformedOperationId`, and `NoStorageEntitiesConfigured`.
+`retryable` is `true` for statuses of 500 and above and for rate limiting. It is a recommendation only: the SDK never retries automatically, and calling the operation again starts it over rather than resuming it.
+
+Stable codes are exported as `STORAGE_ERROR_CODES`:
+
+| Code | When it occurs |
+| --- | --- |
+| `InvalidName` | The object or directory path breaks the path rules (thrown by the SDK before a request), or the service rejects the file name. |
+| `InvalidFolder` | The service rejects the folder name. |
+| `InvalidSasExpiry` | The service rejects the requested `expiresInSeconds`. |
+| `InvalidContinuation` | The `continuation` token is not valid. |
+| `TooLarge` | The object exceeds the folder's `maxSize` or the service limit. |
+| `UnsupportedContentType` | The content type is not in the folder's `allowedContentTypes`. |
+| `Conflict` | An object exists at the path and the folder uses `onConflict: 'error'`, or another upload or delete of the same object is in progress. |
+| `NotFound` | The folder, object, or operation does not exist. |
+| `PermissionDenied` | The folder's `@role()` policy does not allow the operation. |
+| `Unauthenticated` | The request has no valid session. |
+| `UploadSessionExpired` | The temporary upload URL expired before the transfer finished. |
+| `CommitFailed` | The stored file did not match the upload when it was committed. |
+| `RateLimited` | The service is throttling requests. `retryable` is `true`. |
+| `NoStorageEntitiesConfigured` | No Storage folders are configured for the app. |
+| `MissingOrMalformedOperationId` | The service could not use the operation or upload ID. |
+| `Aborted` | The `signal` you passed was aborted. |
+| `Unexpected` | Any other failure. |
+
+The set also contains `InvalidPath`, and `InvalidPrefix`, which is kept for compatibility with earlier clients.
+## Removed APIs
+
+| Removed | Replacement |
+| --- | --- |
+| `prefix` on upload, download, list, and delete options | Pass the complete object path; call `list(directoryPath, options)`. [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `ExtendableRayfinClient` composition with `createStorageClient` | `storageService()` in `RayfinClient.create({ services })`. [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `declaredSize`, `onProgress`, `userMetadata`, and per-call `onConflict` upload options | The service enforces size limits; no progress callback; custom `fields`; `@blob({ onConflict })`. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+| Download `range` and `contentType` / `contentDisposition` overrides | Download returns the headers OneLake supplies. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+| Caller-supplied `correlationId` | The SDK creates one per operation. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `storedPath` and `userMetadata` on `StorageObjectRef` | `path`, and custom fields flattened onto each item. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `StorageConflictMode` and `UploadProgressEvent` exports | None. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+
+To upgrade 1.36 code, follow [Migrate from 1.36 Storage](/docs/storage/migrate-from-1-36).

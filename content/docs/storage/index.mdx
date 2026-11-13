@@ -1,51 +1,77 @@
 ---
 title: Storage
-description: Enable experimental Rayfin Storage, declare blob folders, configure object rules, and call the typed storage client.
-appliesTo: "@microsoft/rayfin-storage >= 1.36"
+description: Store files in a Fabric app with Rayfin Storage — declare @blob folders, register storageService on the client, and upload, download, list, and delete objects by path.
+appliesTo: "@microsoft/rayfin-storage >= 2.0"
 ---
 
-Use Rayfin Storage when a Fabric app needs typed upload, download, list, and delete operations for objects declared in `rayfin/storage/`.
+Use Rayfin Storage when a Fabric app needs to upload, download, list, and delete files through a typed client, with access controlled by the same `@role()` policies as your data. Storage is generally available from Rayfin 2.0 and needs no feature flag. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-[Experimental](/docs/reference/changelog#feature-status) [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+Storage is remote-only. Folders and their files live in the deployed Fabric backend; there is no local Storage service or emulator. With the default Fabric provider, `rayfin dev` applies your folder declarations to the Fabric backend it uses, so a frontend running on `localhost` reads and writes the same remote folders.
 
-> [!WARNING]
-> Storage is experimental. Enable it only when your project explicitly needs Rayfin Storage, and confirm the service is available in your Fabric region and tenant before you build production flows around it.
+If your code was written for the experimental Storage in 1.36, see [Migrate from the 1.36 experimental Storage](#migrate-from-the-136-experimental-storage).
 
-## Enable storage
+## Add Storage to a project
 
-Storage is enabled when either the project configuration opts in or the CLI feature flag is present. The project configuration is the persistent form:
+Run Storage initialization from the root of an npm project: [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```bash
+npx rayfin storage init
+```
+
+The command changes local files only — it does not sign in, create a backend, or deploy folders. It:
+
+- Enables `services.storage` and the Data service that Storage requires. An existing Data dialect is kept; a missing one is set to `mssql`.
+- Adds `@microsoft/rayfin-storage` to the package that declares `@microsoft/rayfin-client`, and `@microsoft/rayfin-core` to the package that holds the declarations, at the version your other Rayfin dependencies use.
+- Creates an owner-scoped starter folder, `Attachment`, registers it in the runtime schema, and writes a browser-safe type map for the client.
+- Adds a `build:storage` script and runs it before `build`, `build:fabric`, and `typecheck`.
+- Runs `npm install` and compiles the declarations to check them.
+
+In a Universal App project, it also registers Storage on the typed client in `packages/frontend/src/lib/rayfin-client.ts`. In other layouts it ends with `Manual integration required:` lines; make that change yourself as shown in [Add Storage to the client](#add-storage-to-the-client).
+
+Preview the plan without writing anything:
+
+```bash
+npx rayfin storage init --dry-run
+```
+
+[`rayfin storage init`](/docs/reference/cli/storage) lists every flag, explains how the command picks packages in npm workspaces, and describes how it rolls back on failure. For a new project, `npx rayfin init --services auth,data,storage` enables Storage when the project is created. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+### Set up Storage manually
+
+Use manual setup when `rayfin storage init` cannot run — for example, in a project managed by another package manager. Install the client package at the same exact version as your other Rayfin packages, in the package that creates your Rayfin client:
+
+```bash
+npm install @microsoft/rayfin-storage@2.0.0
+```
+
+Enable Data and Storage:
 
 ```yaml title="rayfin/rayfin.yml"
 services:
+  data:
+    enabled: true
+    dialect: mssql
   storage:
     enabled: true
 ```
 
-For one-off CLI exploration, set the feature flag before running commands that expose storage subcommands or scaffold storage agent files:
+Storage requires Data because folder configuration and object metadata live in the deployed database. If Storage is enabled without Data, Storage apply fails with `Storage requires the Data service.` Storage can stay enabled before you declare a folder; until one is registered, apply is skipped with a warning.
 
-```powershell
-$env:RAYFIN_FEATURE_FLAGS = 'storage'
-npx rayfin dev --help
-```
+## Declare a folder
 
-`rayfin up storage apply`, storage development commands, and the `rayfin-storage` agent skill are registered only when the storage feature resolves on. In 1.36.2 the resolver treats `services.storage.enabled: true` the same as `RAYFIN_FEATURE_FLAGS=storage`.
-
-## Declare a storage folder
-
-Declare folders under `rayfin/storage/`. Import `blob`, `StorageObject`, byte-size helpers, and `ContentTypes` from `@microsoft/rayfin-core/experimental`; keep `@role()` and field decorators on the stable `@microsoft/rayfin-core` import.
+Declare each folder as a class under `rayfin/storage/` that extends `StorageObject`, with `@blob()` and at least one authenticated `@role()` rule. Import all of them from `@microsoft/rayfin-core`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript title="rayfin/storage/ProfileImage.ts"
-import { role } from '@microsoft/rayfin-core';
 import {
   blob,
   ContentTypes,
   mb,
+  role,
   StorageObject,
-} from '@microsoft/rayfin-core/experimental';
+} from '@microsoft/rayfin-core';
 
 @blob({
   name: 'profile-images',
-  onConflict: 'overwrite',
   maxSize: mb(5),
   allowedContentTypes: [ContentTypes.AnyImage],
 })
@@ -55,172 +81,157 @@ import {
 export class ProfileImage extends StorageObject {}
 ```
 
-Every folder needs at least one authenticated permission rule. Anonymous storage permissions are not supported.
+`StorageObject` is declaration-only. It exposes server-managed fields such as `owner_id`, `path`, `size`, and `etag` to policies without adding metadata fields. `owner_id` is the uploader's `sub` claim, so this policy limits each signed-in user to their own files.
+
+Every folder needs at least one authenticated permission rule; Storage apply rejects a folder without one. Anonymous Storage permissions are not supported. See [Permissions](/docs/data/permissions) for the policy DSL.
+
+`rayfin storage init` scaffolds this starter folder:
+
+```typescript title="rayfin/storage/Attachment.ts"
+import { blob, mb, role, StorageObject } from '@microsoft/rayfin-core';
+
+// Each signed-in user can reach only their own files. Uploads keep the default
+// onConflict: 'error', so reusing an object path is reported, not overwritten.
+@blob({ maxSize: mb(10) })
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class Attachment extends StorageObject {}
+```
 
 ## Folder options
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `name` | `string` | normalized class name | Folder name, 3–63 lowercase letters, digits, or hyphens after normalization. |
-| `onConflict` | `'error' \| 'overwrite'` | `'error'` | `error` rejects an existing object with `Conflict`; `overwrite` replaces it and requires an authenticated role with `update`. |
-| `maxSize` | `number \| ByteSize` | service limit | Maximum object size. Use `bytes()`, `kb()`, `mb()`, or `gb()` helpers for typed byte values. |
-| `allowedContentTypes` | `MimeGlob[]` | any type | MIME globs such as `'image/*'` or constants from `ContentTypes`. Unsupported uploads fail with `UnsupportedContentType`. |
+| `name` | `string` | normalized class name | Folder name: 3–63 lowercase letters, digits, or hyphens after normalization. `@blob('profile-images')` is shorthand for `@blob({ name: 'profile-images' })`. |
+| `onConflict` | `'error' \| 'overwrite'` | `'error'` | `error` rejects an upload to an existing path with `Conflict`; `overwrite` replaces the object and requires an authenticated role with `update`. |
+| `maxSize` | `number \| ByteSize` | service limit | Maximum object size. Use the `bytes()`, `kb()`, `mb()`, or `gb()` helpers for typed byte values. |
+| `allowedContentTypes` | `MimeGlob[]` | any type | MIME globs such as `'image/*'`, or constants from `ContentTypes`. Other types fail with `UnsupportedContentType`. |
 
-The 1.36 storage client removed unsupported per-call controls from upload and download options. If older code used them, move the intent into folder configuration or application logic.
+Keep a folder's name stable. Without an explicit `name`, renaming the class renames the folder, and the next apply treats the old folder as removed — see [Remove a folder](#remove-a-folder).
 
-| Removed option | Where it used to appear | Replacement |
-| --- | --- | --- |
-| `declaredSize` | `upload()` options | The SDK infers size when it can; folder and service size limits are enforced by the service. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `onProgress` | `upload()` options | No SDK progress callback is exposed in 1.36. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `userMetadata` | `upload()` options | Declare typed fields on the folder class and pass them through `fields`. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| per-call `onConflict` | `upload()` options | Set the folder default with `@blob({ onConflict })`. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `contentType`, `contentDisposition`, `range` | `download()` options | Download returns the headers OneLake supplies; the client does not request alternate headers or ranges. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `correlationId` | every operation options object | The SDK creates and returns a correlation ID for each operation. [Removed in 1.36](/docs/reference/changelog#rayfin-136) |
+## Register folders
 
-## Register the storage schema
-
-Map each schema key to the decorated class. If `@blob({ name })` supplies an explicit folder name, the schema key must match that configured folder name exactly.
+List every folder you deploy in the runtime `schema` array. The array is authoritative: Rayfin does not apply a decorated `@blob` class that is not registered.
 
 ```typescript title="rayfin/storage/schema.ts"
+import { Attachment } from './Attachment.js';
 import { ProfileImage } from './ProfileImage.js';
 
+export const schema = [Attachment, ProfileImage];
+```
+
+Give the client a matching type map in a separate file, so browser code never imports the decorated classes. Each key is the folder name — the class name, or the `@blob({ name })` value when one is set. Each value lists the folder's custom metadata fields, or `object` when it has none; the client adds the stored-object envelope (`path`, `size`, `contentType`, and so on) itself.
+
+```typescript title="rayfin/storage/client-schema.ts"
 export type AppStorageSchema = {
-  'profile-images': ProfileImage;
+  Attachment: object;
+  'profile-images': object;
 };
-
-export const schema = [ProfileImage];
 ```
 
-Use bracket notation for keys that contain hyphens:
+A folder registered in `schema.ts` but missing from `AppStorageSchema` is deployed but not typed on the client. Use bracket notation for keys with a hyphen, such as `client.storage['profile-images']`, and do not use the class name as the key when the folder has an explicit name.
 
-```typescript
-const images = await client.storage['profile-images'].list({ limit: 20 });
-```
+Projects that export `AppStorageSchema` from `schema.ts` with the classes as values (`'profile-images': ProfileImage`) can keep that shape, as long as the client imports it with `import type`.
 
-Do not intersect schema values with `StorageObjectRef`; the client adds the object envelope automatically and makes custom fields optional on returned objects.
+## Add Storage to the client
 
-## Add storage to the client
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-Storage is composed through `ExtendableRayfinClient` and `createStorageClient`.
+Register Storage on the client you already create with `RayfinClient.create`, using `storageService()` from `@microsoft/rayfin-storage`. Storage shares that client's authenticated session; do not create a second client or session for it.
 
 ```typescript title="src/services/rayfinClient.ts"
-import type { RayfinClient } from '@microsoft/rayfin-client';
-import { ExtendableRayfinClient } from '@microsoft/rayfin-client/experimental';
-import {
-  createStorageClient,
-  type StorageClient,
-} from '@microsoft/rayfin-storage';
-
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { storageService } from '@microsoft/rayfin-storage';
 import type { AppSchema } from '../../rayfin/data/schema';
-import type { AppStorageSchema } from '../../rayfin/storage/schema';
+import type { AppStorageSchema } from '../../rayfin/storage/client-schema';
 
-export type AppClient = RayfinClient<AppSchema> & {
-  storage: StorageClient<AppStorageSchema>;
-};
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+    storage: storageService<AppStorageSchema>(),
+  },
+});
 
-export function createAppClient(baseUrl: string, publishableKey: string): AppClient {
-  return ExtendableRayfinClient.create({
-    baseUrl,
-    publishableKey,
-    schema: {} as AppSchema,
-    services: {
-      storage: createStorageClient<AppStorageSchema>,
-    },
-  });
+export type AppClient = typeof rayfinClient;
+```
+
+Each key in `AppStorageSchema` becomes a typed folder client: `rayfinClient.storage.Attachment`, `rayfinClient.storage['profile-images']`. The `storage: true` option of `browserSession()` controls where the sign-in session is persisted; it is unrelated to Rayfin Storage. Install `@microsoft/rayfin-auth` and `@microsoft/rayfin-data` yourself — the 2.0 client package no longer brings them in. Code that owns an `ApiClient` directly can still call `createStorageClient(apiClient)`.
+
+## Upload and list files
+
+Address every object by its complete path inside the folder, including the file name. A file at the folder root is addressed by its name alone:
+
+```typescript title="src/services/attachments.ts"
+import { rayfinClient } from './rayfinClient';
+
+export async function saveAttachment(file: File): Promise<string> {
+  const { object } = await rayfinClient.storage.Attachment.upload(file.name, file);
+  return object.path;
+}
+
+export async function listAttachments() {
+  const { items } = await rayfinClient.storage.Attachment.list({ limit: 20 });
+  return items;
 }
 ```
 
-## Upload and download objects
+The 1.36 `prefix` option is gone; put directory segments in the path, such as `reports/2026/plan.pdf`. [Removed in 2.0](/docs/reference/changelog#rayfin-20) [Upload and download files](/docs/storage/files) covers the path rules, every operation and option, typed metadata, and error handling.
 
-Omit `prefix` by default. Add a prefix only when the application explicitly needs path partitioning, and use the same prefix for later list, download, and delete calls. Prefixes are organization, not authorization; the folder policy is the authorization boundary.
+## Apply Storage configuration
 
-```typescript title="src/services/profileImages.ts"
-import type { StorageClient } from '@microsoft/rayfin-storage';
-
-import type { AppStorageSchema } from '../../rayfin/storage/schema';
-
-export class ProfileImageService {
-  constructor(private readonly storage: StorageClient<AppStorageSchema>) {}
-
-  async upload(userId: string, file: File) {
-    return this.storage['profile-images'].upload('profile-image', file, {
-      prefix: userId,
-      contentType: file.type || 'application/octet-stream',
-      fields: {},
-    });
-  }
-
-  async list(userId: string) {
-    return this.storage['profile-images'].list({ prefix: userId, limit: 20 });
-  }
-
-  async download(userId: string, name = 'profile-image') {
-    return this.storage['profile-images'].download(name, { prefix: userId });
-  }
-
-  async remove(userId: string, name = 'profile-image') {
-    return this.storage['profile-images'].delete(name, { prefix: userId });
-  }
-}
-```
-
-Use the signed-in session's subject identifier for `userId`; do not accept arbitrary user IDs from untrusted input.
-
-## Operation options and results
-
-| Operation | Options | Result |
-| --- | --- | --- |
-| `upload(name, data, options?)` | `prefix`, `signal`, `contentType`, `contentDisposition`, `cacheControl`, `expiresInSeconds`, `fields` | `{ object, correlationId }` |
-| `download(name, options?)` | `prefix`, `signal`, `expiresInSeconds` | `{ stream, contentType?, contentDisposition?, contentLength?, etag?, correlationId }` |
-| `list(options?)` | `prefix`, `limit`, `continuation`, `signal` | `{ items, continuation?, correlationId }` |
-| `delete(name, options?)` | `prefix`, `signal` | `{ success, deleted, correlationId }` |
-
-[Changed in 1.36](/docs/reference/changelog#rayfin-136)
-
-The SDK flattens returned custom `fields` onto each listed object, so a `team_id` field declared on the folder class appears as `item.team_id`. Those custom properties are optional because individual objects may not contain every declared field.
-
-## Apply storage configuration
-
-`rayfin up` applies enabled storage configuration during deployment. Use the cloud storage-only command for retries or storage-only changes:
+`rayfin up` applies enabled Storage declarations when it deploys. To apply only Storage — to retry, or to ship folder changes alone — run:
 
 ```bash
 npx rayfin up storage apply
 ```
 
-Add `--force` only after reviewing and accepting destructive storage configuration changes. During `npm run dev`, restart the development session after changing storage declarations so the enabled project state is loaded before you retry storage operations.
+During development, `rayfin dev` applies enabled declarations to its Fabric backend when the session starts. After you change a declaration, apply it without restarting the session: [New in 2.0](/docs/reference/changelog#rayfin-20)
 
-## Handle storage errors
-
-Storage failures throw `StorageError` with `code`, `status`, `correlationId`, and `retryable`. The SDK does not automatically retry failed multi-step operations.
-
-```typescript
-import { isStorageError } from '@microsoft/rayfin-storage';
-
-try {
-  await client.storage['profile-images'].upload('profile-image', file, {
-    contentType: file.type,
-  });
-} catch (error) {
-  if (!isStorageError(error)) throw error;
-
-  switch (error.code) {
-    case 'Conflict':
-      break;
-    case 'TooLarge':
-      break;
-    case 'UnsupportedContentType':
-      break;
-    case 'PermissionDenied':
-    case 'Unauthenticated':
-      break;
-    default:
-      if (error.retryable) {
-        // Reissue the public SDK operation after backoff.
-      }
-  }
-}
+```bash
+npx rayfin dev storage apply
 ```
 
+`rayfin dev storage apply` retries Storage only. It needs a backend that a full `rayfin dev` run has already set up, it does not create a backend or apply other settings, and it targets the active deployment, so it rejects `--workspace` and `--workspace-id`. To switch workspaces, run full `rayfin dev` with the selector first.
+
+When no `@blob` folder is registered, apply is skipped with `No @blob folder declarations found. Storage configuration was not applied.`
+
+## Remove a folder
+
+> [!WARNING]
+> Removing a folder declaration deletes the folder's data permanently. Once the apply succeeds, the folder is unavailable, and every object in it is deleted, with its metadata, in the background. Deleted folders cannot be restored, and the name cannot be reused until cleanup finishes.
+
+Apply refuses to remove a folder that still holds objects:
+
+```text
+Storage apply blocked (409): the following folder(s) are no longer declared but still contain objects and were not removed:
+   • profile-images
+💡 Re-run with --force to authorize removing non-empty folders.
+```
+
+Pass `--force` to `rayfin up storage apply` or `rayfin dev storage apply` only after you have reviewed and accepted that data loss. `rayfin up --force` passes the same authorization to Storage.
+
+Removing the last folder declaration does not remove a deployed folder: with no folders declared, apply is skipped, so the deployed folder stays.
+
+## Migrate from the 1.36 experimental Storage
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Storage code written for 1.36 needs four changes: remove `storage` from `RAYFIN_FEATURE_FLAGS`; import `blob`, `StorageObject`, `ContentTypes`, and the size helpers from `@microsoft/rayfin-core` instead of `@microsoft/rayfin-core/experimental`; register `storageService()` on `RayfinClient.create` instead of composing `ExtendableRayfinClient`; and pass complete object paths instead of the `prefix` option. [Migrate from 1.36 Storage](/docs/storage/migrate-from-1-36) walks through each change with before-and-after code and an agent prompt. Keep folder names unchanged while you migrate, so the next apply does not treat a folder as removed.
+
 ```prompt title="Add a Rayfin Storage folder"
-In my Rayfin project, enable Storage by setting services.storage.enabled: true in rayfin/rayfin.yml. Add rayfin/storage/ProfileImage.ts with @blob({ name: 'profile-images', maxSize: mb(5), allowedContentTypes: [ContentTypes.AnyImage] }) imported from @microsoft/rayfin-core/experimental, add an authenticated role policy comparing claims.sub to item.owner_id, register it in rayfin/storage/schema.ts with the exact 'profile-images' key, install @microsoft/rayfin-storage at the same exact version as the other @microsoft/rayfin-* packages, and apply the configuration with rayfin up storage apply.
+In my Rayfin 2.0 project, add a Rayfin Storage folder named 'profile-images' for user profile pictures.
+
+1. Read rayfin/rayfin.yml. Storage requires the Data service: if services.data.enabled is not true, ask me before enabling it.
+2. If Storage is not set up yet, run `npx rayfin storage init` (npm projects). Otherwise install @microsoft/rayfin-storage at the same exact version as my other @microsoft/rayfin-* packages and set services.data.enabled: true (dialect mssql) and services.storage.enabled: true.
+3. Create rayfin/storage/ProfileImage.ts: a class extending StorageObject with @blob({ name: 'profile-images', maxSize: mb(5), allowedContentTypes: [ContentTypes.AnyImage] }) and @role('authenticated', '*', { policy: (claims, item) => claims.sub.eq(item.owner_id) }). Import blob, ContentTypes, mb, role, and StorageObject from @microsoft/rayfin-core — not from @microsoft/rayfin-core/experimental.
+4. Add ProfileImage to the runtime schema array in rayfin/storage/schema.ts, and add a 'profile-images': object key to the AppStorageSchema type the client uses, without importing decorated classes into browser code.
+5. If my RayfinClient.create call has no storage service yet, add storage: storageService<AppStorageSchema>() from @microsoft/rayfin-storage to its services. Do not create a second client.
+6. Call client.storage['profile-images'] with complete object paths such as `avatars/${sub}/${file.name}`, where sub comes from `await client.auth.getClaims()`. There is no prefix option.
+7. Apply the folder with `npx rayfin up storage apply`, or `npx rayfin dev storage apply` when a `rayfin dev` session already set up the backend. Never pass --force unless I confirm that I accept data loss.
 ```

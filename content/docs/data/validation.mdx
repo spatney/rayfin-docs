@@ -11,11 +11,10 @@ add: no separate Zod or Yup schema to keep in sync.
 
 > [!NOTE]
 > Rayfin entities use TC39 Stage 3 decorators, so any tool compiling your client code
-> must target **ES2022** or later. If you see `Expression expected` on `@entity()` (or
-> another decorator) when calling `toStandardSchema` or `getFieldConstraints`, your
-> bundler's target is too old. For Vite, set `target: 'es2022'` in `vite.config.ts` and
-> keep the default `@vitejs/plugin-react` (esbuild) plugin — `@vitejs/plugin-react-swc`
-> cannot parse these decorators regardless of `target`.
+> must target **ES2022** or later and must compile those decorators. If you see
+> `Expression expected` on `@entity()` (or another decorator) when calling
+> `toStandardSchema` or `getFieldConstraints`, your bundler is not parsing them — see
+> [Configure Vite for entity imports](#configure-vite-for-entity-imports).
 
 ## Build a validator from an entity
 
@@ -166,6 +165,50 @@ export function TodoForm({ onSubmit }: TodoFormProps) {
 }
 ```
 
+## Configure Vite for entity imports
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`toStandardSchema` and `getFieldConstraints` take the entity class as a value, so the
+frontend bundle compiles the entity's decorators. (A type-only `import type` is unaffected.)
+Set `target: 'es2022'` for the build, esbuild, and dependency pre-bundling. With the default
+`@vitejs/plugin-react` plugin, that is all you need. With `@vitejs/plugin-react-swc`, also
+turn on SWC's Stage 3 decorator support:
+
+```typescript title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react-swc';
+
+export default defineConfig({
+  plugins: [
+    react({
+      useAtYourOwnRisk_mutateSwcOptions({ jsc }) {
+        if (!jsc?.parser) return;
+        jsc.parser.decorators = true;
+        jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' };
+      },
+    }),
+  ],
+  build: {
+    target: 'es2022',
+  },
+  esbuild: {
+    target: 'es2022',
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      target: 'es2022',
+    },
+  },
+});
+```
+
+Without the SWC option, the dev server fails with `Expression expected` on `@entity()`. On
+Vite 8, `vite build` succeeds but emits raw `@decorator` syntax that browsers cannot parse,
+and `rayfin up` refuses to deploy that bundle. The 2.0 templates that use
+`@vitejs/plugin-react-swc` already set this option; apps created from older templates need the
+change.
+
 ## Standard Schema interop
 
 The object returned by `toStandardSchema` implements `StandardSchemaV1` from
@@ -188,4 +231,14 @@ rayfin/data/Category.ts using toStandardSchema from @microsoft/rayfin-core. Only
 "name" field should be collected from the form (omit any other server-managed fields).
 Write a small React component that validates on submit, shows the first validation error,
 and calls an onSubmit prop with the validated value.
+```
+
+```prompt title="Compile Rayfin decorators with the Vite SWC plugin"
+My Rayfin app uses @vitejs/plugin-react-swc, and frontend code that imports an entity class
+fails with "Expression expected" on @entity(). In vite.config.ts, pass
+useAtYourOwnRisk_mutateSwcOptions({ jsc }) to the react() plugin: return early when
+jsc?.parser is missing, set jsc.parser.decorators = true, and set
+jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' }. Also set target: 'es2022'
+under build, esbuild, and optimizeDeps.esbuildOptions. Then run the production build and
+confirm it succeeds.
 ```

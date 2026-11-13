@@ -1,6 +1,6 @@
 ---
 title: "@microsoft/rayfin-auth-provider-fabric"
-description: "Fabric auth provider reference for Fabric SSO, direct Entra token exchange, embedded handoff, and external embed support."
+description: "Fabric auth provider reference for Fabric SSO, direct Entra token exchange, embedded handoff, external embed support, and sign-in error codes."
 appliesTo: "@microsoft/rayfin-auth-provider-fabric >= 1.36"
 ---
 
@@ -8,7 +8,7 @@ appliesTo: "@microsoft/rayfin-auth-provider-fabric >= 1.36"
 Browser helpers broker through Fabric SSO.
 `signInWithEntraToken()` exchanges an existing delegated Entra token directly in browsers or Node.js. [New in 1.36](/docs/reference/changelog#rayfin-136)
 
-The package operates on an `Auth` instance from [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth).
+The package operates on an `Auth` instance from [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-auth) — usually `client.auth` from a `RayfinClient` created with `browserSession()`.
 
 > [!NOTE]
 > This package's catalog listing can mention MSAL, but the installed implementation does not depend on MSAL.js.
@@ -20,6 +20,8 @@ The package operates on an `Auth` instance from [`@microsoft/rayfin-auth`](/docs
 ```bash
 npm install @microsoft/rayfin-auth-provider-fabric @microsoft/rayfin-auth @microsoft/rayfin-lib
 ```
+
+The package declares an `exports` map; import from the package root only. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Where each flow works
 
@@ -40,6 +42,7 @@ The embedded Fabric flow requires the app to be loaded inside a Fabric iframe.
 ```typescript
 export type { FabricAuthOptions };
 export type { EntraTokenSignInOptions };
+export type { PostMessageHandoffResult };
 export { bridgeFabricCallback };
 export { embeddedFabricLogin };
 export { ensureSignedInWithFabric };
@@ -59,6 +62,7 @@ interface FabricAuthOptions {
   workspaceId: string;
   projectId: string;
   fabricPortalUrl: string;
+  tenantId?: string;
   returnOrigin: string;
   callbackUrl?: string;
   fabricEmbedded?: boolean;
@@ -70,9 +74,12 @@ interface FabricAuthOptions {
 | `workspaceId` | `string` | Fabric workspace ID. |
 | `projectId` | `string` | Fabric project or AppBackend artifact ID. |
 | `fabricPortalUrl` | `string` | Fabric portal URL. Existing path and query parameters are preserved when the broker URL is built. |
+| `tenantId` | `string` | Microsoft Entra tenant that owns the Fabric item. Added to the broker URL as `ctid`, so sign-in opens in that tenant instead of first discovering the user's home tenant. Omit it when the tenant is unknown. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `returnOrigin` | `string` | Bare origin of the app that initiated auth, such as `window.location.origin`. |
 | `callbackUrl` | `string` | Legacy redirect callback URL. Defaults to `${returnOrigin}/auth/callback`. Deprecated for postMessage-capable portals. |
-| `fabricEmbedded` | `boolean` | Forces embedded mode. The SDK also detects `?fabricEmbedded=true` and a stored embedded flag. |
+| `fabricEmbedded` | `boolean` | Forces the Fabric embedded flow. The SDK also detects `?fabricEmbedded=true` and a flag it remembers in `sessionStorage`; `false` does not turn that detection off. These Fabric hints take precedence over external-host discovery. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+
+Pass `tenantId` from `VITE_FABRIC_TENANT_ID`, or from `client.runtimeConfig?.tenantId` when you resolve deployment values with `resolveRayfinConfig()`.
 
 ## ensureSignedInWithFabric
 
@@ -84,36 +91,52 @@ function ensureSignedInWithFabric(
 ```
 
 Browser-only primary entry point for Fabric SSO.
-It runs a waterfall where the first successful step short-circuits the rest:
+It first detects the host: Fabric embedding from the Fabric hints, or — only when there are none — an external embed host that acknowledges a readiness message within 300 ms. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+It then runs a waterfall where the first successful step short-circuits the rest:
 
 1. Return a safe existing session.
 2. Try `auth.refreshSession()` if a refresh token exists.
 3. Use embedded `postMessage` handoff if Fabric embedded mode or external-embed classification applies. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 4. Open the Fabric broker popup.
 
-Step 4 calls `window.open()`.
-Call this function directly from a user gesture.
+Steps 1 and 2 are skipped for an external embed host, and for Fabric embedding without a viewer hint from the host until a handoff completes in the current page load.
+Step 4 calls `window.open()`, so call this function directly from a user gesture.
+It rejects with an `AuthError`; show `error.message` to the user.
 
-```typescript title="src/auth/signIn.ts"
-import { RayfinClient } from '@microsoft/rayfin-client';
+```typescript title="src/auth/signInButton.ts"
+import { browserSession } from '@microsoft/rayfin-auth';
 import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
+import { RayfinClient } from '@microsoft/rayfin-client';
 
-const client = new RayfinClient({
+const client = RayfinClient.create({
   baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
   publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
 });
+
+const signInError = document.querySelector<HTMLElement>('#sign-in-error');
 
 document.querySelector('#sign-in')?.addEventListener('click', async () => {
-  const session = await ensureSignedInWithFabric(client.auth, {
-    workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
-    projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
-    fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
-    returnOrigin: window.location.origin,
-  });
-
-  console.log('Signed in:', session.user?.email);
+  if (signInError) signInError.textContent = '';
+  try {
+    const session = await ensureSignedInWithFabric(client.auth, {
+      workspaceId: import.meta.env.VITE_FABRIC_WORKSPACE_ID,
+      projectId: import.meta.env.VITE_FABRIC_ITEM_ID,
+      fabricPortalUrl: import.meta.env.VITE_FABRIC_PORTAL_URL,
+      tenantId: import.meta.env.VITE_FABRIC_TENANT_ID,
+      returnOrigin: window.location.origin,
+    });
+    console.log('Signed in:', session.user?.email);
+  } catch (error) {
+    // Show the user-safe message; never swallow a sign-in error.
+    if (signInError) {
+      signInError.textContent = error instanceof Error ? error.message : 'Sign-in failed.';
+    }
+  }
 });
 ```
+
+The client is created with `RayfinClient.create()` and `browserSession()`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## initEmbeddedAuth
 
@@ -125,14 +148,16 @@ function initEmbeddedAuth(
 ```
 
 Browser-only startup helper.
-It never opens a popup.
-It first runs the one-shot external-embed classification handshake, then proceeds when either a third-party parent acknowledges that scenario or Fabric embedded mode is detected. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+It never opens a popup and never rejects.
+It checks the Fabric hints first; only when there are none does it run the one-shot external-embed handshake. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-It returns `null` when no embedded scenario applies.
-Await it before trusting a stored session in iframe scenarios.
+It returns `null` when no embedded scenario applies, and also when embedded sign-in fails — after logging a console warning.
+Await it before trusting a stored session in iframe scenarios, and show a sign-in button when it returns `null` so the click reports the error.
 
 ```typescript title="src/auth/bootstrap.ts"
 import { initEmbeddedAuth } from '@microsoft/rayfin-auth-provider-fabric';
+import { client } from '../services/rayfinClient';
+import { fabricOptions } from './fabricOptions';
 
 const session = await initEmbeddedAuth(client.auth, fabricOptions);
 if (session) {
@@ -152,6 +177,7 @@ function initiateFabricLogin(auth: Auth, options: FabricAuthOptions): Promise<vo
 
 Low-level popup helper used by `ensureSignedInWithFabric()`.
 It opens the broker, sends the PKCE challenge after `brokeredAuth.ready`, receives `brokeredAuth.handoff`, exchanges the handoff code, and installs the session.
+It rejects with `TAB_BLOCKED` when the popup cannot open, `FABRIC_AUTH_POPUP_CLOSED` about one second after the user closes the sign-in window, `FABRIC_AUTH_TIMEOUT` after five minutes, or the code the broker reports. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 Most apps should use `ensureSignedInWithFabric()` instead.
 
 ## signInWithEntraToken
@@ -169,6 +195,9 @@ function signInWithEntraToken(
 
 Exchanges an existing delegated Entra token for a Rayfin session.
 It works in browsers and Node.js and does not require `FabricAuthOptions`, a popup, or an iframe. [New in 1.36](/docs/reference/changelog#rayfin-136)
+
+Pass `client.auth` from a client created with `browserSession()`, or a standalone `Auth`.
+A client created with `suppliedToken()` has no `client.auth`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 The `Auth` instance's `ApiClient` must point at an absolute HTTPS AppBackend workload API base URL.
 The helper resolves `/api/auth/v1/brokered/token` against that base and rejects URLs with credentials, query strings, fragments, whitespace, backslashes, or non-HTTPS protocols.
@@ -195,6 +224,8 @@ try {
   auth.destroy();
 }
 ```
+
+See [Sign in with an Entra token](/docs/auth/entra-token) for a `RayfinClient` version that queries data as the user.
 
 ## signInWithBrokeredToken
 
@@ -231,6 +262,7 @@ function requestHandoff(params: {
 These are low-level browser helpers.
 In external embed mode, `embeddedFabricLogin()` adds `brokeredAuthorizeUrl`, `artifactId`, and a pinned `targetOrigin` to the handoff request.
 Normal Fabric embedded payloads remain unchanged. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+When a Fabric hint is present, `embeddedFabricLogin()` uses the Fabric payload even if an external host acknowledged earlier. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 Most applications should call `initEmbeddedAuth()` rather than these helpers directly.
 
@@ -254,10 +286,47 @@ For Vite apps, framework environment generation maps them to these names:
 | `RAYFIN_PUBLIC_ITEM_ID` | `VITE_FABRIC_ITEM_ID` | `projectId` |
 | `RAYFIN_PUBLIC_WORKSPACE_ID` | `VITE_FABRIC_WORKSPACE_ID` | `workspaceId` |
 | `RAYFIN_PUBLIC_PORTAL_URL` | `VITE_FABRIC_PORTAL_URL` | `fabricPortalUrl` |
+| `RAYFIN_PUBLIC_TENANT_ID` | `VITE_FABRIC_TENANT_ID` | `tenantId` [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
 See [Fabric SSO](/docs/auth/fabric-sso) and [`rayfin.yml` auth configuration](/docs/reference/config/rayfin-yml).
 
-## Direct token exchange errors
+## Error handling
+
+Sign-in functions reject with `AuthError` from `@microsoft/rayfin-lib`, which `@microsoft/rayfin-client` re-exports.
+`error.message` is a user-safe description intended for display: catch every sign-in call that can reject and show it in the sign-in UI.
+Use `error.code` only for branching logic or telemetry.
+`initEmbeddedAuth()` resolves to `null` instead of rejecting.
+
+### Browser broker errors
+
+| Code | Meaning |
+| --- | --- |
+| `ACCESS_DENIED` | The signed-in user does not have access to this app. |
+| `TOKEN_ACQUISITION_FAILED` | The broker could not acquire a Fabric token for the user. |
+| `AUTHORIZE_FAILED` | The broker's authorize step failed with a server, network, or unexpected error. |
+| `AUTH_FAILED` | Authentication failed in the broker. |
+| `INVALID_CALLBACK_URL` | The app's return origin or callback URL is not allowed. |
+| `RATE_LIMITED` | Too many sign-in requests from the embedded app. Wait and retry. |
+| `OWNER_LOGIN_REQUIRED` | Only the app owner can sign in while the app's Functions use delegated authentication. |
+| `APP_DEPLOYMENT_REQUIRED` | The app's Functions must be deployed or redeployed before users can sign in. |
+| `APP_ADMIN_BLOCKED` | A tenant or capacity admin has blocked the app. |
+| `FABRIC_AUTH_FAILED` | The broker reported a failure without a specific code. |
+| `FABRIC_AUTH_POPUP_CLOSED` | The user closed the sign-in window before sign-in completed. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `FABRIC_AUTH_TIMEOUT` | The popup handoff timed out after five minutes. |
+| `TAB_BLOCKED` | The broker popup could not open. |
+| `PKCE_CHALLENGE_FAILED` | PKCE challenge generation failed. |
+| `CHALLENGE_DELIVERY_FAILED` | The SDK could not post the PKCE challenge to the broker frame. |
+| `MISSING_WORKSPACE_ID`, `MISSING_PROJECT_ID`, `MISSING_RETURN_ORIGIN`, `MISSING_FABRIC_PORTAL_URL` | A required `FabricAuthOptions` value is missing. |
+
+Broker codes are passed through from the Fabric broker, so new codes can appear over time.
+Treat an unknown code as a generic failure and still display `error.message`.
+
+### Embedded errors
+
+In embedded mode, the host's error code and message are passed through unchanged.
+SDK-originated embedded codes include `NO_PARENT_WINDOW` (embedded auth requested outside an iframe), `BRIDGE_TIMEOUT` (the host did not respond), `STATE_MISMATCH` (the handoff response state did not match), and `SESSION_NOT_ESTABLISHED` (the handoff completed but no session was installed).
+
+### Direct token exchange errors
 
 `signInWithEntraToken()` throws `AuthError` with these stable codes:
 
@@ -272,30 +341,23 @@ See [Fabric SSO](/docs/auth/fabric-sso) and [`rayfin.yml` auth configuration](/d
 | `TOKEN_EXCHANGE_FAILED` | `Entra token exchange failed.` |
 | `INVALID_TOKEN_RESPONSE` | `The token exchange returned an invalid token response.` |
 
-## Browser broker errors
+### Dynamic claims errors
 
-| Code | Meaning |
-| --- | --- |
-| `MISSING_WORKSPACE_ID` | `workspaceId` is missing. |
-| `MISSING_PROJECT_ID` | `projectId` is missing. |
-| `MISSING_RETURN_ORIGIN` | `returnOrigin` is missing. |
-| `MISSING_FABRIC_PORTAL_URL` | `fabricPortalUrl` is missing. |
-| `TAB_BLOCKED` | The broker popup could not open. |
-| `PKCE_CHALLENGE_FAILED` | PKCE challenge generation failed. |
-| `CHALLENGE_DELIVERY_FAILED` | The SDK could not post the PKCE challenge to the broker frame. |
-| `FABRIC_AUTH_TIMEOUT` | The popup handoff timed out after five minutes. |
-| `NO_PARENT_WINDOW` | Embedded auth was requested outside an iframe. |
-| `STATE_MISMATCH` | The embedded handoff response state did not match. |
-| `SESSION_NOT_ESTABLISHED` | Handoff completed but no authenticated session was installed. |
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+When the app's [dynamic claims](/docs/auth/dynamic-claims) function denies the user or fails, Fabric SSO sign-in and `signInWithEntraToken()` reject with `SIGN_IN_DENIED`, `AUTH_CLAIMS_UNAVAILABLE`, `AUTH_CLAIMS_FAILED`, or `AUTH_CLAIMS_INVALID_OUTPUT`.
+Fabric SSO reports the app's denial reason as `error.message`.
+`signInWithEntraToken()` reads only the `x-ms-rayfin-error-code` response header, never the body, so it reports the fixed message `Sign-in was denied by the app.` for a denial.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Sign-in fails with no visible message | The app discards the sign-in error. | Catch errors from `ensureSignedInWithFabric()` and render `error.message`. |
 | Popup blocked | Called outside a synchronous user-gesture handler. | Call `ensureSignedInWithFabric()` directly from a button `onClick`. |
 | Session not persisting | `RayfinClient` is configured for the wrong backend. | Confirm `baseUrl` and `publishableKey` are correct. |
 | Handoff times out | The popup handoff code was never received. | Confirm `returnOrigin` matches the app's actual origin and is allowed by the backend. |
-| `initEmbeddedAuth()` returns `null` | No Fabric iframe or external embed host was detected. | Use popup sign-in for standalone pages; for iframes, verify the host path. |
+| `initEmbeddedAuth()` returns `null` | No Fabric iframe or external embed host was detected, or embedded sign-in failed. | Use popup sign-in for standalone pages; for iframes, verify the host path and check the console warning. |
 | State mismatch | Replayed or stale response. | Retry the flow from scratch and investigate repeated failures. |
 | Direct token exchange reports `EXCHANGE_NOT_ENABLED` | The target app has not enabled external Entra exchange. | Set `services.auth.fabric.externalEntraExchange: true` and apply runtime settings. |
 
@@ -308,6 +370,14 @@ See [Errors and troubleshooting](/docs/reference/errors) for the full site-wide 
 - Popup origin checks are advisory because the Fabric extension frame can differ from the portal origin; state plus PKCE are the enforcement boundary.
 - Normal Fabric embedded handoff does not set `fabricPortalUrl` as `targetOrigin`; external embed handoff uses the parent origin pinned by classification. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 - Direct token exchange never stores the supplied Entra token and sanitizes exchange errors.
+
+## Performance hints
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+During sign-in, the SDK adds a `<link rel="preconnect">` for the Rayfin API origin, unless the API is same-origin, so connection setup overlaps the user's sign-in.
+Sign-in also records `rayfin:signin:*` User Timing marks and measures — for example `rayfin:signin:popup` and `rayfin:signin:total` — which you can collect with a `PerformanceObserver`.
+Neither ever contains tokens or codes.
 
 ## Runtime requirements
 

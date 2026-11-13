@@ -1,20 +1,21 @@
 ---
 title: "@microsoft/rayfin-lib"
-description: The shared ApiClient, error classes, and small utilities every other Rayfin SDK package builds on — an internal dependency most builders never import directly.
+description: The shared ApiClient, error classes, and client-composition factory types every other Rayfin SDK package builds on — mostly an internal dependency.
 appliesTo: "@microsoft/rayfin-lib >= 1.31"
 ---
 
 `@microsoft/rayfin-lib` is the shared HTTP client and utility layer underneath every other
 `@microsoft/rayfin-*` SDK package —
+[`rayfin-client`](/docs/reference/sdk/rayfin-client),
 [`rayfin-core`](/docs/reference/sdk/rayfin-core),
 [`rayfin-data`](/docs/reference/sdk/rayfin-data),
 [`rayfin-auth`](/docs/reference/sdk/rayfin-auth),
-[`rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric), and
-[`rayfin-functions`](/docs/reference/sdk/rayfin-functions) all depend on it. Most Rayfin
-applications never import it directly — you get its exports re-exported through
-`@microsoft/rayfin-client` (`ApiClientConfig`, the error classes) — but it's useful to know
-what lives here when you're reading a stack trace or building against the SDK at a lower
-level.
+[`rayfin-auth-provider-fabric`](/docs/reference/sdk/rayfin-auth-provider-fabric),
+[`rayfin-functions`](/docs/reference/sdk/rayfin-functions), and the connector and storage
+packages all depend on it. In 2.0 it is the only runtime dependency of
+`@microsoft/rayfin-client`. Most Rayfin applications never import it directly — the client
+re-exports `ApiClientConfig`, the error classes, and the factory types — but it is useful
+to know what lives here when you read a stack trace or write a custom service factory.
 
 ## Installation
 
@@ -26,12 +27,14 @@ npm install @microsoft/rayfin-lib
 
 The isomorphic HTTP client every higher-level SDK class wraps. It works in both browsers
 and Node.js using native `fetch`, with automatic `401` retry when a refresh callback is
-configured.
+configured. In 2.0 one `ApiClient` is the shared transport of a composed
+[`RayfinClient`](/docs/reference/sdk/rayfin-client), and it is the first argument every
+service and auth factory receives.
 
 ```typescript
 class ApiClient {
   constructor(config: ApiClientConfig);
-  setAccessTokenCallback(callback: () => string | null): void;
+  setAccessTokenCallback(callback: () => string | null | Promise<string | null>): void;
   setRefreshCallback(callback: () => Promise<void>): void;
   setAuthExhaustedCallback(callback: () => void): void;
   resolveUrl(path: string): string;
@@ -40,7 +43,16 @@ class ApiClient {
   post<T>(path: string, data?: any, options?: RequestOptions): Promise<T>;
   put<T>(path: string, data?: any, options?: RequestOptions): Promise<T>;
   delete<T>(path: string, options?: RequestOptions): Promise<T>;
-  requestRaw(path: string, options?: RequestRawOptions): Promise<Response>;
+  requestRaw(
+    path: string,
+    options?: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: BodyInit | null;
+      signal?: AbortSignal;
+      timeout?: number;
+    },
+  ): Promise<Response>;
 }
 
 interface ApiClientConfig {
@@ -51,7 +63,7 @@ interface ApiClientConfig {
   moniker?: string;
   timeout?: number;
   fetch?: typeof globalThis.fetch;
-  getAccessToken?: () => string | null;
+  getAccessToken?: () => string | null | Promise<string | null>;
   useProxy?: boolean;
   onAuthExhausted?: () => void;
   onRefreshNeeded?: () => Promise<void>;
@@ -59,12 +71,51 @@ interface ApiClientConfig {
 ```
 
 See [`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client#rayfinclientconfig) for
-the option table — `RayfinClientConfig` and `RayfinServerClientConfig` both extend
-`ApiClientConfig`. `setAccessTokenCallback` and `setRefreshCallback` are how `Auth` attaches
-itself to an `ApiClient` after construction (`Auth.attachToClient()`), which is also how
-`@microsoft/rayfin-auth-provider-fabric` gets its token-refresh behavior for free.
+the option table. `RayfinClientConfig` extends `ApiClientConfig` without the token hooks and
+`useProxy`, which belong to authentication adapters in 2.0. `setAccessTokenCallback` and
+`setRefreshCallback` are how `Auth` attaches itself to an `ApiClient`
+(`Auth.attachToClient()`), which is also how `@microsoft/rayfin-auth-provider-fabric` gets
+its token-refresh behavior.
 
-[New in 1.36](/docs/reference/changelog#rayfin-136) `ApiClientConfig.fetch` lets callers inject a custom fetch implementation, for example one configured with a network proxy, and `resolveUrl()` is exported for cross-package wiring. `getFunctionsBaseUrl()` is also an exported method; application code normally constructs `RayfinClient` instead of calling them directly.
+The access-token callback and `getAccessToken` may return a promise, so a token provider
+can refresh asynchronously before a request is sent.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`useProxy` has no effect; set `baseUrl: ''` for same-origin routing. `RayfinClient.create`
+rejects it.
+
+[New in 1.36](/docs/reference/changelog#rayfin-136) `ApiClientConfig.fetch` lets callers inject a custom fetch implementation, for example one configured with a network proxy, and `resolveUrl()` is exported for cross-package wiring. `getFunctionsBaseUrl()` is also an exported method; application code normally builds a `RayfinClient` instead of calling them directly.
+
+## Client composition types
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+These types define the contract between `RayfinClient.create` and the packages that plug
+into it. They are re-exported by `@microsoft/rayfin-client`.
+
+```typescript
+interface ClientLifecycle {
+  onDispose(cleanup: () => unknown): void;
+}
+
+type ClientServiceFactory<TService extends object = object> = (
+  http: ApiClient,
+  lifecycle: ClientLifecycle,
+) => TService;
+
+type ClientAuthFactory<TAuth extends object | undefined = object | undefined> = (
+  http: ApiClient,
+  lifecycle: ClientLifecycle,
+) => TAuth;
+```
+
+A service factory returns its API synchronously — never a promise — and registers any
+cleanup with `lifecycle.onDispose()` as soon as it acquires a resource. An auth factory
+attaches authentication to the transport and returns the session API to expose as
+`client.auth`, or `undefined`. `dataService()`, `functionsService()`,
+`connectorsService()`, `storageService()`, `browserSession()`, and `suppliedToken()` are
+all factories of these shapes. See
+[Write a custom service](/docs/reference/sdk/rayfin-client#write-a-custom-service).
 
 ## Errors
 
@@ -90,25 +141,32 @@ interface WorkloadFailure {
 class NetworkError extends SdkError {
   status?: number;
   workload?: WorkloadFailure;
-  constructor(message: string, status?: number, code?: string, workload?: WorkloadFailure);
+  serverErrorCode?: string;
+  consentUrl?: string;
+  retryAfterSeconds?: number;
+  constructor(message: string, status?: number, code?: string);
 }
 ```
 
 `NetworkError.workload` carries structured Fabric workload failure detail when a response includes that envelope, so callers can branch on fields such as `errorCode`, `subErrorCode`, `functionName`, `invocationId`, and `status` instead of parsing `message`. [New in 1.36](/docs/reference/changelog#rayfin-136)
 
-`@microsoft/rayfin-client` declares its **own** `AuthError extends SdkError` rather than
-re-exporting this one — the two classes are structurally identical but distinct; an
-`instanceof` check needs the `AuthError` from whichever package actually threw it. See
+`serverErrorCode` is the machine-readable code from the response body (`error`,
+`error.code`, or `errorCode`), separate from `code` so existing branches on `code` keep
+working. `retryAfterSeconds` is the wait the service asked for, from the body or the
+`Retry-After` header. `consentUrl` is set when the service answers
+`CONNECTOR_CONSENT_REQUIRED`. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`@microsoft/rayfin-client` re-exports these same classes, so one `instanceof AuthError`
+check matches an error from any Rayfin package. In 1.x the client declared its own,
+separate `AuthError`. [Changed in 2.0](/docs/reference/changelog#rayfin-20) See
 [Errors](/docs/reference/sdk/rayfin-client#errors) on the client reference page.
 
-## Small utilities
+## `EntityNameResolver`
 
-Two narrowly-scoped helpers are exported from the package root, used internally by the
-data client and storage tooling:
+A narrowly scoped helper exported from the package root, used internally by the data
+client:
 
 ```typescript
-function normalizeContainerName(input: string): string;
-
 class EntityNameResolver {
   static getPlural(entityName: string): string;
   static getSingular(pluralName: string): string;
@@ -118,11 +176,9 @@ class EntityNameResolver {
 }
 ```
 
-`normalizeContainerName` lowercases and hyphenates a string to satisfy Azure Blob container
-naming rules (letters, numbers, and hyphens only; 3–63 characters). `EntityNameResolver`
-backs the automatic singular/plural table-name inference `@microsoft/rayfin-core` performs
-for `@entity()` classes (a `Todo` class maps to a `todos` table), and lets you register
-irregular plurals it wouldn't guess correctly on its own.
+`EntityNameResolver` backs the automatic singular/plural table-name inference
+`@microsoft/rayfin-core` performs for `@entity()` classes (a `Todo` class maps to a `todos`
+table), and lets you register irregular plurals it would not guess correctly on its own.
 
 ## What's intentionally not documented here
 

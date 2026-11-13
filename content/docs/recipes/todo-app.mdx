@@ -5,51 +5,53 @@ description: Build a Fabric-authenticated todo app end to end, from a per-user d
 
 This walkthrough builds a todo list where every signed-in user sees only their own items —
 a `Todo` entity secured with row-level security, a typed data client, and a React UI, ending
-with a live deploy to a Fabric app.
+with a live deploy to a Fabric app. It follows the bundled `todoapp` template that Rayfin
+2.0.0 ships, so you can read each step against the files in your own project.
 
 ## What you'll build
 
 - A `Todo` entity with a policy that scopes every row to the signed-in user.
+- A client module that composes Fabric sign-in and typed data access into one Rayfin client.
 - A small data-access module wrapping `client.data.Todo` for list, create, update, and
   delete.
-- A React page and row component wired to that module with optimistic updates.
-- A deployed Fabric app serving the built frontend against the live backend.
+- A React page wired to that module.
 - A development loop with `npm run dev`, which runs `rayfin dev`, applies declared backend state, and starts the frontend locally.
+- A deployed Fabric app serving the built frontend against the live backend.
 
-```prompt title="Build a todo app with Rayfin"
-Scaffold a new Rayfin project called "todo-app" with `npm create @microsoft/rayfin@latest
-todo-app`, choosing the MSSQL dialect. In rayfin/data/Todo.ts, define a Todo entity with id
-(@uuid()), title (@text({ min: 1, max: 100 })), isCompleted (@boolean()), createdAt
-(@date()), and user_id (@text({ max: 128 })). Add @role('authenticated', '*', { policy: (claims, item)
-=> claims.sub.eq(item.user_id) }) so each signed-in user can only read and write their own
-todos. Register Todo in rayfin/data/schema.ts. Add a src/services/todos.ts module with
-getTodos, createTodo, updateTodo, and deleteTodo functions that call client.data.Todo
-(select/orderBy/execute, create, update, delete), setting user_id from the signed-in
-user's session on create. Build a React page that lists todos, adds new ones, and
-toggles/edits/deletes existing ones, calling those service functions. Then run `npx rayfin
-login` and `npx rayfin up` to deploy, and `npx rayfin up status` to confirm it's live. Then run `npm run dev` to start the development loop. `rayfin dev` provisions or reuses the Fabric backend, applies declared schema, writes environment files, and starts the frontend locally.
+```prompt title="Build a per-user todo app with Rayfin"
+Create a Rayfin 2.0 todo app with `npm create @microsoft/rayfin@latest todo-app -- --template todoapp`, then run `cd todo-app` and `npm install`. In rayfin/data/Todo.ts, keep the @role('authenticated', '*', { policy: (claims, item) => claims.sub.eq(item.user_id) }) decorator so each signed-in user can only read and write their own rows, and change user_id to @text({ max: 128 }) before the first deploy. Confirm that src/services/rayfinClient.ts creates the client with RayfinClient.create, auth: browserSession({ storage: true }) from @microsoft/rayfin-auth, and services: { data: dataService<TodoAppSchema>(), functions: functionsService() }, and that src/services/todos.ts sets user_id from client.auth.getSession() when it creates a todo. Run `npx rayfin login`, then `npm run dev`, and report the local frontend URL. Finally deploy with `npx rayfin up` and report the hosting URL from `npx rayfin up status`.
 ```
 
 ## 1. Scaffold a project
 
 ```bash
-npm create @microsoft/rayfin@latest todo-app
-```
-
-Choose the MSSQL dialect when prompted — Fabric apps support MSSQL only. Rayfin ships a
-bundled `todoapp` template with this exact entity, service module, and UI already wired up;
-pass it explicitly if you'd rather start from the finished result and read along:
-
-```bash
 npm create @microsoft/rayfin@latest todo-app -- --template todoapp
+cd todo-app
+npm install
 ```
 
-The rest of this page builds the same thing from an empty project.
+The `todoapp` template uses the flat layout: Rayfin configuration and entities under
+`rayfin/`, React code under `src/`. Rayfin selects the MSSQL dialect for you; Fabric apps
+support MSSQL only. On Windows PowerShell, if `--template` does not reach Rayfin, run the
+same command with `npm.cmd` instead of `npm`.
+
+The template generates these files, among others. Steps 2 through 7 walk through the first six:
+
+| File | What it does |
+| --- | --- |
+| `rayfin/data/Todo.ts` | Declares the `Todo` entity and its row-level security policy. |
+| `rayfin/data/schema.ts` | Registers the entity for the CLI and types the client. |
+| `rayfin/rayfin.yml` | Declares the auth, data, and static-hosting services. |
+| `src/services/rayfinClient.ts` | Creates the Rayfin client once. |
+| `src/services/todos.ts` | Wraps `client.data.Todo` for the UI. |
+| `src/pages/HomePage.tsx` | Renders, adds, toggles, and deletes todos. |
+| `src/services/bootstrap.ts`, `src/services/RayfinAuthService.ts`, `src/hooks/AuthContext.tsx`, `src/components/AuthPage.tsx` | Fabric SSO sign-in. See [Testing a Rayfin app](/docs/recipes/testing) for how these fit together. |
+| `src/__tests__/` | Vitest tests for the data and auth seams. |
 
 ## 2. Define the Todo entity
 
-Add a `Todo` entity under `rayfin/data/`. Every field gets exactly one type decorator, and
-the class gets a permission decorator that controls who can read and write rows.
+Entities live under `rayfin/data/`. Every field gets exactly one type decorator, and the
+class gets a permission decorator that controls who can read and write rows.
 
 ```typescript title="rayfin/data/Todo.ts"
 import {
@@ -87,10 +89,13 @@ export class Todo {
   schema generation. See
   [Deployment troubleshooting](/docs/deploy/troubleshooting).
 
+The template declares `user_id` as a bare `@text()`. Add `{ max: 128 }` as shown before your
+first deploy, so the column is created with a bounded width.
+
 ## 3. Register it in the schema
 
-`rayfin/data/schema.ts` maps entity names to their classes, so `RayfinClient` can provide a
-typed `client.data.Todo`:
+`rayfin/data/schema.ts` lists the entity classes the CLI compiles and maps entity names to
+their classes, so the data service can provide a typed `client.data.Todo`:
 
 ```typescript title="rayfin/data/schema.ts"
 import { Todo } from './Todo.js';
@@ -103,12 +108,13 @@ export const schema = [Todo];
 ```
 
 Add every new entity to this map — both the `schema` array the CLI reads, and the
-`TodoAppSchema` type your frontend imports.
+`TodoAppSchema` type your frontend imports. Keep the `.js` extension on relative imports
+between files under `rayfin/`; see
+[Project structure](/docs/start/project-structure#rayfintsconfigjson).
 
 ## 4. Configure rayfin.yml
 
-Enable the services this app needs: data (MSSQL), auth (Fabric SSO), and static hosting for
-the built frontend.
+The app needs data (MSSQL), auth (Fabric SSO), and static hosting for the built frontend.
 
 ```yaml title="rayfin/rayfin.yml"
 id: todo-app
@@ -124,54 +130,103 @@ services:
   data:
     enabled: true
     dialect: mssql
-  storage:
-    enabled: false
   staticHosting:
     enabled: true
     folder: dist
     buildCommand: npm run build:fabric
     indexDocument: index.html
     assetAccess: protected
-  functions:
-    enabled: false
 ```
 
-See the [`rayfin.yml` reference](/docs/reference/config/rayfin-yml) for every field. You
-don't need to add a `publishable_key` — the CLI retrieves and writes that on your first
-deploy, and it can't be hand-edited.
+The scaffold sets `id` and `name` from your project name. See the
+[`rayfin.yml` reference](/docs/reference/config/rayfin-yml) for every field. You don't need
+to add a `publishable_key` — the CLI retrieves and writes that on your first deploy, and it
+can't be hand-edited.
 
 ## 5. Wire the client
 
-Wrap `RayfinClient` in a small module that initializes it once and exposes it to the rest of the app.
-The managed backend is always the Fabric backend that `rayfin dev` provisions or reuses; do not point the Rayfin API URL at a localhost backend.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`src/services/rayfinClient.ts` creates the client once and exposes it to the rest of the app.
+In Rayfin 2.0, `RayfinClient.create` composes the client from an explicit auth adapter and
+the services the app registers:
+
+- `browserSession({ storage: true })` from `@microsoft/rayfin-auth` provides `client.auth`
+  and keeps the session in browser storage.
+- `dataService<TodoAppSchema>()` from `@microsoft/rayfin-data` provides the typed
+  `client.data.Todo`.
+- `functionsService()` from `@microsoft/rayfin-functions` provides `client.functions`.
+
+`AppClient` is inferred from `createClient`, so its type always matches what is registered.
+This file matches the 2.0.0 todo template.
 
 ```typescript title="src/services/rayfinClient.ts"
-import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import {
+  RayfinClient,
+  resolveRayfinConfig,
+  type RayfinRuntimeConfig,
+} from '@microsoft/rayfin-client';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
 
 import type { TodoAppSchema } from '../../rayfin/data/schema';
 
 export interface RayfinClientConfig {
   baseUrl: string;
   publishableKey: string;
+  /** True when the API URL points at localhost. Exposed via {@link isLocalBackend}. */
+  localDev: boolean;
+  /** Absolute same-origin URL for local Functions calls when the Vite adapter is active. */
+  functionsBaseUrl?: string;
+  /** Fabric coordinates fallback for local dev, where no runtime config is emitted. */
+  runtimeConfig?: RayfinRuntimeConfig;
 }
 
-let client: RayfinClient<TodoAppSchema> | null = null;
+function createClient(config: {
+  baseUrl: string;
+  publishableKey: string;
+  functionsBaseUrl?: string;
+  runtimeConfig?: RayfinRuntimeConfig;
+}) {
+  return RayfinClient.create({
+    ...config,
+    auth: browserSession({ storage: true }),
+    services: {
+      data: dataService<TodoAppSchema>(),
+      functions: functionsService(),
+    },
+  });
+}
 
-export function initRayfinClient(
+export type AppClient = ReturnType<typeof createClient>;
+let client: AppClient | null = null;
+let localDev = false;
+
+export async function initRayfinClient(
   config: RayfinClientConfig
-): RayfinClient<TodoAppSchema> {
+): Promise<AppClient> {
   if (client) {
     throw new Error('Rayfin client is already initialized.');
   }
-  client = new RayfinClient<TodoAppSchema>({
-    baseUrl: config.baseUrl,
+  const resolved = await resolveRayfinConfig({
+    apiUrl: config.baseUrl,
     publishableKey: config.publishableKey,
-    authStorage: true,
+    ...config.runtimeConfig,
   });
+  client = createClient({
+    // resolved.baseUrl/publishableKey are always set: config.baseUrl/publishableKey
+    // are non-optional defaults, so the resolve step can only overlay on top of them.
+    baseUrl: resolved.baseUrl!,
+    publishableKey: resolved.publishableKey!,
+    functionsBaseUrl: config.functionsBaseUrl,
+    runtimeConfig: resolved.runtimeConfig,
+  });
+  localDev = config.localDev;
   return client;
 }
 
-export function getRayfinClient(): RayfinClient<TodoAppSchema> {
+export function getRayfinClient(): AppClient {
   if (!client) {
     throw new Error(
       'Rayfin client not initialized. Call bootstrapAuth() first.'
@@ -179,18 +234,35 @@ export function getRayfinClient(): RayfinClient<TodoAppSchema> {
   }
   return client;
 }
+
+/** True when the app was bootstrapped against a localhost backend. */
+export function isLocalBackend(): boolean {
+  return localDev;
+}
 ```
 
-`initRayfinClient` is called once at startup from a bootstrap function that reads `VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` values written by Rayfin tooling.
-Auth wiring is its own topic — see [Auth](/docs/auth) — this recipe focuses on the data path.
+`bootstrapAuth()` in `src/services/bootstrap.ts` calls `initRayfinClient` once at startup
+with the `VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` values that Rayfin tooling
+writes, and `resolveRayfinConfig()` overlays the `rayfin.config.json` that a deployed app or
+the Vite development adapter serves. The managed backend is always the Fabric backend that
+`rayfin dev` provisions or reuses, so `isLocalBackend()` stays `false` in development and
+production; the localhost branch serves the template's tests.
+
+Because the 2.0 client no longer installs its capabilities, the template's `package.json`
+declares `@microsoft/rayfin-auth`, `@microsoft/rayfin-data`, and `@microsoft/rayfin-functions`
+next to `@microsoft/rayfin-client`. See
+[Installation](/docs/start/installation#install-the-packages-your-client-uses).
 
 ## 6. Build the data access layer
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 Wrap every `client.data.Todo` call in a small service module.
 This is also where the app decides *whose* todos it is writing: `user_id` is set from the signed-in session on create and is never accepted from the caller.
+This file matches the 2.0.0 todo template.
 
 ```typescript title="src/services/todos.ts"
-import { getRayfinClient } from './rayfinClient';
+import { getRayfinClient, isLocalBackend } from './rayfinClient';
 
 export interface TodoItem {
   id: string;
@@ -199,7 +271,17 @@ export interface TodoItem {
   createdAt: Date;
 }
 
+// Local-dev fallback: when no Fabric backend is configured, keep todos in
+// memory so the sample is fully functional without a database.
+let inMemoryTodos: TodoItem[] = [];
+
 export async function getTodos(): Promise<TodoItem[]> {
+  if (isLocalBackend()) {
+    return [...inMemoryTodos].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    );
+  }
+
   const client = getRayfinClient();
   const results = await client.data.Todo.select([
     'id',
@@ -213,6 +295,17 @@ export async function getTodos(): Promise<TodoItem[]> {
 }
 
 export async function createTodo(title: string): Promise<TodoItem> {
+  if (isLocalBackend()) {
+    const todo: TodoItem = {
+      id: crypto.randomUUID(),
+      title,
+      isCompleted: false,
+      createdAt: new Date(),
+    };
+    inMemoryTodos.push(todo);
+    return todo;
+  }
+
   const client = getRayfinClient();
   const session = client.auth.getSession();
   if (!session.isAuthenticated || !session.user) {
@@ -230,205 +323,46 @@ export async function createTodo(title: string): Promise<TodoItem> {
 export async function updateTodo(
   id: string,
   updates: Partial<Pick<TodoItem, 'title' | 'isCompleted'>>
-): Promise<TodoItem> {
+): Promise<void> {
+  if (isLocalBackend()) {
+    const todo = inMemoryTodos.find((t) => t.id === id);
+    if (!todo) throw new Error('Todo not found');
+    Object.assign(todo, updates);
+    return;
+  }
+
   const client = getRayfinClient();
   await client.data.Todo.update({ id }, updates);
-  const todo = await client.data.Todo.findById(id);
-  return todo as TodoItem;
 }
 
 export async function deleteTodo(id: string): Promise<void> {
+  if (isLocalBackend()) {
+    inMemoryTodos = inMemoryTodos.filter((t) => t.id !== id);
+    return;
+  }
+
   const client = getRayfinClient();
   await client.data.Todo.delete({ id });
 }
 ```
 
-- `getTodos` uses the query chain `.select([...]).orderBy(...).execute()` — select only the fields the UI needs, and always specify an order.
+- `getTodos` uses the query chain `.select([...]).orderBy(...).execute()` — select only the fields the UI needs, and always specify an order. In 2.0 the result type contains only the selected fields, with `Date` fields typed `Date | string` and booleans typed `boolean | 'true' | 'false'`. The template casts the rows to `TodoItem` and the page never reads `createdAt`; convert values explicitly, for example with `new Date(row.createdAt)`, before you rely on their runtime type. See [Querying data](/docs/data/querying).
 - `createTodo` reads the caller's ID from `client.auth.getSession()` and sets it as `user_id` — the server-side policy from step 2 then enforces that this user can only act on rows with a matching `user_id`.
 - `updateTodo` and `deleteTodo` filter by `{ id }`; the `Todo` entity's policy still applies underneath, so a request for someone else's row matches nothing.
+- In 2.0, `update` returns only the primary key and the fields you sent, so `updateTodo` resolves with no value and the page reloads its list instead of reading the row back.
 
-The shipped todo template keeps an in-memory branch that its Vitest tests force by mocking `src/services/rayfinClient.ts`.
+The `isLocalBackend()` branches keep todos in memory for the template's localhost mode, which its Vitest tests force by mocking `src/services/rayfinClient.ts`.
 See [Testing a Rayfin app](/docs/recipes/testing) for that test-only seam.
 
 ## 7. Build the React UI
 
-A row component renders a single todo, with inline editing, a completion toggle, and
-delete:
-
-```tsx title="src/components/TodoRow.tsx"
-import { useEffect, useRef, useState } from 'react';
-
-import type { TodoItem } from '@/services/todos';
-
-interface TodoRowProps {
-  todo: TodoItem;
-  onToggle: (id: string, isCompleted: boolean) => void;
-  onDelete: (id: string) => void;
-  onEdit: (id: string, title: string) => void;
-}
-
-export function TodoRow({ todo, onToggle, onDelete, onEdit }: TodoRowProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(todo.title);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (!isEditing) setDraft(todo.title);
-  }, [todo.title, isEditing]);
-
-  useEffect(() => {
-    if (isEditing) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [isEditing]);
-
-  const startEdit = () => {
-    setDraft(todo.title);
-    setIsEditing(true);
-  };
-
-  const cancelEdit = () => {
-    setDraft(todo.title);
-    setIsEditing(false);
-  };
-
-  const commitEdit = () => {
-    const next = draft.trim();
-    if (!next || next === todo.title) {
-      cancelEdit();
-      return;
-    }
-    onEdit(todo.id, next);
-    setIsEditing(false);
-  };
-
-  return (
-    <li
-      className={`group flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm border border-gray-100 transition-all duration-150 ease-out hover:shadow-md hover:border-gray-200 motion-safe:animate-[fadeIn_180ms_ease-out] ${
-        todo.isCompleted ? 'opacity-80' : ''
-      }`}
-    >
-      <button
-        type="button"
-        onClick={() => onToggle(todo.id, todo.isCompleted)}
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-150 ${
-          todo.isCompleted
-            ? 'border-blue-500 bg-blue-500 text-white scale-100'
-            : 'border-gray-300 hover:border-blue-400 hover:scale-110'
-        }`}
-        aria-label={todo.isCompleted ? 'Mark incomplete' : 'Mark complete'}
-        aria-pressed={todo.isCompleted}
-      >
-        {todo.isCompleted && (
-          <svg
-            className="h-3 w-3"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={3}
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M5 13l4 4L19 7"
-            />
-          </svg>
-        )}
-      </button>
-
-      {isEditing ? (
-        <input
-          ref={inputRef}
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              commitEdit();
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              cancelEdit();
-            }
-          }}
-          onBlur={commitEdit}
-          aria-label="Edit todo title"
-          className="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-      ) : (
-        <button
-          type="button"
-          onDoubleClick={startEdit}
-          className={`flex-1 text-left text-sm truncate cursor-text ${
-            todo.isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'
-          }`}
-          title={todo.title}
-        >
-          {todo.title}
-        </button>
-      )}
-
-      {!isEditing && (
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={startEdit}
-            className="rounded-md p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-            aria-label="Edit todo"
-          >
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-              />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => onDelete(todo.id)}
-            className="rounded-md p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-            aria-label="Delete todo"
-          >
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"
-              />
-            </svg>
-          </button>
-        </div>
-      )}
-    </li>
-  );
-}
-```
-
-The page ties `todos.ts` and `TodoRow` together. It loads the list on mount, and every
-mutation updates local state optimistically before the request resolves — rolling back and
-showing an error if the request fails:
+The page loads the list on mount and reloads it after every add, toggle, and delete. Its
+`TodoRow` component renders one todo with a completion toggle and a delete button.
+This file matches the 2.0.0 todo template.
 
 ```tsx title="src/pages/HomePage.tsx"
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { TodoRow } from '@/components/TodoRow';
 import { useAuth } from '@/hooks/AuthContext';
 import {
   createTodo,
@@ -443,33 +377,12 @@ export function HomePage() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [newTodoTitle, setNewTodoTitle] = useState('');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const showError = useCallback((message: string) => {
-    setError(message);
-    if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
-    errorTimeoutRef.current = setTimeout(() => setError(null), 5000);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
-    };
-  }, []);
 
   const fetchTodos = useCallback(async () => {
-    try {
-      const data = await getTodos();
-      setTodos(data);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load todos.';
-      showError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, [showError]);
+    const data = await getTodos();
+    setTodos(data);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     void fetchTodos();
@@ -479,76 +392,23 @@ export function HomePage() {
     e.preventDefault();
     const title = newTodoTitle.trim();
     if (!title) return;
-
-    const tempId = `temp-${crypto.randomUUID()}`;
-    const optimistic: TodoItem = {
-      id: tempId,
-      title,
-      isCompleted: false,
-      createdAt: new Date(),
-    };
-
     setNewTodoTitle('');
-    setTodos((prev) => [optimistic, ...prev]);
-
-    try {
-      const created = await createTodo(title);
-      setTodos((prev) =>
-        prev.map((t) => (t.id === tempId ? { ...created } : t))
-      );
-    } catch (err) {
-      setTodos((prev) => prev.filter((t) => t.id !== tempId));
-      setNewTodoTitle(title);
-      const message =
-        err instanceof Error ? err.message : 'Failed to add todo.';
-      showError(message);
-    }
+    await createTodo(title);
+    await fetchTodos();
   };
 
-  const handleToggle = (id: string, isCompleted: boolean) => {
-    const snapshot = todos;
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, isCompleted: !isCompleted } : t))
-    );
-
-    void updateTodo(id, { isCompleted: !isCompleted }).catch((err) => {
-      setTodos(snapshot);
-      const message =
-        err instanceof Error ? err.message : 'Failed to update todo.';
-      showError(message);
-    });
+  const handleToggle = async (id: string, isCompleted: boolean) => {
+    await updateTodo(id, { isCompleted: !isCompleted });
+    await fetchTodos();
   };
 
-  const handleDelete = (id: string) => {
-    const snapshot = todos;
-    setTodos((prev) => prev.filter((t) => t.id !== id));
-
-    void deleteTodo(id).catch((err) => {
-      setTodos(snapshot);
-      const message =
-        err instanceof Error ? err.message : 'Failed to delete todo.';
-      showError(message);
-    });
-  };
-
-  const handleEdit = (id: string, title: string) => {
-    const snapshot = todos;
-    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
-
-    void updateTodo(id, { title }).catch((err) => {
-      setTodos(snapshot);
-      const message =
-        err instanceof Error ? err.message : 'Failed to save todo.';
-      showError(message);
-    });
+  const handleDelete = async (id: string) => {
+    await deleteTodo(id);
+    await fetchTodos();
   };
 
   const pending = todos.filter((t) => !t.isCompleted);
   const completed = todos.filter((t) => t.isCompleted);
-  const remainingLabel =
-    pending.length === 0
-      ? 'All clear — nothing pending'
-      : `${pending.length} ${pending.length === 1 ? 'task' : 'tasks'} pending`;
 
   return (
     <div className="bg-gray-50 min-h-screen">
@@ -573,69 +433,30 @@ export function HomePage() {
       <main className="max-w-xl mx-auto px-4 py-10">
         <form
           onSubmit={(e) => void handleAddTodo(e)}
-          className="flex gap-3 mb-3"
+          className="flex gap-3 mb-8"
         >
           <input
             type="text"
             value={newTodoTitle}
             onChange={(e) => setNewTodoTitle(e.target.value)}
             placeholder="What needs to be done?"
-            aria-label="New todo title"
-            maxLength={100}
-            className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 shadow-sm transition-all focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <button
             type="submit"
             disabled={!newTodoTitle.trim()}
-            className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-40 disabled:active:scale-100"
+            className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 disabled:opacity-40"
           >
             Add
           </button>
         </form>
 
-        {!loading && todos.length > 0 && (
-          <p className="mb-6 text-xs text-gray-500" aria-live="polite">
-            {remainingLabel}
-          </p>
-        )}
-
-        {error && (
-          <div
-            role="alert"
-            className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 motion-safe:animate-[slideDown_180ms_ease-out]"
-          >
-            <span className="flex-1">{error}</span>
-            <button
-              type="button"
-              onClick={() => setError(null)}
-              className="text-red-500 hover:text-red-700 transition-colors"
-              aria-label="Dismiss error"
-            >
-              <svg
-                className="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
-        )}
-
         {loading ? (
           <p className="text-center text-gray-400 text-sm">Loading...</p>
         ) : todos.length === 0 ? (
           <div className="text-center py-16">
-            <p className="text-gray-500 text-sm font-medium">All caught up!</p>
-            <p className="text-gray-400 text-xs mt-1">
-              Add your first todo above to get started.
+            <p className="text-gray-400 text-sm">
+              No todos yet. Add one above!
             </p>
           </div>
         ) : (
@@ -652,7 +473,6 @@ export function HomePage() {
                       todo={todo}
                       onToggle={handleToggle}
                       onDelete={handleDelete}
-                      onEdit={handleEdit}
                     />
                   ))}
                 </ul>
@@ -671,7 +491,6 @@ export function HomePage() {
                       todo={todo}
                       onToggle={handleToggle}
                       onDelete={handleDelete}
-                      onEdit={handleEdit}
                     />
                   ))}
                 </ul>
@@ -683,55 +502,113 @@ export function HomePage() {
     </div>
   );
 }
+
+function TodoRow({
+  todo,
+  onToggle,
+  onDelete,
+}: {
+  todo: TodoItem;
+  onToggle: (id: string, isCompleted: boolean) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <li className="group flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm border border-gray-100">
+      <button
+        onClick={() => onToggle(todo.id, todo.isCompleted)}
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+          todo.isCompleted
+            ? 'border-blue-500 bg-blue-500 text-white'
+            : 'border-gray-300 hover:border-blue-400'
+        }`}
+        aria-label={todo.isCompleted ? 'Mark incomplete' : 'Mark complete'}
+      >
+        {todo.isCompleted && (
+          <svg
+            className="h-3 w-3"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={3}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M5 13l4 4L19 7"
+            />
+          </svg>
+        )}
+      </button>
+      <span
+        className={`flex-1 text-sm ${
+          todo.isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'
+        }`}
+      >
+        {todo.title}
+      </span>
+      <button
+        onClick={() => onDelete(todo.id)}
+        className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+        aria-label="Delete todo"
+      >
+        <svg
+          className="h-4 w-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M6 18L18 6M6 6l12 12"
+          />
+        </svg>
+      </button>
+    </li>
+  );
+}
 ```
 
-> [!NOTE]
-> This is trimmed for length — the shipped template's `HomePage` additionally renders a
-> bulk "add 100 samples" and "clear all" action pair for stress-testing the list (built on
-> the same `todos.ts` functions) between the add form and the todo list below, and a
-> decorative icon above the empty state. The add/toggle/edit/delete loop above, and every
-> other class name and attribute shown, are otherwise unchanged from the shipped file.
-
-## 8. Apply the schema
-
-Once the entity and its registration exist, push the schema to your backend:
+## 8. Run the development loop
 
 ```bash
-npx rayfin up db apply
+npx rayfin login
+npm run dev
 ```
 
-The first time you run this against a project with no prior deployment, it needs a
-deployed target to apply to — the next step's `rayfin up` handles both the first deploy
-and the first schema apply together. Come back to `db apply` on its own for every schema
-change after that.
+The scaffolded `npm run dev` script runs `rayfin dev`, not plain Vite. It provisions or
+reuses the Fabric backend, applies runtime settings and the `Todo` schema, writes
+`RAYFIN_PUBLIC_*` and framework environment values, then starts the frontend through
+`npm run dev:frontend`. Open the local URL it prints and sign in: the Fabric SSO popup flow
+works from `http://localhost:5173` because that origin is listed in `allowedRedirectUris`.
+
+Restart `npm run dev` after changing `rayfin/data/Todo.ts` or `rayfin/data/schema.ts` so the startup schema apply sees the new model.
+See [Develop locally](/docs/start/develop-locally) for ports, flags, and troubleshooting.
 
 ## 9. Deploy
 
 ```bash
-npx rayfin login
 npx rayfin up
 npx rayfin up status
 ```
 
 `rayfin up` creates the Fabric app on the first run, applies the `Todo` schema, builds and
-uploads the React frontend, and prints the live hosting URL. See
+uploads the React frontend, and prints the live hosting URL. On later runs it skips the
+upload when the built files and the deployment target are unchanged since the last
+successful deploy. [New in 2.0](/docs/reference/changelog#rayfin-20) See
 [Deploying with rayfin up](/docs/deploy/rayfin-up) for the full workflow, flags, and what
 gets written to `rayfin/.deployments.json`.
 
-## 10. Iterate with `rayfin dev`
+## 10. Apply later schema changes
 
-The scaffolded `npm run dev` script runs `rayfin dev`, not plain Vite.
-
-The command provisions or reuses the Fabric backend, applies runtime settings and declared schema, writes `RAYFIN_PUBLIC_*` and framework environment values, then starts the frontend through `npm run dev:frontend`.
+After the first deploy, `npm run dev` applies schema changes to your backend when it starts,
+and `npx rayfin up` applies them as part of a deploy. For a schema-only retry or script, apply
+the schema on its own:
 
 ```bash
-npm run dev
+npx rayfin up db apply
 ```
-
-Restart `npm run dev` after changing `rayfin/data/Todo.ts` or `rayfin/data/schema.ts` so the startup schema apply sees the new model.
-
-Use `npx rayfin up` when you want to deploy static content.
-Use `npx rayfin up db apply` only for a schema-only retry or script.
 
 ## Next steps
 

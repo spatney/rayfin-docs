@@ -3,7 +3,7 @@ title: Deploying with rayfin up
 description: Deploy a Rayfin project with rayfin up, including login, capacity readiness, targeting flags, dry runs, and deployment metadata.
 ---
 
-Use `rayfin up` to publish a Rayfin project to Microsoft Fabric. It is the full production deploy command: it syncs backend settings, applies schema changes, builds static content, and deploys enabled Functions. Use `rayfin dev` for local iteration.
+Use `rayfin up` to publish a Rayfin project to Microsoft Fabric. It is the full production deploy command: it syncs backend settings, applies schema changes and Storage folder declarations, builds static content, and deploys enabled Functions. Use `rayfin dev` for local iteration.
 
 > [!NOTE]
 > For the exhaustive command reference, see [`rayfin up`](/docs/reference/cli/up) and [`rayfin login`](/docs/reference/cli/login).
@@ -21,7 +21,7 @@ Use `rayfin up` to publish a Rayfin project to Microsoft Fabric. It is the full 
 npx rayfin login
 ```
 
-The CLI opens a browser for Microsoft Entra ID sign-in and stores tokens with the operating system keychain. Check the current session at any time:
+The CLI opens a browser for Microsoft Entra ID sign-in and stores tokens with the operating system keychain. Before it opens the browser, it checks that Microsoft Entra ID is reachable; a network failure ends with `Can't reach Microsoft Entra ID` and recovery steps, including a fix for WSL2 and dev containers. [Changed in 2.0](/docs/reference/changelog#rayfin-20) See [`rayfin login`](/docs/reference/cli/login). Check the current session at any time:
 
 ```bash
 npx rayfin login status
@@ -58,25 +58,38 @@ If you are not signed in, the command starts the interactive login flow.
 
 ### What rayfin up does
 
-1. Reads `rayfin/rayfin.yml`, interpolates env values, and validates local service inputs.
+1. Reads `rayfin/rayfin.yml`, interpolates env values, and validates local service inputs before any remote call. Since 2.0 this includes connector `additionalPayload` blocks, custom audiences declared on Functions, and the [dynamic claims](/docs/auth/dynamic-claims) contract, which is regenerated from the `udf.authClaims` provider. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 2. Resolves the target Fabric workspace from flags, `RAYFIN_WORKSPACE_ID`, recorded deployments, or interactive selection.
 3. Checks Fabric capacity readiness and prepares a workspace when needed.
 4. Chooses the Fabric item display name from `--item-name` or `id` in `rayfin.yml`.
 5. Creates the App (preview) item on first deploy, or reuses the recorded item.
 6. Retrieves the publishable key.
 7. Resolves package versions (`packageVersions`) for the deploy client and installed auth SDK. [New in 1.35.1](/docs/reference/changelog#rayfin-1351)
-8. Syncs runtime settings from `rayfin.yml`, including auth, static hosting access, Functions, storage flags, and connectors.
-9. Generates connector configuration and function metadata required by enabled services.
-10. Applies the data schema generated from decorated entities.
-11. Builds and packages static content when `services.staticHosting.enabled` is true and not excluded.
-12. Uploads the static archive and records the hosting URL.
-13. Deploys Functions when `services.functions.enabled` is true and not excluded.
-14. Writes `rayfin/.deployments.json`, merges `RAYFIN_PUBLIC_*` values into `rayfin/.env`, and regenerates the frontend `.env.local` when possible.
+8. Syncs runtime settings from `rayfin.yml`, including auth, static hosting access, Functions, Storage, and connectors. The stored dynamic claims contract is kept until new Functions code is deployed.
+9. Applies the data schema generated from decorated entities.
+10. Applies Storage folder declarations when `services.storage.enabled` is true. A blocked folder removal stops the deploy; any other Storage failure becomes a warning that tells you to run `rayfin up storage apply`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+11. Writes `rayfin/.deployments.json`, merges `RAYFIN_PUBLIC_*` values into `rayfin/.env`, and regenerates the frontend `.env.local` when possible.
+12. Generates and applies connector configuration.
+13. Builds static content when `services.staticHosting.enabled` is true and not excluded, then uploads the archive and records the hosting URL. The upload is skipped when nothing changed since the last successful deploy. [New in 2.0](/docs/reference/changelog#rayfin-20)
+14. Deploys Functions when `services.functions.enabled` is true and not excluded, then updates the stored dynamic claims contract when the deployed provider changed it. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 When it finishes, the CLI prints the hosting URL when static content is deployed, a Fabric portal link, and deployment identifiers.
 
 > [!NOTE]
 > Fabric brokered authentication with Microsoft Entra ID is the supported browser sign-in path. If your app needs sign-in, keep `services.auth.fabric.enabled: true` and include your local and deployed origins in `allowedRedirectUris`.
+
+### Unchanged static content
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`rayfin up` still runs the static build on every deploy. It then compares the built files, workspace, item, backend URL, and publishable key with the last successful static deployment and skips the upload when they match:
+
+```text
+ℹ️  Static app re-deployment skipped: the built static files, workspace, and backend are unchanged since the last successful deployment.
+   To upload it anyway, run `rayfin up --force-static-deploy`.
+```
+
+Pass `--force-static-deploy` to upload anyway. `rayfin up staticapp deploy` always uploads.
 
 ## Target a workspace or item
 
@@ -160,15 +173,17 @@ npx rayfin up --exclude-services functions
 
 This is not the normal local development loop. Use `npm run dev` for that.
 
-## Deploy schema, static content, or Functions only
+## Deploy schema, Storage, static content, or Functions only
 
 | Command | What it updates |
 | --- | --- |
 | `npx rayfin up db apply` | Data schema only. |
 | `npx rayfin up db apply --force` | Allows destructive schema changes after review. |
-| `npx rayfin up staticapp deploy` | Static content only. |
+| `npx rayfin up storage apply` | Storage folder declarations only. Experimental and flag-gated in 1.36. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `npx rayfin up storage apply --force` | Allows removing undeclared folders that still contain objects, which permanently deletes those objects. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `npx rayfin up staticapp deploy` | Static content only. Always uploads, even when unchanged. |
 | `npx rayfin up staticapp deploy --skip-build` | Uploads existing static output without running the build command. |
-| `npx rayfin up functions deploy` | Functions only. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `npx rayfin up functions deploy` | Functions only. [Changed in 1.36](/docs/reference/changelog#rayfin-136) Afterwards it updates the stored dynamic claims contract when the provider changed it. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
 Enabled Functions require application authentication in `rayfin.yml` before deploy:
 
@@ -264,15 +279,16 @@ This table covers the flags used most often in guides and automation. See [`rayf
 | `--capacity-id <id>` | Assign a specific Fabric capacity when the target workspace has no usable capacity. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `-n, --dry-run` | Validate local inputs and resolve the workspace without deploying or modifying resources. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 | `--exclude-services <names>` | Skip supported deploy phases (`staticHosting`, `functions`) while runtime settings still sync. |
+| `--force-static-deploy` | Upload static content even though nothing changed since the last successful deployment. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `--env-file <path>` | Use a file other than `rayfin/.env` for interpolation and deployment values. |
-| `--force` | You reviewed destructive schema operations and accept the data loss. |
+| `--force` | You reviewed destructive schema operations, or the removal of non-empty Storage folders, and accept the data loss. |
 | `--json` | A script needs structured deployment output. |
 | `-y, --yes` | A non-interactive run should accept deterministic prompts such as capacity assignment and item reuse. |
 | `-v, --verbose` | You need detailed logs for a failed deploy. |
 | `--encryption-fallback-enabled` | The OS keychain is unavailable in a development environment. |
 
 ```prompt title="Run the right rayfin up command"
-Inspect my Rayfin project and decide whether to run a full `npx rayfin up`, `npx rayfin up db apply`, `npx rayfin up staticapp deploy`, or `npx rayfin up functions deploy`. Explain the target workspace and item from rayfin/.deployments.json, run the chosen command, and finish with `npx rayfin up status --json`.
+Inspect my Rayfin project and decide whether to run a full `npx rayfin up`, `npx rayfin up db apply`, `npx rayfin up storage apply`, `npx rayfin up staticapp deploy`, or `npx rayfin up functions deploy`. Explain the target workspace and item from rayfin/.deployments.json, run the chosen command, and finish with `npx rayfin up status --json`. If a full deploy reports that static re-deployment was skipped but I expected new content, check that the build output changed before rerunning with `--force-static-deploy`.
 ```
 
 ## Troubleshooting

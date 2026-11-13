@@ -1,6 +1,6 @@
 ---
 title: Writing a function
-description: Register Rayfin functions with udf.func, use RayfinContext for typed data access, and keep generated frontend types in sync.
+description: Register Rayfin functions with udf.func, use RayfinContext for typed data access and the caller's identity, and keep generated frontend types in sync.
 appliesTo: "@microsoft/fabric-user-data-functions >= 1.36"
 ---
 
@@ -54,13 +54,13 @@ udf.func(
 | --- | --- |
 | `name` | Function name. It becomes the generated schema key and the invocation route. |
 | `handler` | Typed TypeScript function. Its parameters and return type are read by typegen. |
-| `connections` | Pass `[]`. Audience-scoped connections are declared in the `RayfinContext` type annotation in 1.36. |
+| `connections` | Pass `[]`. Audiences are declared in the `RayfinContext` type annotation instead; see [Connections](/docs/functions/connections). |
 
 Do not export bare functions and expect Rayfin to discover them. Typegen and deployment metadata are based on `udf.func(...)` registrations.
 
 ## Use `RayfinContext` for server context
 
-Add a `RayfinContext` parameter when a handler needs Rayfin data, secrets, tokens, or runtime metadata. Pass the same app schema type you use with `RayfinClient<AppSchema>` so `getDataClient()` is typed.
+Add a `RayfinContext` parameter when a handler needs Rayfin data, the caller's identity, secrets, tokens, or runtime metadata. Pass your app's data schema type as the first type argument so `getDataClient()` is typed.
 
 ```typescript title="rayfin/functions/src/function_app.ts"
 import {
@@ -69,7 +69,7 @@ import {
 } from '@microsoft/fabric-user-data-functions';
 
 export type AppSchema = {
-  Entry: { id: string; message: string; createdAt: string };
+  Entry: { id: string; message: string };
 };
 
 const udf = new UserDataFunctions();
@@ -95,22 +95,61 @@ udf.func(
 );
 ```
 
-`RayfinContext` is injected by the runtime. Typegen strips it from the generated input type, so `addEntry` is invoked with `{ message }`, not with a context value.
+`RayfinContext` is injected by the runtime. Typegen strips it from the generated input type, so `addEntry` is invoked with `{ message }`, not with a context value. Always annotate the context parameter explicitly: typegen recognizes the context by its `RayfinContext<...>` annotation and treats an unannotated parameter as caller input.
 
 ## `RayfinContext` members
 
 | Member | Description |
 | --- | --- |
 | `ctx.getDataClient()` | Returns the typed Rayfin data client. It uses the invocation's Rayfin token, so Rayfin DB access stays caller-scoped. |
+| `ctx.user.id` | The caller's subject id — the same value as the frontend `session.user.id` and the `claims.sub` that data policies compare. See [Stamp the owner](#stamp-the-owner-with-ctxuserid). [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `ctx.Secrets` | Typed secret values declared in `rayfin.yml`. See [Secrets in functions](/docs/functions/secrets). [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `ctx.Tokens` | Typed external-resource tokens for audiences declared on `RayfinContext`. Deployed functions use the app identity. See [Connections](/docs/functions/connections). [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| `ctx.sql` | Raw SQL against the app database, present only on a context annotated `RayfinContext<AppSchema> & WithSql`. See [Raw SQL](/docs/functions/raw-sql). [New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status) |
+| `ctx.getClaims()` | The caller's typed claims, including custom claims from the app's claims provider. See [Dynamic auth claims](/docs/auth/dynamic-claims). [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `ctx.baseUrl` | Rayfin endpoint URL for the invocation. |
-| `ctx.accessToken` | The invocation's Rayfin token for caller-scoped Rayfin data access. |
+| `ctx.accessToken` | The invocation's Rayfin token for caller-scoped Rayfin data access. Do not decode it yourself. |
 | `ctx.publishableKey` | The Rayfin publishable key. |
 | `ctx.getSecret(name)` | Deprecated untyped secret lookup. Use `ctx.Secrets.<NAME>`. [Deprecated in 1.36](/docs/reference/changelog#rayfin-136) |
 | `ctx.getToken(audienceType)` | Deprecated untyped token lookup. Use `ctx.Tokens.<Audience>`. [Deprecated in 1.36](/docs/reference/changelog#rayfin-136) |
 
 Import `RayfinContext` from `@microsoft/fabric-user-data-functions`, not from `@microsoft/rayfin-functions`.
+
+## Stamp the owner with `ctx.user.id`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+When an entity's policy compares an owner field with `claims.sub`, set that field from `ctx.user.id` and write through `ctx.getDataClient()`, so the caller's permissions still apply:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = {
+  Entry: { id: string; message: string; owner_id: string };
+};
+
+const udf = new UserDataFunctions();
+
+udf.func(
+  'addMyEntry',
+  async (message: string, ctx: RayfinContext<AppSchema>): Promise<{ id: string }> => {
+    const entry = await ctx.getDataClient().Entry.create({
+      message,
+      owner_id: ctx.user.id,
+    });
+    return { id: entry.id };
+  },
+  [],
+);
+```
+
+- `ctx.user.id` is the value data policies evaluate as `claims.sub` and the frontend sees as `session.user.id`. Never decode `ctx.accessToken` to find the caller: the decoded subject may not match what the data layer compares.
+- Reading `ctx.user.id` throws when the function was invoked without a signed-in Rayfin session.
+- The context exposes only this id — no email, role, access token, or provider identity.
+- Treat the id as personal data. It is a persistent pseudonymous identifier: use it only where the app needs caller identity, do not log it unnecessarily or return it to other callers, and do not send it to external services without a privacy purpose and controls. Apply the same retention and deletion rules as other user-linked data.
 
 ## Import entity types with `import type`
 
@@ -123,6 +162,12 @@ import type { Entry } from '../../data/Entry.js';
 Do not use a runtime import for entity classes. A runtime import can pull the data decorator runtime into the functions bundle.
 
 Use `console.log(...)` and `console.error(...)` for logging. There is no `ctx.log` API.
+
+## Add custom claims at sign-in
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+The functions package can also register one `udf.authClaims(...)` provider that computes custom claims when a user signs in. Rayfin calls it during sign-in and token refresh; it is not added to `AppFunctionsSchema` and cannot be invoked from the frontend. A functions project whose only function is the provider still generates types and deploys. See [Dynamic auth claims](/docs/auth/dynamic-claims).
 
 ## Generated `types.ts`
 
@@ -142,7 +187,7 @@ export type AppFunctionsSchema = {
 ```
 
 - `Promise<T>` return types are unwrapped to `T`.
-- Runtime-injected `RayfinContext` parameters are omitted from `input`.
+- Runtime-injected `RayfinContext` parameters, including `RayfinContext<AppSchema> & WithSql`, are omitted from `input`.
 - The schema is closed: only listed function names are accepted by `client.functions.<name>.invoke(...)`.
 - Never hand-edit `types.ts`; `rayfin functions init` and `rayfin dev functions apply` regenerate it.
 - Do not import Node.js packages into `types.ts`; the frontend TypeScript compiler reads it.
@@ -155,8 +200,10 @@ export type AppFunctionsSchema = {
 | `npx rayfin dev functions apply` | Runs typegen once at startup and keeps a watcher running with a `[typegen]` prefix. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 | `npx rayfin dev` | Starts the same local functions flow when Functions are enabled. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 
-```prompt title="Write a typed Rayfin function"
-In my Rayfin project, add a function to rayfin/functions/src/function_app.ts.
+Before it writes generated files, typegen checks that the installed `@microsoft/fabric-user-data-functions` can read the runtime metadata the CLI writes, and stops with an `npm install` command when it cannot. Keep the package at the CLI's exact version; see [Match the worker package to the CLI](/docs/functions#match-the-worker-package-to-the-cli). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-Register it with `udf.func('<name>', handler, [])`. Import `RayfinContext` from `@microsoft/fabric-user-data-functions` and use `RayfinContext<AppSchema>` when the handler reads or writes Rayfin entities. If you import entity types from rayfin/data/, use `import type` and include the `.js` extension. Never edit rayfin/functions/src/types.ts manually; regenerate or run `npx rayfin dev functions apply` so typegen updates it. Show the final handler and the generated `AppFunctionsSchema` entry.
+```prompt title="Write a typed Rayfin function"
+In my Rayfin 2.0 project, add a function to rayfin/functions/src/function_app.ts.
+
+Register it with `udf.func('<name>', handler, [])`. Import `RayfinContext` from `@microsoft/fabric-user-data-functions` and annotate the context parameter as `RayfinContext<AppSchema>` when the handler reads or writes Rayfin entities. If the entity has an owner field compared with `claims.sub` in its policy, set that field from `ctx.user.id` and write through `ctx.getDataClient()`; never decode `ctx.accessToken`, and do not log the caller id. If you import entity types from rayfin/data/, use `import type` and include the `.js` extension. Never edit rayfin/functions/src/types.ts manually; run `npx rayfin dev functions apply` so typegen updates it. Show the final handler and the generated `AppFunctionsSchema` entry.
 ```

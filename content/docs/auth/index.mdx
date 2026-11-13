@@ -1,6 +1,6 @@
 ---
 title: Auth
-description: "Choose a Microsoft Entra sign-in path for Rayfin apps: Fabric SSO, direct Entra token exchange, external embed host, and sessions."
+description: "Choose a Microsoft Entra sign-in path for Rayfin apps: Fabric SSO, direct Entra token exchange, external embed host, sessions, and dynamic claims."
 ---
 
 Rayfin Auth gives your app managed Microsoft Entra sign-in, session handling, and token refresh.
@@ -9,8 +9,8 @@ After sign-in, `client.data.*` and `client.functions.*` calls use the authentica
 ## Why use Rayfin Auth
 
 - **No separate identity provider to run** — Rayfin Fabric apps use Microsoft Entra ID through Fabric SSO or delegated Entra token exchange.
-- **Pre-integrated SDK clients** — once a session is installed on `client.auth`, attached Rayfin clients send the authenticated context automatically.
-- **Per-user data isolation** — JWT claims drive row-level security policies declared on your entities. See [Permissions](/docs/data/permissions).
+- **Pre-integrated SDK clients** — once a session is installed on `client.auth`, the client's registered services send the authenticated context automatically.
+- **Per-user data isolation** — JWT claims drive row-level security policies declared on your entities, including app-defined [dynamic claims](/docs/auth/dynamic-claims). See [Permissions](/docs/data/permissions).
 - **One session API** — `getSession`, `onSessionChange`, `refreshSession`, and `signOut` work the same way no matter which supported flow installed the session.
 
 ## Choose an auth path
@@ -20,9 +20,10 @@ After sign-in, `client.data.*` and `client.functions.*` calls use the authentica
 | A browser app needs Fabric to perform interactive sign-in | [Fabric SSO popup flow](/docs/auth/fabric-sso) | Any origin in `services.auth.allowedRedirectUris`, including `http://localhost:5173` during local frontend development. |
 | A Rayfin app is loaded inside the Fabric portal iframe | [Fabric SSO embedded flow](/docs/auth/fabric-sso#embedded-flow-automatic-sign-in-on-startup) | The Fabric portal iframe. The embedded flow requires the app to be loaded by Fabric. |
 | A React app needs shared session state and route guarding | [React integration](/docs/auth/react) | Browser UI code, using the same `client.auth` instance as the SDK client. |
-| Browser or Node.js code already has a delegated Entra token | [Direct Entra token sign-in](/docs/auth/entra-token) | Browser or Node.js. Requires Rayfin 1.36 packages and `externalEntraExchange: true`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
-| Your own portal embeds a Rayfin app in an iframe | [External embed host](/docs/auth/embed-host) | Parent portal page plus the embedded Rayfin app. Requires Rayfin 1.36 packages and `externalEntraExchange: true`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| Browser or Node.js code already has a delegated Entra token | [Direct Entra token sign-in](/docs/auth/entra-token) | Browser or Node.js. Requires Rayfin 1.36 or later and `externalEntraExchange: true`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| Your own portal embeds a Rayfin app in an iframe | [External embed host](/docs/auth/embed-host) | Parent portal page plus the embedded Rayfin app. Requires Rayfin 1.36 or later and `externalEntraExchange: true`. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | UI code needs to react to sign-in, sign-out, or refresh | [Sessions](/docs/auth/sessions) | Any frontend code that can access `client.auth`. |
+| Entity policies need app-defined facts about the user, such as an account or region | [Dynamic auth claims](/docs/auth/dynamic-claims) | A `udf.authClaims` function the backend calls at sign-in and refresh. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
 Microsoft Entra ID is the only supported identity provider for Rayfin Fabric apps.
 Do not add alternate sign-in UI to a new Rayfin app.
@@ -51,6 +52,36 @@ Scaffolded projects run `rayfin dev`, which provisions or reuses the managed Fab
 Use `npx rayfin up` when you want to deploy static hosting or update a deployed environment without starting the local frontend.
 See [Redirect URIs](/docs/hosting/redirect-uris) for what `allowedRedirectUris` controls.
 
+## Create a client with a browser session
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Every sign-in flow installs its session on `client.auth`, which exists only when you create the client with `browserSession()` from `@microsoft/rayfin-auth`:
+
+```bash
+npm install @microsoft/rayfin-client @microsoft/rayfin-auth @microsoft/rayfin-auth-provider-fabric @microsoft/rayfin-data
+```
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import type { AppSchema } from '../../rayfin/data/schema';
+
+export const client = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+  },
+});
+```
+
+Session options such as `storage`, `persistSession`, `autoRefreshToken`, and `multiTabSync` are arguments to `browserSession()`; in Rayfin 1.x they were top-level client options.
+A client created with `suppliedToken()` from `@microsoft/rayfin-client` has no `client.auth` — use it only for scripts and servers that already hold a Rayfin token.
+See [Sessions](/docs/auth/sessions#configure-session-options) for every option.
+
 ## Enable external Entra exchange
 
 Direct Entra token sign-in and the external embed host call Rayfin's external brokered endpoints.
@@ -73,10 +104,12 @@ Every flow installs the same opaque session on `client.auth`.
 Read only the documented fields and subscribe with `onSessionChange`:
 
 ```typescript title="src/auth/session.ts"
+import { client } from '../services/rayfinClient';
+
 const session = client.auth.getSession();
 
 if (session.isAuthenticated && session.user) {
-  showApp(session.user);
+  console.log('Signed in as', session.user.email);
 }
 
 const unsubscribe = client.auth.onSessionChange((nextSession) => {
@@ -87,23 +120,34 @@ const unsubscribe = client.auth.onSessionChange((nextSession) => {
 unsubscribe();
 ```
 
+`isAuthenticated` is `true` only while the access token is unexpired. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 See [Sessions](/docs/auth/sessions) for refresh, sign-out, and lifecycle details.
+
+## Show sign-in errors
+
+`ensureSignedInWithFabric()` and `signInWithEntraToken()` reject with an `AuthError` when sign-in fails.
+Catch it and show `error.message` in your sign-in UI; it is a user-safe description.
+`initEmbeddedAuth()` resolves to `null` instead of rejecting, so show a sign-in button when it does.
+See [Handle sign-in errors](/docs/auth/fabric-sso#handle-sign-in-errors) for the codes.
 
 ## In this section
 
 - **[Fabric SSO](/docs/auth/fabric-sso)** — enable it, install the provider package, and call `initEmbeddedAuth` plus `ensureSignedInWithFabric`.
 - **[Direct Entra token sign-in](/docs/auth/entra-token)** — exchange an existing delegated Entra token for a Rayfin session. [New in 1.36](/docs/reference/changelog#rayfin-136)
 - **[External embed host](/docs/auth/embed-host)** — broker sign-in for a Rayfin app embedded in your own portal. [New in 1.36](/docs/reference/changelog#rayfin-136)
-- **[Sessions](/docs/auth/sessions)** — the opaque session object, `onSessionChange`, token refresh, and sign-out.
+- **[Sessions](/docs/auth/sessions)** — `browserSession` options, the opaque session object, `onSessionChange`, token refresh, sign-out, and disposal.
+- **[Dynamic auth claims](/docs/auth/dynamic-claims)** — mint app-defined claims into the access token with a `udf.authClaims` function and filter data on them. [New in 2.0](/docs/reference/changelog#rayfin-20)
 - **[Delegated access](/docs/auth/delegated-access)** — how Functions, connectors, and entity policies use signed-in identity or app identity.
-- **[React integration](/docs/auth/react)** — an auth context, a hook, local embedded startup, and route guarding.
+- **[React integration](/docs/auth/react)** — an auth context, a hook, embedded startup, and route guarding.
 
 ```prompt title="Choose and wire the right Rayfin auth flow"
-In my Rayfin app, choose the correct Microsoft Entra auth flow and wire it up.
+In my Rayfin 2.0 app, choose the correct Microsoft Entra auth flow and wire it up.
 
-Use Fabric SSO with @microsoft/rayfin-auth-provider-fabric when my browser app needs Fabric to perform interactive sign-in. Keep http://localhost:5173 in services.auth.allowedRedirectUris for local frontend development, and use initEmbeddedAuth() at startup plus ensureSignedInWithFabric() from a button click.
+Create the client with RayfinClient.create({ baseUrl, publishableKey, auth: browserSession({ storage: true }), services: { ... } }), importing browserSession from @microsoft/rayfin-auth, so client.auth exists. Install @microsoft/rayfin-auth and @microsoft/rayfin-auth-provider-fabric.
 
-If my code already has a delegated Entra access token, use signInWithEntraToken() instead and enable services.auth.fabric.externalEntraExchange: true in rayfin/rayfin.yml. If my own portal embeds the Rayfin app in an iframe, register createEmbedHost() in the parent before mounting the iframe and enable the same externalEntraExchange setting.
+Use Fabric SSO when my browser app needs Fabric to perform interactive sign-in. Keep http://localhost:5173 in services.auth.allowedRedirectUris for local frontend development, await initEmbeddedAuth() at startup (it resolves to null instead of rejecting), and call ensureSignedInWithFabric() from a button click.
 
-Use client.auth.getSession() and client.auth.onSessionChange(...) for UI state. Do not add alternate sign-in flows.
+If my code already has a delegated Entra access token, use signInWithEntraToken(client.auth, { entraToken }) instead and enable services.auth.fabric.externalEntraExchange: true in rayfin/rayfin.yml. If my own portal embeds the Rayfin app in an iframe, register createEmbedHost() in the parent before mounting the iframe and enable the same externalEntraExchange setting.
+
+Catch every sign-in error and show error.message to the user. Use client.auth.getSession() and client.auth.onSessionChange(...) for UI state. Do not add alternate sign-in flows.
 ```

@@ -22,10 +22,16 @@ The static bundle moves byte-for-byte. Stage-specific values such as API URL, pu
 
 ## Resolve config before creating the client
 
-Use `resolveRayfinConfig()` from `@microsoft/rayfin-client`. Pass build-time env vars as local-dev defaults; deployed stages override them from `rayfin.config.json`.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Use `resolveRayfinConfig()` from `@microsoft/rayfin-client`, then pass its result to
+`RayfinClient.create`. Pass build-time env vars as local-dev defaults; deployed stages
+override them from `rayfin.config.json`.
 
 ```typescript title="src/rayfinClient.ts"
 import { RayfinClient, resolveRayfinConfig } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
 import type { AppSchema } from '../rayfin/data/schema';
 
 export async function createClient() {
@@ -38,20 +44,85 @@ export async function createClient() {
     tenantId: import.meta.env.VITE_FABRIC_TENANT_ID,
   });
 
-  return new RayfinClient<AppSchema>({ ...resolved, authStorage: true });
+  return RayfinClient.create({
+    baseUrl: resolved.baseUrl!,
+    publishableKey: resolved.publishableKey!,
+    runtimeConfig: resolved.runtimeConfig,
+    auth: browserSession({ storage: true }),
+    services: { data: dataService<AppSchema>() },
+  });
 }
+
+export type AppClient = Awaited<ReturnType<typeof createClient>>;
 ```
 
-Do not construct `RayfinClient` directly from `VITE_RAYFIN_API_URL` and `VITE_RAYFIN_PUBLISHABLE_KEY` in deployed code. That bakes the source stage into the bundle.
+The app installs `@microsoft/rayfin-auth` and `@microsoft/rayfin-data` itself; register
+other services, such as `functionsService` or `storageService`, in the same `services`
+object. In 1.x the snippet called `new RayfinClient<AppSchema>({ ...resolved, authStorage: true })`;
+that constructor was removed in 2.0.
+[Removed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Do not call `RayfinClient.create` with `VITE_RAYFIN_API_URL` and
+`VITE_RAYFIN_PUBLISHABLE_KEY` directly in deployed code. That bakes the source stage into
+the bundle. To find client construction that skips `resolveRayfinConfig()`, search for:
+
+```bash
+grep -rn "RayfinClient.create" src/
+```
 
 ## Read Fabric coordinates from runtimeConfig
 
 Fabric auth and embedded flows also need workspace, item, portal, and tenant values. Read them from `client.runtimeConfig` after resolving config; do not read `VITE_FABRIC_*` directly in promoted code.
 
-```typescript
-const client = await createClient();
-const { workspaceId, itemId, portalUrl, tenantId } = client.runtimeConfig ?? {};
+```typescript title="src/fabricAuthOptions.ts"
+import type { FabricAuthOptions } from '@microsoft/rayfin-auth-provider-fabric';
+import type { AppClient } from './rayfinClient';
+
+export function fabricAuthOptions(client: AppClient): FabricAuthOptions {
+  const { workspaceId, itemId, portalUrl, tenantId } = client.runtimeConfig ?? {};
+  if (!workspaceId || !itemId || !portalUrl) {
+    throw new Error('Fabric coordinates are missing from the resolved runtime config.');
+  }
+  return {
+    workspaceId,
+    projectId: itemId,
+    fabricPortalUrl: portalUrl,
+    tenantId,
+    returnOrigin: window.location.origin,
+  };
+}
 ```
+
+Pass the result to `ensureSignedInWithFabric` or `initEmbeddedAuth` from
+`@microsoft/rayfin-auth-provider-fabric`. `tenantId` is optional; when it is set, the
+Fabric sign-in page opens directly in that tenant instead of discovering the user's home
+tenant first. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+## Read the Application Insights connection string
+
+[New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+For an app with `services.telemetry.enabled: true`, the `rayfin.config.json` generated
+for each stage includes that stage's `applicationInsightsConnectionString`. It is omitted
+when telemetry is disabled or no connection string has been allocated.
+
+```typescript title="src/telemetryConfig.ts"
+import type { AppClient } from './rayfinClient';
+
+export function applicationInsightsConnectionString(client: AppClient): string | undefined {
+  return client.runtimeConfig?.applicationInsightsConnectionString;
+}
+```
+
+The client only exposes the value; it does not start telemetry. Do not pass a source-stage
+connection string to `resolveRayfinConfig()` as a default in a promoted app, or a target
+stage without telemetry falls back to the source stage's destination. See
+[Observability](/docs/deploy/observability) for setup.
+
+> [!WARNING]
+> Observability is experimental. The connection string appears only after Fabric
+> service-side telemetry enablement allocates a resource, and only when server-side
+> runtime-config generation is enabled for static deployments.
 
 ## What is not promoted this way
 
@@ -60,11 +131,22 @@ const { workspaceId, itemId, portalUrl, tenantId } = client.runtimeConfig ?? {};
 - Functions have their own deployment behavior; validate them separately in each stage.
 
 ```prompt title="Make my Rayfin frontend deployment-pipeline safe"
-Search my frontend for direct `new RayfinClient`, `new RayfinServerClient`, and direct `VITE_FABRIC_*` reads. Refactor client creation to call `resolveRayfinConfig()` with the current env vars as defaults, pass the resolved object into the client constructor, and read Fabric coordinates from `client.runtimeConfig` so a promoted Fabric Deployment Pipeline stage uses that stage's generated rayfin.config.json.
+My frontend uses Rayfin 2.0. Search src/ for `RayfinClient.create` calls and for direct
+`VITE_FABRIC_*` reads. Make every client resolve its configuration first: call
+`resolveRayfinConfig()` from @microsoft/rayfin-client with the current VITE_RAYFIN_API_URL,
+VITE_RAYFIN_PUBLISHABLE_KEY, and VITE_FABRIC_* values as defaults, then pass
+`baseUrl`, `publishableKey`, and `runtimeConfig` from the result into
+`RayfinClient.create` alongside the existing `auth` and `services`. Replace direct
+`VITE_FABRIC_*` reads with `client.runtimeConfig` (workspaceId, itemId, portalUrl,
+tenantId) so a promoted Fabric Deployment Pipeline stage uses that stage's generated
+rayfin.config.json. If you find a 1.x `new RayfinClient(...)` constructor, replace it
+with `RayfinClient.create` and `browserSession({ storage: true })` from
+@microsoft/rayfin-auth.
 ```
 
 ## Related links
 
 - [Deploying with rayfin up](/docs/deploy/rayfin-up)
 - [Static hosting](/docs/hosting)
+- [Observability](/docs/deploy/observability)
 - [Fabric CI/CD documentation](https://learn.microsoft.com/en-us/fabric/cicd/)

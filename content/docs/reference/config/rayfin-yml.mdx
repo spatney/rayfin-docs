@@ -1,6 +1,6 @@
 ---
 title: rayfin.yml reference
-description: Complete Rayfin 1.36.2 rayfin.yml schema for services, static hosting, Functions, storage, connectors, and secret declarations.
+description: Complete Rayfin 2.0.0 rayfin.yml schema — auth and dynamic claims, data, static hosting, Functions, storage, telemetry, connectors, and secrets.
 ---
 
 `rayfin/rayfin.yml` is the committed project configuration. The CLI reads it for `rayfin
@@ -30,9 +30,15 @@ Microsoft Entra ID through Fabric SSO is the supported identity provider.
 | `fabric.externalEntraExchange` | boolean | no | Allows callers that already hold a delegated Entra token to exchange it for a Rayfin session through external brokered endpoints. Defaults to absent/false. |
 | `allowedRedirectUris` | string[] | no | Redirect origins accepted by Auth. `rayfin dev` and `rayfin up` add local dev and hosted origins. |
 | `expiryInMinutes` | number | no | Session token lifetime. |
-| `customClaims` | `Record<string, string>` | no | Custom claims added to issued tokens. |
+| `customClaims` | `Record<string, string>` | no | Static custom claims added to issued tokens. Dynamic claim names must not collide with these. |
+| `dynamicClaims.enabled` | boolean | no | Turns [dynamic auth claims](/docs/auth/dynamic-claims) on or off. Declaring `dynamicClaims` at all, even with `enabled: false`, makes the CLI generate the claims contract from your `udf.authClaims` provider. Requires Functions. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `scopes` | string[] | no | OAuth scopes. |
 | `refreshToken.lifetimeInDays` | number | no | Refresh token lifetime. |
+
+Do not author `dynamicClaims.contract`. Deploys that ship functions fill it in from the
+generated `auth/claims.contract.json`, and every other settings write keeps the contract
+the backend already has. The `dynamicclaims` value of `RAYFIN_FEATURE_FLAGS` is retired:
+the CLI fails if it is set without a `services.auth.dynamicClaims` declaration.
 
 
 ## `services.data`
@@ -91,18 +97,37 @@ Invalid services.functions.auth: authentication is required when Functions are e
 
 ## `services.storage`
 
-[Experimental](/docs/reference/changelog#feature-status)
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-> [!WARNING]
-> Storage is experimental and may not be available in every Fabric region or tenant. Enable
-> it with `RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled: true`.
+Storage is generally available and needs no feature flag. It is remote-only: folder
+declarations apply to the deployed Fabric backend. `rayfin storage init` sets this block for
+you. See [Storage](/docs/storage).
 
 | Key | Type | Required | Description |
 | --- | --- | --- | --- |
 | `enabled` | boolean | yes | Turns Storage on or off. |
 | `path` | string | no | Storage package directory relative to the project root. |
 
-Storage depends on Data; `rayfin init` rejects `storage` without `data`.
+Storage depends on Data; `rayfin init` rejects `storage` without `data`. Storage stays
+enabled when no folders are declared, but `rayfin up` and `rayfin dev` skip the Storage
+apply step with a warning until at least one `@blob` folder is registered.
+
+## `services.telemetry`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+Application telemetry for [Observability](/docs/deploy/observability). `rayfin telemetry
+enable` and `rayfin telemetry disable` edit this block; deploy with `rayfin up` to apply
+the change.
+
+> [!WARNING]
+> Provisioning requires Fabric service-side enablement for the target workspace. Setting
+> `enabled: false` and running `rayfin up` deletes the app's Application Insights resource
+> and the telemetry it collected.
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | yes, when the block is present | Turns application telemetry on or off. Do not put a connection string or resource ID here; the backend allocates and stores them. |
 
 ## `services.connectors`
 
@@ -119,21 +144,27 @@ command reference.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Unique connector name, 1–256 chars, alphanumeric plus hyphen and underscore. |
-| `type` | connector type | yes | `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, `fabric-semanticmodel`, or existing `kusto`. |
-| `version` | positive integer string | Category B | Required for `fabric-semanticmodel` and `kusto`, for example `'1'`. |
-| `config.workspaceId` | string | Fabric connectors | Fabric workspace ID. |
-| `config.itemId` | string | Fabric connectors | Fabric item ID. |
-| `auth.type` | `delegated` \| `application` | yes | Required. Category A defaults to `application` when added by CLI in 1.36; Category B supports `delegated` only. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `name` | string | yes | Unique connector name, 1–256 chars, alphanumeric plus hyphen and underscore. Names are case-insensitive: two entries that differ only by case fail validation, and `rayfin connector add` stores new names in lowercase. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `type` | connector type | yes | `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, `fabric-semanticmodel`, `fabriciqmcp`, or existing `eventhouse`. |
+| `version` | positive integer string | Category B | Required for `fabric-semanticmodel`, `fabriciqmcp`, and `eventhouse`, for example `'1'`. |
+| `config.workspaceId` | string | item-backed connectors | Fabric workspace ID. `fabriciqmcp` is itemless and uses `config: {}`. |
+| `config.itemId` | string | item-backed connectors | Fabric item ID. |
+| `auth.type` | `delegated` \| `application` | yes | Required, and validated against the type's allowed identities in the table below. `rayfin connector add` writes the type's default unless you pass `--auth`. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `operations[].name` | operation | no | Subset of allowed operations; omit for all allowed operations. |
+| `additionalPayload` | object | no | Connector-defined JSON object saved with the connector's runtime settings. Category B only; Eventhouse uses it for saved queries. Kept verbatim — no `${VAR}` interpolation — and limited to 64 KiB of compact JSON and 32 levels of nesting. Not a secret store. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
-| Type | Category | Default auth in 1.36 | Allowed auth | Operations | Authoring status |
+| Type | Category | Default auth | Allowed auth | Operations | Authoring status |
 | --- | --- | --- | --- | --- | --- |
 | `fabric-sqlanalytics` | Category A | `application` | `delegated`, `application` | `read` | Released |
 | `fabric-warehouse` | Category A | `application` | `delegated`, `application` | `read`, `create`, `update`, `delete` | Released |
 | `fabric-sqldatabase` | Category A | `application` | `delegated`, `application` | `read`, `create`, `update`, `delete` | Released |
 | `fabric-semanticmodel` | Category B | `delegated` | `delegated` | `executeQuery` | Released |
-| `kusto` | Category B | `delegated` | `delegated` | `executeQuery`, `executeCommand` | Held: existing declarations validate and deploy, but 1.36 authoring commands reject new Kusto connectors. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `fabriciqmcp` | Category B | `delegated` | `delegated` | `executeQuery` | Released. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `eventhouse` | Category B | `application` | `application` | `executeQuery`, `executeCommand` | Held: existing declarations validate and deploy, but `rayfin connector add` rejects new Eventhouse connectors. Renamed from `kusto`. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+
+`type: kusto` is rejected as an unknown connector type. Change it to `type: eventhouse`
+and follow [Eventhouse](/docs/connectors/eventhouse) to move the connector to saved
+queries. [Removed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## `secrets`
 
@@ -206,9 +237,15 @@ secrets:
 Any value may use `${VAR}` or `${VAR:-default}`. See
 [Environment variable interpolation](/docs/reference/config/env-interpolation).
 
-```prompt title="Fix a Rayfin 1.36 configuration"
-Read rayfin/rayfin.yml and update it for Rayfin 1.36: add
-`services.staticHosting.assetAccess: protected` if static hosting is enabled and missing,
-add `services.functions.auth.type: application` if Functions are enabled, and remove any
-need for `services.connectors.enabled`. Then run `npx rayfin up --dry-run`.
+```prompt title="Update rayfin.yml for Rayfin 2.0"
+Read rayfin/rayfin.yml and update it for Rayfin 2.0. Add
+`services.staticHosting.assetAccess: protected` if static hosting is enabled and it is
+missing, add `services.functions.auth.type: application` if Functions are enabled, and
+remove `services.connectors.enabled`. If a connector declares `type: kusto`, stop and tell
+me: it must become `type: eventhouse` with `auth.type: application` and saved queries in
+`additionalPayload`, following https://rayfin.ai/docs/connectors/eventhouse.md. If
+RAYFIN_FEATURE_FLAGS in my environment or rayfin/.env contains `storage` or
+`dynamicclaims`, remove those values; for `dynamicclaims`, add
+`services.auth.dynamicClaims.enabled: true` instead. Then run `npx rayfin up --dry-run` and
+report the result.
 ```

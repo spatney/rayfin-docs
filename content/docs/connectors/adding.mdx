@@ -1,7 +1,7 @@
 ---
 title: Adding a connector
 appliesTo: "@microsoft/rayfin-connectors >= 1.36"
-description: Discover Fabric sources, add a connector to rayfin.yml, install its pinned packages, and manage connector entries safely.
+description: Discover Fabric sources, add a connector to rayfin.yml, choose its identity, install its pinned packages, review the generated app wiring, and re-add or remove connectors safely.
 ---
 
 Add a connector when a Rayfin app needs to reach existing Fabric data. Start with
@@ -10,7 +10,7 @@ type. See [Connectors](/docs/connectors) for the connector-type catalog.
 
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-`rayfin connector` is always registered in 1.36 and no longer needs a connector opt-in gate.
+`rayfin connector` is always registered and needs no connector opt-in gate.
 
 ## Find a source
 
@@ -31,6 +31,10 @@ Choose one scope:
 
 Use `--limit <n>` to cap plain or JSON output. Interactive output ignores the limit because
 the picker paginates the full result set.
+
+Search returns warehouses, SQL databases, Lakehouses, and semantic models. It does not return
+Eventhouse KQL databases, whose authoring is held in 2.0.0, or Fabric IQ, which is not tied
+to a Fabric item.
 
 Use `--json` when an agent or script will choose the result. The JSON envelope includes
 `status`, `query`, `scope`, `count`, and `sources`. Each source includes `workspaceId`,
@@ -69,29 +73,93 @@ npx rayfin connector add --type <type> --workspace-id <ws-id> --item-id <item-id
 
 | Flag | Required | Purpose |
 | --- | --- | --- |
-| `--type <type>` | Yes | Connector type, such as `fabric-warehouse`, `fabric-sqldatabase`, `fabric-sqlanalytics`, or `fabric-semanticmodel`. New `kusto` authoring is held in 1.36.2. |
-| `--workspace-id <id>` | Yes | Fabric workspace ID. It must be a literal value; `${VAR}` placeholders are rejected. |
-| `--item-id <id>` | Yes | Fabric item ID. It must be a literal value. |
-| `--name <name>` | No | Connector name. When omitted, the CLI derives it from the Fabric item display name. |
+| `--type <type>` | Yes | Connector type: `fabric-warehouse`, `fabric-sqldatabase`, `fabric-sqlanalytics`, `fabric-semanticmodel`, or `fabriciqmcp`. Eventhouse authoring is held in 2.0.0. |
+| `--workspace-id <id>` | For item-backed types | Fabric workspace ID. It must be a literal value; `${VAR}` placeholders are rejected. `fabriciqmcp` takes none. |
+| `--item-id <id>` | For item-backed types | Fabric item ID. It must be a literal value. `fabriciqmcp` takes none. |
+| `--name <name>` | For `fabriciqmcp` | Connector name, stored in lowercase. When omitted, the CLI derives it from the Fabric item display name. |
 | `--operations <ops>` | No | Comma-separated subset of the catalog operations, for example `read,update`. Omit it to use every allowed operation. |
+| `--auth <type>` | No | `delegated` (run each call as the signed-in caller) or `application` (run each call as the app owner). Omit it to use the type's default. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `-y`, `--yes` | No | Accept overwrite and confirmation prompts. |
 | `-v`, `--verbose` | No | Print verbose diagnostics. |
 | `--json` | No | Emit machine-readable output. |
 
 Connector names must match `/^[a-zA-Z0-9\-_]+$/` and can be at most 256 characters.
 
+To add a [Fabric IQ](/docs/connectors/fabric-iq) connector, pass only the type and a name:
+
+```bash
+npx rayfin connector add --type fabriciqmcp --name assistant
+```
+
+## Choose the identity with `--auth`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`--auth` sets `auth.type` at add time instead of hand-editing `rayfin.yml` afterwards. The
+CLI validates it against the connector type's allowed identities:
+
+```bash
+npx rayfin connector add --type fabric-warehouse --workspace-id <ws-id> --item-id <item-id> --auth delegated
+```
+
+An identity the type does not allow fails before anything is written:
+
+```text
+Invalid --auth "application" for connector type "fabric-semanticmodel". Allowed: [delegated].
+```
+
+See [Connector authentication](/docs/connectors/auth) for each type's default and allowed
+identities.
+
+## Name the connector
+
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-`connector add` normalizes connector names to lowercase. A supplied `--name SalesDW` is written as `salesdw`. Use the same lowercase name in `rayfin.yml`, `AppConnectorsSchema`, `connectorConfigs`, and the runtime map.
+`connector add` normalizes connector names to lowercase. A supplied `--name SalesDW` is
+written as `salesdw`.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Connector names are case-insensitive. On success, `connector add` prints the name to use in
+app code, for example `Use it in app code as client.connectors.salesdw.` With `--json`,
+`name` is the name written to `rayfin.yml`, and `requestedName` is added when the name you
+passed was spelled differently.
+
+A name that matches an existing entry in any casing refers to the same connector, so the
+command treats it as [re-adding](#re-add-a-connector) that connector and keeps the existing
+spelling — for example `Inventory` from an older CLI. If several entries differ from the
+name only by case, an exact spelling picks one of them; otherwise the command fails and
+lists them.
+
+## Keep connectors off the app's own database
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Connectors are for external data. The app's managed database belongs to its data service:
+use `client.data` for it. Before adding a connector, the CLI reads the runtime settings of
+the app's recorded deployments in the target workspace and rejects an item that is their
+managed database — including from the search picker and with `--yes`.
+
+- If the settings cannot be read or the database identity cannot be verified, the command
+  fails without changing project files. Check your access to the deployment and retry.
+- A recorded deployment whose app no longer exists is skipped with a warning; run
+  `npx rayfin up` to recreate the app and refresh the record.
+- Projects with no recorded deployment in that workspace can add external connectors as
+  before.
+
+Backends that enforce this rule also reject an existing Category A connector that points at
+the app's managed database when settings or schemas are applied, even when the data service
+is disabled. Before redeploying such an app, run `npx rayfin connector remove <name>` for each
+conflicting connector and move that code to the data service.
 
 ## Know what the command writes
 
 `connector add` verifies the Fabric item, writes a `connectors:` entry in
 `rayfin/rayfin.yml`, and scaffolds `rayfin/connectors/<name>/schema.ts`.
 
-For Category A connectors, it also runs schema discovery and writes `rayfin/connectors/<name>/metadata.json`.
-
-For `fabric-semanticmodel`, it writes a complete generated `schema.ts`.
+For Category A connectors, it also runs schema discovery and writes
+`rayfin/connectors/<name>/metadata.json`. For `fabric-semanticmodel` and `fabriciqmcp`, it
+writes a complete generated `schema.ts`.
 
 The `rayfin.yml` entry uses an array. Operations are objects, not bare strings:
 
@@ -109,15 +177,32 @@ connectors:
       - name: update
   - name: salesmodel
     type: fabric-semanticmodel
-    version: '1'
     config:
       workspaceId: <ws-id>
       itemId: <semantic-model-item-id>
     auth:
       type: delegated
+    version: "1"
+    operations:
+      - name: executeQuery
+  - name: assistant
+    type: fabriciqmcp
+    config: {}
+    auth:
+      type: delegated
+    version: "1"
     operations:
       - name: executeQuery
 ```
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+A Category B entry can also declare `additionalPayload`, a connector-defined JSON object that
+Rayfin saves with the connector's runtime settings. Eventhouse is the only connector type that
+uses it, for its saved queries. `connector add` never writes it: it keeps an existing
+`additionalPayload` when you re-add a connector of the same type, removes it with a warning
+when the type changes, and refuses to re-add a Category A connector that declares one. See
+[Save queries in `additionalPayload`](/docs/connectors/eventhouse#save-queries-in-additionalpayload).
 
 ## Scope operations
 
@@ -135,7 +220,7 @@ Rules:
 - The host validator rejects unknown or duplicate operation names at `rayfin up` time.
 
 For the current connector types, the default operations are listed in
-[Connectors](/docs/connectors).
+[Connectors](/docs/connectors#connector-types).
 
 ## Install the pinned packages
 
@@ -144,16 +229,16 @@ version-pinned install command:
 
 ```text
 📦 Install the packages this connector needs:
-   npm install @microsoft/rayfin-connector-fabric-semanticmodel@1.36.2 @microsoft/rayfin-connectors@1.36.2
+   npm install @microsoft/rayfin-connector-fabric-semanticmodel@2.0.0 @microsoft/rayfin-connectors@2.0.0
 ```
 
 Run the command verbatim. Do not drop the version.
 
-Connector packages ship in lockstep with the CLI, but their npm `latest` and `preview` tags can lag.
-
-An unversioned install can pull an older connector that hard-pins its own
+Connector packages ship in lockstep with the CLI, but their npm `latest` and `preview` tags
+can lag. An unversioned install can pull an older connector that hard-pins its own
 `@microsoft/rayfin-data`, leaving two Rayfin version lines in one app.
 
+With `--json`, the same data appears under `install.packages` and `install.command`, and
 `rayfin connector types --json` carries the same `packages` array, so an agent can rebuild
 the exact install list from the live catalog when needed.
 
@@ -161,21 +246,48 @@ the exact install list from the live catalog when needed.
 
 [New in 1.36](/docs/reference/changelog#rayfin-136)
 
-After it writes the connector files, `connector add` regenerates `src/lib/connectors.ts` when that file exists and is safe for the CLI to update.
+After it writes the connector files, `connector add` — and `connector remove` — keeps the
+app's `src/lib/connectors.ts` in step with `rayfin.yml`. The file exports the
+`AppConnectorsSchema`, `connectorConfigs`, and `connectorRuntimes` that the frontend client
+imports. In an npm workspace, the CLI uses the file in the package that depends on
+`@microsoft/rayfin-connectors`.
 
-The file exports the `connectorConfigs`, `connectorRuntimes`, and `AppConnectorsSchema` that the frontend client imports.
+What happens depends on who owns the file. With `--json`, the outcome is `wiring.action`:
 
-The generator is conservative:
+| File | What the CLI does | `wiring.action` |
+| --- | --- | --- |
+| Generated by the CLI (it carries the `@generated by` marker line), or the empty template | Rewrites it and prints `🔌 Wired N connector(s)`, or leaves it when it is already current | `written` or `unchanged` |
+| Hand-written, and builds its maps with `import.meta.glob` over `rayfin/connectors/*/schema.ts` | Leaves it alone and prints that the file discovers connectors automatically. If a `rayfin/connectors/<name>/` directory outlives its `rayfin.yml` entry, the glob still registers it, so the CLI warns and lists it under `undeclared`. [New in 2.0](/docs/reference/changelog#rayfin-20) | `discovered` |
+| Any other hand-written file | Leaves it alone, warns that it has manual edits, and prints the maps to merge in. Until you do, the app renders nothing for the new connector. | `manual` |
+| No such file | Warns that nothing was wired; the connector is registered in `rayfin.yml` only | `absent` |
+| More than one workspace package has one | Changes nothing and lists the candidate files | `ambiguous` |
 
-- It wires only connectors whose `rayfin/connectors/<name>/schema.ts` exports `connectorConfig`.
-- Category A placeholders are skipped until you generate entity files and replace `schema.ts` with the aggregate schema.
-- It preserves the app-owned section of an already generated file.
-- It prunes imports for connectors you removed.
-- If the file has manual edits, the CLI prints the content to merge instead of overwriting it.
+The generator wires only connectors whose `rayfin/connectors/<name>/schema.ts` exports
+`connectorConfig`, so a Category A placeholder joins the wiring once you replace it with the
+aggregate schema. It preserves the app-owned region at the top of the file and prunes imports
+for connectors you removed.
 
-If `connector add` warns that no `src/lib/connectors.ts` exists, your app template owns connector wiring another way.
+When the CLI reports `absent` or `manual`, wire the same maps yourself as shown in
+[Wiring connectors into your app](/docs/connectors/client-setup).
 
-Wire the same `connectorConfig` and runtime maps manually as shown in [Wiring connectors into your app](/docs/connectors/client-setup).
+## Re-add a connector
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Running `connector add` with a name already in `rayfin.yml` refreshes that declaration. It
+prompts before overwriting, or requires `--yes` when non-interactive.
+
+- Entity files under `rayfin/connectors/<name>/` are preserved. Schema discovery rewrites
+  `metadata.json`, so re-adding is how you refresh it after the source schema changes.
+- A hand-written Category A aggregate `schema.ts` is preserved unless you pass `--yes`, which
+  replaces it with a fresh placeholder. In a non-interactive shell, back the file up before
+  you re-add and restore it afterwards.
+- A generated Category B `schema.ts` is always regenerated.
+- `auth.type` is reset to the type's default unless you pass `--auth`. Reapply an explicit
+  `delegated` setting on a Category A connector.
+
+Eventhouse connectors cannot be re-added while authoring is held: do not remove one to
+regenerate its files.
 
 ## List and remove connectors
 
@@ -187,15 +299,21 @@ npx rayfin connector list -v
 npx rayfin connector list --json
 ```
 
-Use `connector remove` with `-y` or `--yes` to remove both the `rayfin.yml` entry and the
-connector directory:
+`--json` and `--verbose` cannot be combined.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`connector remove` removes the `rayfin.yml` entry and regenerates the app wiring, but keeps
+the whole `rayfin/connectors/<name>/` directory, including entity files you wrote. It needs
+confirmation; pass `--yes` in non-interactive shells:
 
 ```bash
 npx rayfin connector remove <name> --yes
 ```
 
-Re-add a connector after removing it when you need to refresh `metadata.json` from the
-source.
+Files left in that directory can still be compiled when you run `rayfin up`. Keep their
+dependencies installed until you have backed them up and deleted or excluded them. With
+`--json`, the output reports `directoryDeleted: false` and this guidance under `recovery`.
 
 ## Next step
 
@@ -204,17 +322,23 @@ After the connector entry and packages are in place, wire it into your app with
 reference, see [`rayfin connector`](/docs/reference/cli/connector).
 
 ```prompt title="Add a connector to a Rayfin project"
-In my Rayfin project, add a connector to an existing Microsoft Fabric source. If I have not
-provided a connector type, workspace ID, and item ID, run `npx rayfin connector search`
-with the right scope to find candidates, and use the `addCommand` from `--json` output
-rather than inventing IDs.
+In my Rayfin 2.0 project, add a connector to an existing Microsoft Fabric source. If I have
+not provided a connector type, workspace ID, and item ID, run `npx rayfin connector search`
+with the right scope (`--all-workspaces --type <type> --json`, or `--workspace-id <id>
+--type <type> --json`) to find candidates, and use the `addCommand` from the JSON output
+rather than inventing IDs. If I ask for a KQL database (Eventhouse), stop and report that new
+Eventhouse authoring is held in Rayfin 2.0.0.
 
 Run the add command with `--type <type>`, `--workspace-id <workspace-id>`, and
-`--item-id <item-id>` using literal IDs. Use `--name <name>` only if I provided a name or
-the derived name is unsuitable. Use `--operations <ops>` only to narrow below the catalog
-default.
+`--item-id <item-id>` using literal IDs. Use `--name <name>` only if I provided a name or the
+derived name is unsuitable. Use `--operations <ops>` only to narrow below the catalog
+default. Pass `--auth delegated` if queries should run as the signed-in user, or
+`--auth application` to run as the app owner; omit it to keep the type's default. If the CLI
+rejects the item as the app's own managed database, stop and use client.data instead.
 
-After the add command succeeds, run the exact version-pinned `npm install` command it
-prints; do not drop package versions. Then list the configured connectors with
-`npx rayfin connector list` and prepare to wire the connector through `ConnectorsRayfinClient` from `@microsoft/rayfin-client`.
+After the add command succeeds, run the exact version-pinned `npm install` command it prints;
+do not drop package versions. Report the `wiring.action` from `--json` (or the wiring line it
+printed). Then list the configured connectors with `npx rayfin connector list` and prepare to
+register them with `connectorsService` from @microsoft/rayfin-connectors in
+`RayfinClient.create`.
 ```

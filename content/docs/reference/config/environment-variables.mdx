@@ -1,6 +1,6 @@
 ---
 title: Environment variables
-description: Exhaustive Rayfin 1.36.2 environment variable reference for frontend builds, CLI overrides, feature flags, telemetry, and file locations.
+description: Exhaustive Rayfin 2.0.0 environment variable reference for frontend builds, CLI overrides, feature flags, telemetry, and file locations.
 ---
 
 Rayfin reads environment variables from the shell and from `rayfin/.env`. Only keys that
@@ -55,9 +55,11 @@ allow-listed while another process still owns them. The CLI manages this variabl
 | `RAYFIN_TOKEN` | — | Pre-acquired bearer token. Bypasses CLI login for the process. |
 | `RAYFIN_ENCRYPTION_FALLBACK_ENABLED` | `false` | Allows plaintext token cache storage when OS keychain encryption is unavailable. |
 | `RAYFIN_CONFIG_DIR` | `~/.rayfin` | Auth, telemetry, and cache directory. |
-| `RAYFIN_APPINSIGHTS_CONNECTION_STRING` | built-in endpoint | Overrides telemetry endpoint for CLI and VS Code extension. |
-| `RAYFIN_TELEMETRY_OPTOUT` | unset | Set to `1` to disable CLI telemetry. |
+| `RAYFIN_APPINSIGHTS_CONNECTION_STRING` | built-in endpoint | Overrides telemetry endpoint for CLI and VS Code extension. Unrelated to app [Observability](/docs/deploy/observability). |
+| `RAYFIN_TELEMETRY_OPTOUT` | unset | Set to `1` to disable CLI usage telemetry. Does not affect app Observability. |
 | `RAYFIN_TELEMETRY_ENV` | auto-detected | Override telemetry environment label; values are trimmed/lowercased. |
+| `RAYFIN_SKIP_DRIFT_CHECK` | unset | Set to `1` or `true` to skip the schema drift check on every database apply, including `rayfin up`; equivalent to `rayfin up db apply --skip-drift-check`. The CLI prints a warning each time. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `RAYFIN_SCHEMA_RECOVERY` | on | Set to `0` or `false` to stop `rayfin init ai-files` from installing the `rayfin-schema-drift` agent skill. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `RAYFIN_FEATURE_FLAGS` | unset | Comma-separated feature flags. |
 
 When `RAYFIN_FABRIC_API_URL` points at a non-Fabric host, the CLI sends the Fabric bearer
@@ -79,14 +81,19 @@ These are read from the shell and are not written to project files.
 
 ## Recognized feature flags
 
+No user-facing Rayfin feature needs `RAYFIN_FEATURE_FLAGS` in 2.0.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 | Flag | Status | Effect |
 | --- | --- | --- |
-| `storage` | [Experimental](/docs/reference/changelog#feature-status) | Enables Storage authoring prompts and the storage skill; also auto-enabled by `services.storage.enabled: true`. |
+| `storage` | [Removed in 2.0](/docs/reference/changelog#rayfin-20) | No longer needed. Storage is generally available in 2.0; enable it with `services.storage.enabled: true` or `rayfin storage init`. |
+| `dynamicclaims` | Retired | A prerelease opt-in for dynamic auth claims. The 2.0 CLI fails when it is set and `rayfin.yml` does not declare `services.auth.dynamicClaims`; declare that block and remove the flag. |
 | `functions` | [Removed in 1.36](/docs/reference/changelog#rayfin-136) | No longer needed. Functions are GA in 1.36 and available without a feature flag. |
 | `connectors` | [Removed in 1.36](/docs/reference/changelog#rayfin-136) | No longer needed. Connector commands are visible in 1.36 without a feature flag. |
 
-Internal rollout flags such as `tools-arch-v2`, `up-legacy`, `cli-up-anonstatic`, and
-`cli-minor-fixes` are not a user-facing docs surface for managed Fabric apps.
+Internal rollout flags such as `tools-arch-v2`, `up-legacy`, `cli-up-anonstatic`,
+`cli-minor-fixes`, `identity-takeover`, and `pack` are not a user-facing docs surface for
+managed Fabric apps.
 
 ## Resolution priority
 

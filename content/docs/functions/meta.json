@@ -5,7 +5,9 @@
     "writing-functions",
     "secrets",
     "connections",
+    "raw-sql",
     "calling-functions",
+    "bulk-import",
     "local-development",
     "deploying"
   ]

@@ -1,16 +1,16 @@
 ---
 title: Querying
-description: Read Rayfin entities with the type-safe select/where/orderBy/execute chain, including filtering, sorting, and cursor pagination.
+description: Read Rayfin entities with the type-safe select/where/orderBy/execute chain — filtering, sorting, relationship paths, cursor pagination, and result types that match your selection.
 ---
 
-`RayfinClient` exposes a fluent, typed query builder for every entity in your schema at
-`client.data.<Entity>`. It compiles to GraphQL against Data API Builder — you never write
-a query string by hand.
+`client.data.<Entity>` is a fluent, typed query builder for every entity in your schema. It
+compiles to GraphQL against Data API Builder — you never write a query string by hand.
 
 ## Set up the client
 
 Every example below uses the shared `rayfinClient` — see
-[Set up the client](/docs/data#set-up-the-client) for how to construct it once and reuse it.
+[Set up the client](/docs/data#set-up-the-client) for how to create it once with
+`dataService<AppSchema>()` and reuse it.
 
 ## The query chain
 
@@ -29,9 +29,20 @@ const todos = await rayfinClient.data.Todo.select([
   .execute();
 ```
 
-`.select()` is required — list every field your code needs. `.where()` and `.orderBy()`
-are optional and can be omitted or reordered relative to each other, but `.execute()` (or
-`.executePaginated()`, see [Pagination](#paginate-large-lists)) always comes last.
+List every field your code reads in `.select()` — the result contains only those fields, and
+a query without `.select()` returns only `id`. `.where()` and `.orderBy()` are optional and can
+be omitted or reordered relative to each other, but `.execute()` (or `.executePaginated()`, see
+[Pagination](#paginate-large-lists)) always comes last.
+
+`.select()` returns a new builder that carries over the filters, ordering, and page size set so
+far. Chain from the builder it returns, or keep it in a variable — calling `.select()` and
+ignoring its result leaves the original builder's selection unchanged.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+```typescript
+const unfinished = rayfinClient.data.Todo.where({ isCompleted: { eq: false } });
+const rows = await unfinished.select(['id', 'title']).execute();
+```
 
 > [!WARNING]
 > `.execute()` returns a single page — 100 records by default — and does not tell you
@@ -40,25 +51,66 @@ are optional and can be omitted or reordered relative to each other, but `.execu
 > match only a handful of rows). For anything unbounded — a user's notes, an order
 > history — use [pagination](#paginate-large-lists) instead.
 
+## Result types follow your selection
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+A query's result type contains exactly the fields you select, so reading a field you did not
+select is a compile-time error rather than an `undefined` at runtime:
+
+```typescript
+const todo = await rayfinClient.data.Todo.select(['id', 'title'])
+  .where({ id: { eq: todoId } })
+  .findFirst();
+
+todo?.title;       // string
+todo?.isCompleted; // type error: isCompleted was not selected
+```
+
+- Pass the fields as a literal array to get exact types. If the field list is a widened or
+  computed array, every field it could contain becomes optional, because the compiler cannot
+  know which entries are present at runtime.
+- A selected `@date()` field is typed `Date | string`, and a `@boolean()` field
+  `boolean | 'true' | 'false'`, because responses can carry the wire string and the client
+  does not infer a type from a string's contents. Convert explicitly — `new Date(value)`, or
+  `value === true || value === 'true'` — before you call date methods or rely on truthiness.
+- An optional field can be `null` at runtime even though its `?` property only models
+  `undefined`; check it with `== null` or `??`.
+- The selection survives `.where()`, `.orderBy()`, `.first()`, and `.after()` in any order,
+  and shapes what `.execute()`, `.executePaginated()`, and `.findFirst()` return.
+
+In 1.x, a query was typed as returning the full entity even when the server returned fewer
+fields — without `.select()` the client already requested only `id`. 2.0 makes the types match
+the response, so code that read unselected fields now fails to compile. Add the fields to
+`.select()` to fix it.
+
 ## Fetch a single record
 
+To read fields of one record by its id, select them and call `.findFirst()`, which returns the
+first matching row or `null`:
+
 ```typescript
-const todo = await rayfinClient.data.Todo.findById('00000000-0000-0000-0000-000000000000');
+const todo = await rayfinClient.data.Todo.select(['id', 'title', 'isCompleted'])
+  .where({ id: { eq: '00000000-0000-0000-0000-000000000000' } })
+  .findFirst();
+
+if (!todo) {
+  throw new Error('Todo not found');
+}
 ```
 
-Use `findById` — not `findByPk`. It returns the record or `null` if no row matches.
-
-`findFirst` returns the first record matching an optional filter, or `null`:
-
-```typescript
-const notebook = await rayfinClient.data.Notebook.findFirst({ name: { eq: 'Work' } });
-```
-
-`findMany` runs a filtered query in one call without building a chain, equivalent to
-`.select([...]).where(filter).execute()` for cases where you want every field:
+The entity-level shortcuts `findById(id)`, `findFirst(filter)`, and `findMany(filter)` return
+**only the primary key** (`{ id: string }`), so use them to check whether a record exists or to
+collect ids — not to read other fields. `findMany` returns a single page, like `.execute()`.
+Use `findById` — `findByPk` does not exist.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript
-const active = await rayfinClient.data.Todo.findMany({ isCompleted: { eq: false } });
+const exists = (await rayfinClient.data.Todo.findById(todoId)) !== null;
+
+const completedIds = (
+  await rayfinClient.data.Todo.findMany({ isCompleted: { eq: true } })
+).map((todo) => todo.id);
 ```
 
 ## Filter with `.where()`
@@ -103,16 +155,22 @@ the related entity:
 .where({ 'notebook.id': { eq: notebookId } })  // wrong — dot-paths are select-only
 ```
 
-For an optional relationship, filter for rows with no related record using `isNull`:
+To find rows with no related record, filter the declared foreign key with `isNull`:
 
 ```typescript
-.where({ notebook: { isNull: true } })
+.where({ notebook_id: { isNull: true } })
 ```
+
+You can also write `.where({ notebook: { isNull: true } })` on an optional relationship. The
+client turns it into the `notebook_id` check only when the same query selects a field from
+that relationship, such as `'notebook.name'`.
 
 ## Select nested fields with dot-paths
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 Dot-paths are for `.select()` only — use them to pull fields off a related entity into the
-same result row:
+same result row. Follow a `@one()` relationship with a dot:
 
 ```typescript
 const notes = await rayfinClient.data.Note.select([
@@ -125,11 +183,35 @@ const notes = await rayfinClient.data.Note.select([
   .orderBy({ createdAt: 'desc' })
   .execute();
 
-// notes[0].notebook.name is available directly
+notes[0].notebook?.name; // notebook is narrowed to { id, name }
 ```
 
-Nesting is supported to exactly one level past the root entity — `notebook.name` works,
-but `notebook.owner.email` (a third level) does not.
+Follow a `@many()` relationship with the `[]` marker. The client requests the relationship's
+`items` connection and returns an array that holds only the selected fields on each element:
+
+```typescript
+const notebooks = await rayfinClient.data.Notebook.select([
+  'id',
+  'name',
+  'notes[].id',
+  'notes[].title',
+]).execute();
+
+notebooks[0].notes?.map((note) => note.title);
+```
+
+- Each path follows exactly one relationship to one scalar field. `notebook.name` works, but
+  `notebook.owner.email` (a third level) does not.
+- Select at least one field under a relationship — a bare relationship name such as
+  `'notebook'` is a type error.
+- Cardinality comes from the marker, not from the relationship's name: use `[]` for every
+  `@many()` relationship and a plain dot for every `@one()`, whatever the property is called.
+- The client validates paths before it sends the request. A malformed path, or one
+  relationship selected both with and without `[]`, throws an error.
+
+When you upgrade from 1.x, add `[]` to every collection path — `'notes.title'` becomes
+`'notes[].title'`. The type checker flags the old form and suggests the new one. Object paths
+such as `'notebook.name'` are unchanged.
 
 ## Sort with `.orderBy()`
 
@@ -161,11 +243,13 @@ page.endCursor;   // pass to .after() to fetch the next page
 ### Fetch the next page
 
 ```typescript
-const nextPage = await rayfinClient.data.Note.select(['id', 'title', 'createdAt'])
-  .orderBy({ createdAt: 'desc' })
-  .first(25)
-  .after(page.endCursor)
-  .executePaginated();
+if (page.hasNextPage && page.endCursor) {
+  const nextPage = await rayfinClient.data.Note.select(['id', 'title', 'createdAt'])
+    .orderBy({ createdAt: 'desc' })
+    .first(25)
+    .after(page.endCursor)
+    .executePaginated();
+}
 ```
 
 Keep `.select()`, `.where()`, and `.orderBy()` identical across every page in a sequence —
@@ -173,24 +257,24 @@ a stable sort order is required for the cursor to advance correctly.
 
 ### Fetch every record
 
-Loop, passing each page's `endCursor` into the next call's `.after()`, until
-`hasNextPage` is `false`:
+Reuse one query and pass each page's `endCursor` to `.after()` until `hasNextPage` is
+`false`. The returned array is typed from the selection:
 
-```typescript
-async function fetchAllNotes() {
-  const all: Array<{ id: string; title: string; createdAt: Date }> = [];
-  let cursor: string | undefined;
+```typescript title="src/services/notes.ts"
+import { rayfinClient } from './rayfinClient';
 
-  do {
-    const page = await rayfinClient.data.Note.select(['id', 'title', 'createdAt'])
-      .orderBy({ createdAt: 'desc' })
-      .first(100)
-      .after(cursor)
-      .executePaginated();
+export async function fetchAllNotes() {
+  const query = rayfinClient.data.Note.select(['id', 'title', 'createdAt'])
+    .orderBy({ createdAt: 'desc' })
+    .first(100);
 
+  let page = await query.executePaginated();
+  const all = [...page.items];
+
+  while (page.hasNextPage && page.endCursor) {
+    page = await query.after(page.endCursor).executePaginated();
     all.push(...page.items);
-    cursor = page.hasNextPage ? page.endCursor : undefined;
-  } while (cursor);
+  }
 
   return all;
 }
@@ -246,6 +330,16 @@ populated.
 In my Rayfin project, write a function that fetches all Todo records for the current
 user's "Archive" view using the RayfinClient. Select id, title, isCompleted, and
 createdAt, filter to isCompleted: { eq: true }, order by createdAt descending, and page
-through with .first(50) and .executePaginated() until hasNextPage is false, returning the
-combined list.
+through with .first(50) and .executePaginated(), passing each page's endCursor to .after()
+until hasNextPage is false, and return the combined list. Rayfin 2.0 types createdAt as
+Date | string in query results, so convert it with new Date(...) before using date methods.
+```
+
+```prompt title="Read one record with the fields I need"
+In my Rayfin 2.0 project, find every place that calls findById, findFirst(filter), or
+findMany(filter) on client.data and then reads a field other than id. Replace each one with
+.select([...]) listing the fields the code reads, .where({ id: { eq: id } }) (or the original
+filter), and .findFirst() or .execute(). Keep using the builder that .select() returns, add the
+[] marker to any one-to-many selection path (for example 'notes[].title'), and run the
+type-checker until it passes.
 ```

@@ -22,6 +22,10 @@ Use the Fabric Capacity Metrics app to see actual consumption by workspace, item
 
 One Fabric CU equals 0.383 SQL database vCores for SQL Database capacity accounting.
 
+A full `rayfin up` skips the static upload when the built files and deployment target are
+unchanged since the last successful deploy, so redeploying unchanged static content does
+not write it to OneLake again. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 ## What does not add a Rayfin-specific charge
 
 - Rayfin WebService routing.

@@ -1,0 +1,218 @@
+---
+title: "@microsoft/rayfin-connector-eventhouse"
+description: Marker, runtime, config, saved-query input, raw response, and normalization APIs for Fabric Eventhouse (KQL database) connectors — formerly @microsoft/rayfin-connector-kusto.
+appliesTo: "@microsoft/rayfin-connector-eventhouse >= 2.0"
+---
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+`@microsoft/rayfin-connector-eventhouse` provides the `eventhouse` connector marker, its
+configuration types, its runtime, and result normalization. Register the runtime with
+`connectorsService` from `@microsoft/rayfin-connectors`. See
+[Eventhouse (KQL databases)](/docs/connectors/eventhouse) for guide-level usage and for
+migrating from 1.36.
+
+Rayfin 2.0 renames `@microsoft/rayfin-connector-kusto` to this package. New Eventhouse
+authoring is held in 2.0.0: the package serves projects that already declare an `eventhouse`
+connector.
+
+## Installation
+
+```bash
+npm install @microsoft/rayfin-connector-eventhouse@2.0.0 @microsoft/rayfin-connectors@2.0.0
+```
+
+Install both at the exact version of the project's `@microsoft/rayfin-cli`, and uninstall
+`@microsoft/rayfin-connector-kusto`.
+
+## Renamed exports
+
+| `@microsoft/rayfin-connector-kusto` (1.36) | `@microsoft/rayfin-connector-eventhouse` (2.0) |
+| --- | --- |
+| `Kusto` | `Eventhouse` |
+| `kusto()` | `eventhouse()` |
+| `KustoConnectorConfig` | `EventhouseConnectorConfig` |
+| `KustoOperation`, `KustoOperationCatalog` | `EventhouseOperation`, `EventhouseOperationCatalog` |
+| `KustoQueryResponse`, `KustoCommandResponse` | `EventhouseQueryResponse`, `EventhouseCommandResponse` |
+| `KustoV1Table`, `KustoV1Column` | `EventhouseV1Table`, `EventhouseV1Column` |
+| `KustoTable`, `KustoColumn` | `EventhouseTable`, `EventhouseColumn` |
+| `KustoQueryResult`, `KustoQueryError`, `KustoCorrelation` | `EventhouseQueryResult`, `EventhouseQueryError`, `EventhouseCorrelation` |
+| — | `EventhouseClientConfig`, `EventhouseParameterValue` |
+
+`ExecuteQueryInput`, `ExecuteCommandInput`, and `toQueryResult` keep their names; the inputs
+change shape, as shown below.
+
+## Marker and operation catalog
+
+`Eventhouse<TOps>` is the connector marker. It defaults to both operations, `executeQuery`
+and `executeCommand`.
+
+```typescript
+import type { OperationDef } from '@microsoft/rayfin-connectors';
+import type {
+  Eventhouse,
+  EventhouseClientConfig,
+  EventhouseCommandResponse,
+  EventhouseQueryResponse,
+  ExecuteCommandInput,
+  ExecuteQueryInput,
+} from '@microsoft/rayfin-connector-eventhouse';
+
+type EventhouseOperation = 'executeQuery' | 'executeCommand';
+
+interface EventhouseOperationCatalog {
+  executeQuery: OperationDef<ExecuteQueryInput, EventhouseQueryResponse>;
+  executeCommand: OperationDef<ExecuteCommandInput, EventhouseCommandResponse>;
+}
+
+type AppConnectorsSchema = {
+  telemetry: Eventhouse<'executeQuery' | 'executeCommand'>;
+};
+```
+
+The marker accepts `EventhouseClientConfig`, so `connectorsService` rejects a config for
+another connector type under that name. The operation outputs are the raw native Kusto v1
+`{ Tables }` document. Normalize them with `toQueryResult`.
+
+## Inputs
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Both operations name a query saved in the connector's `additionalPayload` in `rayfin.yml` and
+pass its parameter values. Neither accepts query text, the cluster, or the database.
+
+```typescript
+type EventhouseParameterValue =
+  | string
+  | number
+  | boolean
+  | (string | number | boolean | null)[];
+
+interface ExecuteQueryInput {
+  queryId: string;
+  parameters?: Record<string, EventhouseParameterValue>;
+  clientRequestId?: string;
+}
+
+interface ExecuteCommandInput {
+  queryId: string;
+  parameters?: Record<string, EventhouseParameterValue>;
+  clientRequestId?: string;
+}
+```
+
+`executeCommand` runs a saved management command against the cluster's `/v1/rest/mgmt`
+endpoint instead of `/v1/rest/query`. `clientRequestId` is forwarded as the
+`x-ms-client-request-id` header and never appears in the response body. See
+[Pass user input as parameters](/docs/connectors/eventhouse#pass-user-input-as-parameters) for
+how to send each parameter type.
+
+## Config types
+
+```typescript
+interface EventhouseClientConfig extends ConnectorConfig {
+  connector: 'eventhouse';
+}
+
+interface EventhouseConnectorConfig extends EventhouseClientConfig {
+  queryServiceUri: string;
+  databaseName: string;
+}
+```
+
+`EventhouseClientConfig` is what registering the connector requires. `EventhouseConnectorConfig`
+is the shape of `connectorConfig` in `rayfin/connectors/<name>/schema.ts`; its
+`queryServiceUri` and `databaseName` are informational and never sent with a request. The
+connector function reads the cluster, the database, and the saved queries from
+`additionalPayload`. Both types are exported from this package, not from
+`@microsoft/rayfin-connectors`.
+
+## Runtime
+
+```typescript
+function eventhouse(): ConnectorRuntime;
+```
+
+`eventhouse()` registers `invoke` middleware for `executeQuery` and `executeCommand`. It adds
+a `clientRequestId` in the `KPC.rayfin_eventhouse_v1;<uuid>` format when the caller omits
+one and Web Crypto is available, and otherwise forwards the input unchanged. It never adds the
+cluster or database.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The 1.36 `kusto()` runtime merged `queryServiceUri` and `databaseName` from the generated
+config into each request. `eventhouse()` does not.
+
+## Raw response and normalization
+
+```typescript
+interface EventhouseQueryResponse {
+  Tables?: EventhouseV1Table[];
+}
+
+type EventhouseCommandResponse = EventhouseQueryResponse;
+
+interface EventhouseV1Table {
+  TableName?: string;
+  Columns?: EventhouseV1Column[];
+  Rows?: unknown[];
+}
+
+interface EventhouseV1Column {
+  ColumnName?: string;
+  ColumnType?: string;
+  DataType?: string;
+}
+
+function toQueryResult(
+  response: EventhouseQueryResponse,
+  correlation?: EventhouseCorrelation,
+): EventhouseQueryResult;
+```
+
+`toQueryResult` transforms the native Kusto v1 response into a discriminated result that
+preserves every returned table:
+
+```typescript
+type EventhouseQueryResult =
+  | {
+      status: 'success';
+      tables: EventhouseTable[];
+      clientRequestId: string;
+      activityId?: string;
+    }
+  | {
+      status: 'error';
+      error: EventhouseQueryError;
+      clientRequestId: string;
+      activityId?: string;
+    };
+
+interface EventhouseTable {
+  name: string;
+  columns: EventhouseColumn[];
+  rows: unknown[][];
+}
+
+interface EventhouseColumn {
+  name: string;
+  type: string;
+}
+
+interface EventhouseCorrelation {
+  clientRequestId?: string;
+  activityId?: string;
+}
+
+interface EventhouseQueryError {
+  message: string;
+  code?: string;
+}
+```
+
+`clientRequestId` and `activityId` are out-of-band correlation values. Pass what you know to
+`toQueryResult`; they are not read from the native response body, and both default to empty.
+
+A call the connector function refuses does not resolve to a result: it throws a
+`NetworkError` from `@microsoft/rayfin-client` whose `serverErrorCode` is one of the
+[Eventhouse error codes](/docs/connectors/eventhouse#error-codes).

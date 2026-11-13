@@ -1,0 +1,151 @@
+---
+title: "@microsoft/rayfin-telemetry"
+description: Package reference for @microsoft/rayfin-telemetry — the browser initializer initTelemetry, its options, defaults, and lifecycle, and the pinned OpenTelemetry peer dependencies.
+appliesTo: "@microsoft/rayfin-telemetry >= 2.0"
+---
+
+[New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+`@microsoft/rayfin-telemetry` starts browser telemetry for a deployed Fabric app. Its `initTelemetry()` configures Microsoft's OpenTelemetry browser distribution, `@microsoft/opentelemetry-browser`, with the Application Insights connection string your app receives in its runtime configuration. For enabling the service, deploying, verifying, and querying, see [Observability](/docs/deploy/observability).
+
+> [!WARNING]
+> The package needs no feature flag, but the feature it serves is experimental: allocating and querying the app's Application Insights resource require Fabric service-side enablement for the workspace. `@microsoft/opentelemetry-browser` is a beta release, pinned to one exact version.
+
+## Installation
+
+Use the same version as your other Rayfin packages, and install every peer dependency at exactly the pinned version, in the package that builds your frontend:
+
+```bash
+npm install @microsoft/rayfin-telemetry@2.0.0 @microsoft/opentelemetry-browser@0.1.0-beta.2 @opentelemetry/api@1.9.1 @opentelemetry/api-logs@0.222.0 @opentelemetry/resources@2.11.0
+```
+
+| Peer dependency | Version | Role |
+| --- | --- | --- |
+| `@microsoft/opentelemetry-browser` | `0.1.0-beta.2` | The browser distribution `initTelemetry()` configures, with its built-in Azure Monitor exporters. |
+| `@opentelemetry/api` | `1.9.1` | OpenTelemetry API. |
+| `@opentelemetry/api-logs` | `0.222.0` | Logs API; named log records you emit become custom events. |
+| `@opentelemetry/resources` | `2.11.0` | Builds the `service.name` and Fabric resource attributes. |
+| `@microsoft/rayfin-client` | `^2.0.0-alpha` | Supplies the `RayfinRuntimeConfig` type. The package does not create a client or import the client at runtime. |
+
+The peers are not bundled, so the versions in your app stay visible. Use a browser bundler, and initialize only in browser code, never during server rendering. The distribution supports current Chrome, Edge, Firefox, Opera, and Safari.
+
+## Entry points
+
+| Import | Exports |
+| --- | --- |
+| `@microsoft/rayfin-telemetry/browser` | `initTelemetry`, `InitTelemetryOptions` |
+
+There is no root entry point; `import … from '@microsoft/rayfin-telemetry'` does not resolve. The package also ships version-matched Observability guides. Read them with `npx rayfin docs get --id rayfin-telemetry:index.md`.
+
+## `initTelemetry`
+
+```typescript
+import type {
+  MicrosoftOpenTelemetryBrowser,
+  MicrosoftOpenTelemetryBrowserOptions,
+} from '@microsoft/opentelemetry-browser';
+import type { RayfinRuntimeConfig } from '@microsoft/rayfin-client';
+
+interface InitTelemetryOptions extends Omit<MicrosoftOpenTelemetryBrowserOptions, 'azureMonitor'> {
+  runtimeConfig: RayfinRuntimeConfig | undefined;
+  /** Defaults to rayfin-app-frontend. */
+  serviceName?: string;
+  /** Export settings only; the destination always comes from runtimeConfig. */
+  azureMonitor?: Omit<
+    NonNullable<MicrosoftOpenTelemetryBrowserOptions['azureMonitor']>,
+    'connectionString'
+  >;
+}
+
+function initTelemetry(
+  options: InitTelemetryOptions,
+): Promise<MicrosoftOpenTelemetryBrowser | undefined>;
+```
+
+| Option | Description |
+| --- | --- |
+| `runtimeConfig` | Required property. Pass the existing client's `client.runtimeConfig`; it may be `undefined`. `initTelemetry()` reads `applicationInsightsConnectionString`, `workspaceId`, and `itemId` from it, and never fetches `rayfin.config.json` itself. |
+| `serviceName` | The `service.name` resource attribute. Defaults to `rayfin-app-frontend`; an empty value rejects. |
+| `azureMonitor` | Azure Monitor export settings, such as `disableBeacon` or `sdkStats`. `connectionString` is not accepted: the destination always comes from `runtimeConfig`. |
+| Other options | Passed through to `@microsoft/opentelemetry-browser`, such as `samplingPercentage`, `session`, `userContext`, `pageView`, `storage`, `resource`, `instrumentations`, and `redactQueryParams`. See the [distribution's configuration reference](https://github.com/microsoft/opentelemetry-distro-browser/blob/main/docs/configuration-reference.md). |
+
+## Defaults
+
+| Setting | Default |
+| --- | --- |
+| Destination | `runtimeConfig.applicationInsightsConnectionString`, with no override |
+| `service.name` | `serviceName`, or `rayfin-app-frontend` |
+| Resource attributes | `fabric.workspace.id` and `fabric.item.id` when the runtime configuration has them; a `resource` you pass merges over them |
+| `samplingPercentage` | `100` — choose a production value for your volume budget |
+| Page views | Enabled |
+| Sessions and SDK-managed user context | Enabled |
+| `instrumentations` | `[]` — no Fetch/XHR, console, or error instrumentation |
+| Browser storage | Enabled, with the distribution's empty key prefix |
+| Previous-page visit time | Off; opt in with `pageView.autoTrackPageVisitTime` |
+| Customer SDK statistics | Off; opt in with `azureMonitor.sdkStats` |
+| Configuration synchronization | Off; opt in with `extensionConfig.AppInsightsCfgSyncPlugin` |
+
+Nested `session`, `userContext`, and `pageView` overrides keep the other defaults. The Fabric attributes are resource attributes for diagnosis, not authorization, and are not copied into each event's `customDimensions`; attach them to an event yourself when you need them in query results.
+
+## Behavior
+
+| Situation | Result |
+| --- | --- |
+| Called outside a browser | Rejects: `initTelemetry must be called in a browser, after any required consent.` |
+| The options object has no `runtimeConfig` property | Rejects with a `TypeError`: `initTelemetry requires runtimeConfig from the existing Rayfin client.` |
+| No connection string, or a blank one | Logs `Observability is not configured for this deployment; browser telemetry is off.` and resolves `undefined`. Nothing is cached, so a later call with a connection string can initialize. |
+| `serviceName` is empty | Rejects with a `TypeError`: `Telemetry serviceName must not be empty.` |
+| First call with a connection string | Resolves the distribution's handle. |
+| Later or concurrent call for the same connection string, workspace, and item | Warns that new options are ignored and resolves the same handle. |
+| Later call with a different connection string, workspace, or item | Rejects: `Rayfin telemetry is already configured for another destination or app. Reload the page to change it.` |
+| Call after `shutdown()` | Rejects: `Rayfin telemetry has been shut down. Reload the page before initializing again.` |
+| The distribution fails to initialize | Rejects with that error and releases ownership, so a later call can retry. |
+
+The instance is owned by the page: it is stored on `window`, so separate module copies, hot reload, and React Strict Mode share one SDK instance. Do not start another Application Insights or OpenTelemetry instance alongside it.
+
+## The handle
+
+The resolved handle exposes the distribution's `forceFlush()`, `shutdown()`, `updateCfg()`, `userContext`, and `instrumentations`, plus `configSync` when you configure synchronization.
+
+- `forceFlush()` requests export of queued telemetry. It does not prove ingestion.
+- `shutdown()` stops the instance. Repeated calls share one promise, and the page cannot initialize again until it reloads.
+- `updateCfg(patch, mergeExisting = true)` changes runtime policies such as sampling, session lifetimes, and the unload beacon. It cannot change the destination, resource, storage policy, or processors. Use it instead of calling `initTelemetry()` again.
+
+## Example
+
+```typescript title="src/telemetry.ts"
+import { initTelemetry } from '@microsoft/rayfin-telemetry/browser';
+import { logs } from '@opentelemetry/api-logs';
+
+import { rayfinClient } from './services/rayfinClient';
+
+const SERVICE_NAME = 'contoso-orders-frontend';
+
+let telemetry: Awaited<ReturnType<typeof initTelemetry>>;
+
+/** Start browser telemetry once per page, after any consent your app requires. */
+export async function startTelemetry(): Promise<void> {
+  telemetry = await initTelemetry({
+    runtimeConfig: rayfinClient.runtimeConfig,
+    serviceName: SERVICE_NAME,
+    samplingPercentage: 25,
+  });
+}
+
+/** Record a named business event; it arrives in the customEvents table. */
+export function trackOrderPlaced(itemCount: number): void {
+  if (!telemetry) return;
+  logs.getLogger(SERVICE_NAME).emit({
+    eventName: 'order.placed',
+    attributes: { 'order.item_count': itemCount },
+  });
+}
+```
+
+`rayfinClient` must be created with the `runtimeConfig` returned by `resolveRayfinConfig()` — see [Initialize browser telemetry](/docs/deploy/observability#initialize-browser-telemetry).
+
+```prompt title="Add a custom telemetry event to a Rayfin app"
+In my Rayfin 2.0 app, which already starts browser telemetry with initTelemetry from @microsoft/rayfin-telemetry/browser, record a custom event when <describe the user action>.
+
+Emit it with logs.getLogger('<service name used in initTelemetry>').emit({ eventName: '<area.action>', attributes: { ... } }) from @opentelemetry/api-logs, only when the initTelemetry handle is defined. Use a fixed event name and a few reviewed attributes; never include tokens, emails, user content, or request bodies. Do not call initTelemetry a second time, add instrumentations, or change sampling. Then show me the KQL I can pass to `npx rayfin telemetry query "<KQL>" --timespan PT1H --json` to see the event in the customEvents table.
+```

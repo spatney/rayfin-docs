@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Reference for Rayfin project configuration, environment variables, and rayfin.yml interpolation in Rayfin 1.36.2.
+description: Reference for Rayfin project configuration, environment variables, and rayfin.yml interpolation in Rayfin 2.0.0.
 ---
 
 Rayfin projects are configured with committed `rayfin/rayfin.yml` and local environment
@@ -16,5 +16,7 @@ files. Use this section when you need the exact keys a CLI or agent can edit.
 ```prompt title="Audit Rayfin configuration"
 Read rayfin/rayfin.yml, rayfin/.env.example, and package.json in my Rayfin project. Tell me
 which Rayfin services are enabled, which environment variables are required, and whether
-any 1.36-only settings need a package upgrade.
+any setting needs Rayfin 2.0 — for example services.auth.dynamicClaims, services.telemetry,
+a connector with additionalPayload, or type fabriciqmcp — while the installed
+@microsoft/rayfin-* packages are older.
 ```

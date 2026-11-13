@@ -33,7 +33,7 @@ Run `npx rayfin init` from the directory that should contain `rayfin/rayfin.yml`
 ## Run a specific CLI version without installing
 
 ```bash
-npx @microsoft/rayfin-cli@1.36.2 --version
+npx @microsoft/rayfin-cli@2.0.0 --version
 ```
 
 Inside a project with `@microsoft/rayfin-cli` installed, prefer `npx rayfin <command>` so
@@ -46,8 +46,10 @@ npx rayfin --version
 npx rayfin --help
 ```
 
-The help output should show the visible 1.36 command groups: `init`, `dev`, `up`,
-`secret`, `functions`, `connector`, `env`, `login`, `logout`, and `docs`.
+The help output should show the visible 2.0 command groups: `init`, `dev`, `up`,
+`secret`, `functions`, `connector`, `env`, `login`, `logout`, `docs`, `storage`, and
+`telemetry`. `storage` and `telemetry` are new in 2.0.
+[New in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Update the CLI
 
@@ -58,7 +60,8 @@ npx rayfin --version
 ```
 
 Rayfin packages ship in lockstep. When you update the CLI, update the other
-`@microsoft/rayfin-*` dependencies in the same change.
+`@microsoft/rayfin-*` dependencies in the same change. Moving from 1.x to 2.0 also changes
+client code; see the [changelog](/docs/reference/changelog) before you upgrade.
 
 ## First commands
 

@@ -11,6 +11,7 @@
     "env",
     "functions",
     "connector",
+    "storage",
     "docs",
     "ai-files",
     "templates",

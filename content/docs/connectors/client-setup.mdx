@@ -1,83 +1,167 @@
 ---
 title: Wiring connectors into your app
-appliesTo: "@microsoft/rayfin-connectors >= 1.36"
-description: Configure ConnectorsRayfinClient with connector schemas, runtime hooks, and generated connectorConfig maps.
+appliesTo: "@microsoft/rayfin-connectors >= 2.0"
+description: Register connectors on the Rayfin client with connectorsService — generated connectorConfig maps, Category B runtimes, host selection, request timeouts, and the entity-class bundler setting.
 ---
 
-Wire the generated connector files into the frontend after `rayfin connector add` has
-created the connector entry and you have installed the exact pinned packages it printed.
-Category A connectors can run with configuration only; Category B connectors also need
-runtime hooks.
+Wire the generated connector files into the frontend after `rayfin connector add` has created
+the connector entry and you have installed the exact pinned packages it printed. Category A
+connectors need configuration only; Category B connectors also need a runtime.
 
-## Import the connector client
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+In Rayfin 2.0 you register connectors as a client service: pass `connectorsService(...)` from
+`@microsoft/rayfin-connectors` under `services.connectors` in `RayfinClient.create`.
+`ConnectorsRayfinClient` is removed, and connector types such as `ConnectorsSchema`,
+`ConnectorConfig`, and `ConnectorConfigs` import from `@microsoft/rayfin-connectors`, not
+from `@microsoft/rayfin-client`.
 
-`ConnectorsRayfinClient` is exported from the stable client entry:
+## Install the client packages
 
-```typescript
-import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The 2.0 client depends only on `@microsoft/rayfin-lib`, so the app declares each capability
+package it uses. Keep every `@microsoft/rayfin-*` package on the same version:
+
+```bash
+npm install @microsoft/rayfin-client@2.0.0 @microsoft/rayfin-auth@2.0.0 @microsoft/rayfin-connectors@2.0.0
 ```
 
-The older `@microsoft/rayfin-client/experimental` subpath still exports it for compatibility. New code should use the stable package root.
+Install the connector-specific packages, such as
+`@microsoft/rayfin-connector-fabric-semanticmodel`, with the exact command
+`rayfin connector add` printed.
 
-The type parameters are `<DataSchema, FunctionsSchema, ConnectorsSchema>`. Use
-`Record<string, never>` for any slot your app does not use.
-
-## Pass connector config in the first argument
-
-The constructor is:
+## Register `connectorsService`
 
 ```typescript
-new ConnectorsRayfinClient(config, connectorsRuntime?)
+function connectorsService<TSchema extends ConnectorsSchema>(options: {
+  configs: ConnectorConfigs<TSchema>;
+  runtime?: ConnectorsRuntime;
+  host?: HostEnvironment;
+}): ClientServiceFactory<TypedConnectorsApi<TSchema>>;
 ```
 
-`config` extends the standard Rayfin client config, so it accepts `baseUrl` and
-`publishableKey`. It also requires `connectors`, a map keyed by connector name whose
-values are the generated `connectorConfig` objects.
+| Option | Required | Purpose |
+| --- | --- | --- |
+| `configs` | Yes | Each connector's generated `connectorConfig`, keyed by its `rayfin.yml` name. The map is exhaustive — every connector in the schema needs an entry — and each entry must match its marker's configuration type. |
+| `runtime` | For Category B | Runtime hooks keyed by connector name: `fabricSemanticModel()`, `fabricIqMcp()`, or `eventhouse()`. Category A connectors take no entry. |
+| `host` | No | Execution environment. Defaults to `{ type: 'standalone' }` in browsers and in Node.js. See [Choose the host](#choose-the-host). |
 
-`host` is optional. When omitted, the connectors layer detects `{ type: 'cli' }` under
-Node and `{ type: 'standalone' }` in browsers. Pass `{ type: 'embedded' }` only when the
-app is running inside the Fabric portal host and the host integration has asserted that
-environment.
+Import each `connectorConfig` from its generated `schema.ts` rather than rebuilding it or
+annotating it as `ConnectorConfig`: Category A markers read the config's literal
+`connector` and `operations` values to type the CRUD methods and mutation results.
 
-## Pass Category B runtimes in the second argument
-
-The second constructor argument is the per-connector runtime map, keyed by connector
-name. Category A connectors need no runtime entry.
-
-Category B connectors require one:
-
-- `kusto()` merges the generated `queryServiceUri` and `databaseName` into the outbound
-  payload. Without it, KQL queries cannot route to the cluster.
-- `fabricSemanticModel()` decodes the Arrow response. Without it, semantic-model query
-  results cannot be read.
-
-## Keep connector keys identical
-
-The connector key must be identical in four places:
-
-1. The `name` in `rayfin.yml`.
-2. The property in `AppConnectorsSchema`.
-3. The property in the `connectors` option.
-4. The property in the runtime map for Category B connectors.
-
-If they differ, TypeScript reports `Property '<name>' does not exist on connectors`.
+The type parameter of `connectorsService` names your connectors schema. `RayfinClient.create`
+infers the rest of the client type from the services you register, so infer `AppClient` from
+the client instead of writing it by hand.
 
 ## Use `src/lib/connectors.ts` when the CLI generates it
 
 [New in 1.36](/docs/reference/changelog#rayfin-136)
 
-`rayfin connector add` can maintain `src/lib/connectors.ts` for templates that include that file. The generated file centralizes connector schema types, config values, and Category B runtimes so the client setup stays small.
+`rayfin connector add` and `rayfin connector remove` maintain `src/lib/connectors.ts` for
+templates that include that file. It centralizes the connector schema type, the config map,
+and the Category B runtimes, so the client setup stays small. See
+[Review generated app wiring](/docs/connectors/adding#review-generated-app-wiring) for when
+the CLI rewrites it.
 
-A complete generated file for one Category A connector and two Category B connectors looks like this:
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+For an `inventory` warehouse, a `salesmodel` semantic model, and an `assistant` Fabric IQ
+connector, the generated file is:
 
 ```typescript title="src/lib/connectors.ts"
 // @generated by `rayfin connector add` — do not edit below this line.
+//
+// Regenerated from rayfin.yml on every `rayfin connector add` and
+// `rayfin connector remove`. To take ownership of this file, delete the
+// line above; the CLI will then print the required wiring instead of
+// rewriting it.
 
+import { fabricIqMcp } from '@microsoft/rayfin-connector-fabric-iq-mcp';
 import { fabricSemanticModel } from '@microsoft/rayfin-connector-fabric-semanticmodel';
-import { kusto } from '@microsoft/rayfin-connector-kusto';
-import type { ConnectorConfig, ConnectorsRuntime } from '@microsoft/rayfin-connectors';
+import type {
+  ConnectorConfigs,
+  ConnectorsRuntime,
+} from '@microsoft/rayfin-connectors';
+
+import { connectorConfig as inventoryConfig, type InventorySchema as inventorySchema } from '../../rayfin/connectors/inventory/schema';
+import { connectorConfig as salesmodelConfig, type SalesmodelSchema as salesmodelSchema } from '../../rayfin/connectors/salesmodel/schema';
+import { connectorConfig as assistantConfig, type AssistantSchema as assistantSchema } from '../../rayfin/connectors/assistant/schema';
+
+export type AppConnectorsSchema = {
+  'inventory': inventorySchema;
+  'salesmodel': salesmodelSchema;
+  'assistant': assistantSchema;
+};
+
+export const connectorConfigs = {
+  'inventory': inventoryConfig,
+  'salesmodel': salesmodelConfig,
+  'assistant': assistantConfig,
+} satisfies ConnectorConfigs<AppConnectorsSchema>;
+
+export const connectorRuntimes: ConnectorsRuntime = {
+  'salesmodel': fabricSemanticModel(),
+  'assistant': fabricIqMcp(),
+};
+```
+
+Templates can keep app-owned code at the top of the file, between
+`// #region rayfin:app-owned` and `// #endregion rayfin:app-owned`. The CLI copies that
+region verbatim and regenerates everything below the `@generated` line.
+
+A file generated by Rayfin 1.36 declares
+`connectorConfigs: Record<string, ConnectorConfig>`, which no longer type-checks against
+`connectorsService` in 2.0. Update it to the shape above; the CLI writes the same shape the
+next time `connector add` or `connector remove` regenerates the file.
+
+## Wire one client
+
+This client registers the data service and the connectors from `src/lib/connectors.ts`:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { connectorsService } from '@microsoft/rayfin-connectors';
+import type { AppSchema } from '../../rayfin/data/schema';
+import {
+  connectorConfigs,
+  connectorRuntimes,
+  type AppConnectorsSchema,
+} from '../lib/connectors';
+
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+    connectors: connectorsService<AppConnectorsSchema>({
+      configs: connectorConfigs,
+      runtime: connectorRuntimes,
+    }),
+  },
+});
+
+export type AppClient = typeof rayfinClient;
+```
+
+A connectors-only app leaves out `data`. Keep any other services your app already registers,
+such as `functions` or `storage`, in the same `services` map. Each connector is then
+reachable as `rayfinClient.connectors.<name>`.
+
+## Wire connectors without a generated file
+
+When the app has no `src/lib/connectors.ts`, `connector add` reports that nothing was wired.
+Import each generated `schema.ts` yourself and declare the maps next to the client:
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { connectorsService, type ConnectorConfigs } from '@microsoft/rayfin-connectors';
+import { fabricSemanticModel } from '@microsoft/rayfin-connector-fabric-semanticmodel';
 import {
   connectorConfig as inventoryConfig,
   type InventorySchema,
@@ -86,141 +170,285 @@ import {
   connectorConfig as salesmodelConfig,
   type SalesmodelSchema,
 } from '../../rayfin/connectors/salesmodel/schema';
-import {
-  connectorConfig as telemetryConfig,
-  type TelemetrySchema,
-} from '../../rayfin/connectors/telemetry/schema';
 
-export type AppConnectorsSchema = {
+type AppConnectorsSchema = {
   inventory: InventorySchema;
   salesmodel: SalesmodelSchema;
-  telemetry: TelemetrySchema;
 };
 
-export const connectorConfigs: Record<string, ConnectorConfig> = {
+const connectorConfigs = {
   inventory: inventoryConfig,
   salesmodel: salesmodelConfig,
-  telemetry: telemetryConfig,
-};
+} satisfies ConnectorConfigs<AppConnectorsSchema>;
 
-export const connectorRuntimes: ConnectorsRuntime = {
-  salesmodel: fabricSemanticModel(),
-  telemetry: kusto(),
-};
-```
-
-If your app has this file, import it from the frontend client instead of duplicating the maps.
-
-## Wire one client
-
-This example wires the connector maps from `src/lib/connectors.ts`. It assumes
-`inventory`, `salesmodel`, and `telemetry` are the exact connector names in `rayfin.yml`.
-
-```typescript title="src/services/rayfinClient.ts"
-import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
-import type { AppConnectorsSchema } from '../lib/connectors';
-import { connectorConfigs, connectorRuntimes } from '../lib/connectors';
-
-export const rayfinClient = new ConnectorsRayfinClient<
-  Record<string, never>,
-  Record<string, never>,
-  AppConnectorsSchema
->(
-  {
-    baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
-    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
-    authStorage: true,
-    connectors: connectorConfigs,
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    connectors: connectorsService<AppConnectorsSchema>({
+      configs: connectorConfigs,
+      runtime: { salesmodel: fabricSemanticModel() },
+    }),
   },
-  connectorRuntimes,
-);
+});
+
+export type AppClient = typeof rayfinClient;
 ```
+
+Category B connectors need their runtime:
+
+- `fabricSemanticModel()` decodes the semantic model's Arrow response. Without it,
+  `executeQuery` results cannot be read.
+- `fabricIqMcp()` carries Fabric IQ cancellation and deadlines to the HTTP transport. See
+  [Fabric IQ](/docs/connectors/fabric-iq).
+- `eventhouse()` adds a `clientRequestId` to each call that lacks one. See
+  [Eventhouse](/docs/connectors/eventhouse).
+
+## Keep connector keys identical
+
+The connector key must be identical in four places:
+
+1. The `name` in `rayfin.yml`.
+2. The property in `AppConnectorsSchema`.
+3. The property in `configs`.
+4. The property in `runtime`, for Category B connectors.
+
+If they differ, TypeScript reports `Property '<name>' does not exist`. Type-check the app
+(`tsc --noEmit` or the production build) to catch a mismatch before you deploy.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Connector names are case-insensitive at runtime. When no configured key matches
+`client.connectors.<name>` exactly, the one key that differs only by case is used, and every
+spelling returns the same client. Typed access through `AppConnectorsSchema` still needs the
+exact key. If several configured keys differ only by case, access throws `ConnectorsError`
+with code `AMBIGUOUS_CONNECTOR`; a name with no match in any casing throws
+`UNKNOWN_CONNECTOR`.
+
+## Choose the host
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`connectorsService` runs connectors in `standalone` mode — a deployed app calling the backend
+over HTTP — in browsers and in Node.js. Leave `host` out for browser apps and for deployed
+Node.js apps.
+
+The 1.x `ConnectorsRayfinClient` switched to `cli` automatically whenever `window` was
+absent. In 2.0, pass the host explicitly when a local script run from the CLI inner loop
+needs connector CLI middleware, such as the semantic model's direct Power BI path:
+
+```typescript
+connectorsService<AppConnectorsSchema>({
+  configs: connectorConfigs,
+  runtime: connectorRuntimes,
+  host: { type: 'cli' },
+});
+```
+
+The host selects middleware behavior only; it does not acquire tokens or change the identity
+a call runs as, so the script must configure the runtime's target and authentication itself.
+Pass `{ type: 'embedded' }` only when a host integration has verified that the app runs
+inside the Fabric portal. The low-level `createConnectorsApi` factory still detects `cli`
+when there are no browser globals.
+
+## Set a request timeout for Category B calls
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+A Category B operation waits up to 5 minutes for a response — the same deadline the backend
+enforces for connector calls — instead of the client's generic 30-second timeout. Pass
+`{ timeoutMs }` as the second argument to give up sooner:
+
+```typescript title="src/features/sales/loadTopSales.ts"
+import { rayfinClient } from '../../services/rayfinClient';
+
+export function loadTopSales() {
+  return rayfinClient.connectors.salesmodel.executeQuery(
+    { query: "EVALUATE TOPN(10, 'Sales')" },
+    { timeoutMs: 20_000 },
+  );
+}
+```
+
+A value above 5 minutes is capped at 5 minutes, and a value of zero or less uses the default.
 
 ## Choose an `entities` registration form
 
-Category A aggregate `schema.ts` files must give `connectorConfig.entities` enough metadata for default selections. Each entity entry can be either a string array of scalar field names or the decorated entity class.
+Category A aggregate `schema.ts` files give `connectorConfig.entities` the metadata for
+default selections. Each entity entry is either a string array of scalar property names or
+the decorated entity class.
 
-Prefer string arrays in code the browser loads. A decorated entity class can break a browser bundle; see [Decorated entity classes can break a browser bundle](/docs/reference/known-limitations#decorated-entity-classes-can-break-a-browser-bundle).
+| Form | Supports | Bundler requirement |
+| --- | --- | --- |
+| String array, such as `Order: ['orderId', 'total']` | Default selections and SQL Database read-after-write | None: entity classes stay type-only imports |
+| Entity class, such as `Order` | Everything the array form does, plus relationship selections such as `orderItems.quantity` | The frontend bundler must compile TC39 decorators |
+
+Prefer string arrays unless the app selects relationship paths. A relationship select against
+the array form throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT`, because only the class
+carries `@one` and `@many` cardinality.
 
 ```typescript title="rayfin/connectors/inventory/schema.ts"
 import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
 import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
 
-import type { Order } from './Order.js';
 import type { Customer } from './Customer.js';
+import type { Order } from './Order.js';
 
-export type { Order } from './Order.js';
 export type { Customer } from './Customer.js';
+export type { Order } from './Order.js';
 
 export const connectorConfig = {
   connector: 'fabric-warehouse',
   operations: ['read', 'update'],
   entities: {
-    Order: ['orderId', 'customerId', 'total', 'placedUtc'],
     Customer: ['customerId', 'email'],
+    Order: ['orderId', 'customerId', 'total', 'placedUtc'],
   },
 } as const satisfies ConnectorConfig;
 
 export type InventorySchema = GraphQLBackedConnector<
-  { Order: typeof Order; Customer: typeof Customer },
+  { Customer: typeof Customer; Order: typeof Order },
   typeof connectorConfig
 >;
 ```
 
-Use the class form only when app code must select relationship dotted paths such as `orderItems.quantity`. Relationship selections require `@one` and `@many` cardinality metadata. A relationship select against the array form throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT`.
+The class form imports and re-exports the entities as values:
 
 ```typescript title="rayfin/connectors/inventory/schema.ts"
-import { Order } from './Order.js';
-import { Customer } from './Customer.js';
+import type { GraphQLBackedConnector } from '@microsoft/rayfin-connector-fabric-graphql';
+import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
 
-export { Order } from './Order.js';
+import { Customer } from './Customer.js';
+import { Order } from './Order.js';
+
 export { Customer } from './Customer.js';
+export { Order } from './Order.js';
 
 export const connectorConfig = {
   connector: 'fabric-warehouse',
   operations: ['read', 'update'],
-  entities: {
-    Order,
-    Customer,
-  },
+  entities: { Customer, Order },
 } as const satisfies ConnectorConfig;
+
+export type InventorySchema = GraphQLBackedConnector<
+  { Customer: typeof Customer; Order: typeof Order },
+  typeof connectorConfig
+>;
 ```
 
-If you use the class form, run the production build and verify the deployed page loads before relying on it.
+## Let the bundler compile entity decorators
+
+Importing a class-form `connectorConfig` puts decorated entity classes in the browser bundle.
+Rayfin entities use TC39 Stage 3 decorators, and `@vitejs/plugin-react-swc` does not compile
+them by default. Type-checking does not catch this, because Vite compiles the browser code
+separately.
+
+Without the setting, the Vite dev server fails with `Expression expected` at `@entity()`. On
+Vite 8, `vite build` succeeds but emits raw `@decorator` syntax, and `rayfin up` refuses to
+deploy the bundle with `The built bundle is not parseable JavaScript`.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Apps created from the 2.0 templates already enable decorators. For an older app that uses
+`@vitejs/plugin-react-swc`, enable them in `vite.config.ts`, and in `vitest.config.ts` if
+tests import entities:
+
+```typescript title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react-swc';
+
+export default defineConfig({
+  plugins: [
+    react({
+      useAtYourOwnRisk_mutateSwcOptions({ jsc }) {
+        if (!jsc?.parser) return;
+        jsc.parser.decorators = true;
+        jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' };
+      },
+    }),
+  ],
+  build: {
+    target: 'es2022',
+  },
+  esbuild: {
+    target: 'es2022',
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      target: 'es2022',
+    },
+  },
+});
+```
+
+Do not work around it with a hand-written TypeScript pre-transform or with
+`experimentalDecorators`; Rayfin does not use legacy decorators.
 
 ## Troubleshoot client wiring
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `Property '<name>' does not exist on connectors` | The connector key differs between `rayfin.yml`, `AppConnectorsSchema`, the `connectors` option, or the runtime map. | Use the `rayfin.yml` `name` in every place. |
-| Import of `ConnectorsRayfinClient` fails to resolve | The app uses an older package line or incompatible import path. | On 1.36, import from `@microsoft/rayfin-client` and keep Rayfin packages on one version. |
+| `ConnectorsRayfinClient` is not exported by `@microsoft/rayfin-client` | Removed in 2.0. | Register `connectorsService` from `@microsoft/rayfin-connectors` in `RayfinClient.create`. |
+| `Property '<name>' does not exist` on `client.connectors` | The connector key differs between `rayfin.yml`, `AppConnectorsSchema`, `configs`, or `runtime`. | Use the `rayfin.yml` `name` in every place. |
+| `connectorConfigs` does not satisfy `ConnectorConfigs<AppConnectorsSchema>` | The map misses a connector, uses a widened `ConnectorConfig`, or was generated by 1.36. | Import each generated `connectorConfig` unchanged and list every connector in the schema. |
+| Access throws `AMBIGUOUS_CONNECTOR` | Two configured keys differ only by case. | Rename or remove one entry in `rayfin.yml`, then regenerate the wiring. |
+| `Cannot find module '@microsoft/rayfin-connectors'` | The 2.0 client no longer brings it in. | Install `@microsoft/rayfin-connectors` at the same version as the other Rayfin packages. |
 | `Cannot find module '@microsoft/rayfin-connector-fabric-graphql'` | `connector add` scaffolds files but does not install packages. | Run the pinned `npm install` command `connector add` printed, or rebuild it from `rayfin connector types --json`. |
-| A relationship read throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT` | `connectorConfig.entities` uses string arrays, which do not carry `@one` / `@many` cardinality. | Use decorated entity classes only when relationship selections are required, then verify the production bundle loads; otherwise avoid relationship dotted paths. |
-| A read throws `SELECTION_REQUIRED` | `connectorConfig.entities` is missing, so the client has no default column list. | Add string arrays of scalar field names to `entities`, or pass an explicit `select([...])`. |
-| A Kusto query fails to reach the cluster | The runtime map omitted `{ telemetry: kusto() }`, so generated routing was not injected. | Add the Kusto runtime under the exact connector name. |
-| A semantic-model result cannot be read | The runtime map omitted `{ salesmodel: fabricSemanticModel() }`, so the Arrow response was not decoded. | Add the semantic-model runtime under the exact connector name. |
+| A relationship read throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT` | `connectorConfig.entities` uses string arrays, which carry no cardinality. | Use the class form and enable decorator compilation, or avoid relationship paths. |
+| A read throws `SELECTION_REQUIRED` | `connectorConfig.entities` is missing, so the client has no default column list. | Add the entity's scalar property names or class to `entities`, or pass an explicit selection. |
+| The dev server fails with `Expression expected` at `@entity()`, or `rayfin up` reports `The built bundle is not parseable JavaScript` | The bundler is not compiling TC39 decorators for class-form entities. | [Let the bundler compile entity decorators](#let-the-bundler-compile-entity-decorators). |
+| A semantic model result cannot be read | `fabricSemanticModel()` is missing from `runtime`. | Add it under the exact connector name. |
+| A Category B call fails after 5 minutes with a timeout | The backend deadline for connector calls is 5 minutes. | Narrow the query; `timeoutMs` can only shorten the wait. |
 
 ## Continue by connector type
 
 - [Fabric SQL sources](/docs/connectors/sql-sources)
 - [Semantic models](/docs/connectors/semantic-models)
-- [KQL databases](/docs/connectors/kusto)
+- [Fabric IQ](/docs/connectors/fabric-iq)
+- [Eventhouse (KQL databases)](/docs/connectors/eventhouse)
 
-```prompt title="Wire connectors into a Rayfin frontend"
-In my Rayfin project, wire existing connectors into the frontend client. Read
-rayfin/rayfin.yml to get the exact connector names, then import
-ConnectorsRayfinClient from @microsoft/rayfin-client.
+```prompt title="Wire connectors into a Rayfin 2.0 frontend"
+In my Rayfin 2.0 project, wire the connectors declared in rayfin/rayfin.yml into the frontend
+client. Read rayfin/rayfin.yml for the exact connector names and types.
 
-Create or update src/services/rayfinClient.ts so the client type parameters are
-<DataSchema, FunctionsSchema, ConnectorsSchema>, using Record<string, never> for unused
-data or functions schemas. Import each generated connector schema type and connectorConfig
-from rayfin/connectors/<name>/schema.ts. Key AppConnectorsSchema and the connectors option
-with the exact rayfin.yml connector names.
+If src/lib/connectors.ts exists and its generated section starts with the
+`@generated by` marker line, use its AppConnectorsSchema, connectorConfigs, and
+connectorRuntimes. Otherwise import
+each `<Name>Schema` type and `connectorConfig` from rayfin/connectors/<name>/schema.ts and
+build the maps yourself: key AppConnectorsSchema and the configs map by the exact rayfin.yml
+names, declare the configs map with `satisfies ConnectorConfigs<AppConnectorsSchema>`, and
+add a runtime entry for every Category B connector — fabricSemanticModel() for
+fabric-semanticmodel, fabricIqMcp() for fabriciqmcp, eventhouse() for eventhouse. Category A
+connectors (fabric-sqlanalytics, fabric-warehouse, fabric-sqldatabase) take no runtime entry.
 
-For Category B connectors, pass the second constructor argument as a runtime map keyed by
-the same names: use kusto() for kusto connectors and fabricSemanticModel() for
-fabric-semanticmodel connectors. Do not add runtime entries for Category A unless a
-connector-specific package requires one.
+In the existing `RayfinClient.create` call from @microsoft/rayfin-client, keep the current
+`auth` adapter and other services, and add
+`connectors: connectorsService<AppConnectorsSchema>({ configs, runtime })` from
+@microsoft/rayfin-connectors under `services`. Do not pass `host`. Install
+@microsoft/rayfin-connectors at the same version as the other @microsoft/rayfin-* packages if
+it is missing. If any Category A schema.ts registers entity classes in
+`connectorConfig.entities`, make sure vite.config.ts enables SWC decorators
+(`jsc.parser.decorators = true` and `decoratorVersion: '2022-03'` via
+`useAtYourOwnRisk_mutateSwcOptions`). Finally run the type-check and the production build.
+```
 
-For Category A schema files, prefer connectorConfig.entities string arrays in browser-loaded code. Use decorated entity classes only when relationship dotted paths are required, and verify the production bundle loads.
+```prompt title="Upgrade connector wiring from Rayfin 1.36 to 2.0"
+My Rayfin app uses `ConnectorsRayfinClient` from @microsoft/rayfin-client and I am upgrading
+every @microsoft/rayfin-* package to 2.0.0. Replace each `new ConnectorsRayfinClient<Data,
+Functions, Connectors>(config, runtime)` with `RayfinClient.create({ baseUrl,
+publishableKey, auth: browserSession({ storage: true }), services: { ..., connectors:
+connectorsService<AppConnectorsSchema>({ configs, runtime }) } })`, where `browserSession`
+comes from @microsoft/rayfin-auth and `connectorsService` from @microsoft/rayfin-connectors.
+Move the old `connectors` option into `configs` and the old second constructor argument into
+`runtime`. Move `authStorage: true` into `browserSession({ storage: true })`. Register data
+and functions with `dataService<AppSchema>()` from @microsoft/rayfin-data and
+`functionsService<AppFunctionsSchema>()` from @microsoft/rayfin-functions if the app used
+them. Import ConnectorConfig, ConnectorConfigs, ConnectorsSchema, and ConnectorsRuntime from
+@microsoft/rayfin-connectors. If src/lib/connectors.ts declares
+`connectorConfigs: Record<string, ConnectorConfig>`, change it to
+`export const connectorConfigs = { ... } satisfies ConnectorConfigs<AppConnectorsSchema>;`.
+If a Node.js script relied on automatic `cli` host detection, pass `host: { type: 'cli' }`
+explicitly. Install @microsoft/rayfin-auth and @microsoft/rayfin-connectors at 2.0.0, then
+run the type-check and the production build.
 ```

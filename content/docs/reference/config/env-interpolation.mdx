@@ -114,6 +114,12 @@ services:
     folder: dist-${BUILD_NUMBER}
 ```
 
+## Values that are not interpolated
+
+A connector's `additionalPayload` is kept verbatim: `${VAR}` text inside it is sent as
+literal text, never resolved. Do not use it to read secrets from the environment.
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
 ## Error handling
 
 A required missing variable fails before deployment:

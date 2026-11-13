@@ -6,6 +6,7 @@
     "rayfin-up",
     "deployment-pipelines",
     "secrets",
+    "observability",
     "environments",
     "pricing",
     "troubleshooting"

@@ -1,0 +1,353 @@
+---
+title: Raw SQL in functions
+description: Run parameterized T-SQL against your Rayfin app database from a deployed function with ctx.sql, for queries the typed data client cannot express.
+appliesTo: "@microsoft/fabric-user-data-functions >= 2.0"
+---
+
+[New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+Use raw SQL when a function needs a statement the data client cannot express — a join
+outside declared relationships, `HAVING`, a window function, a common table expression, or
+a set-based write — against your app's own database. For everything else, keep using
+[`ctx.getDataClient()`](/docs/functions/writing-functions#use-rayfincontext-for-server-context).
+
+> [!WARNING]
+> Raw SQL is experimental. The Fabric service enables it per tenant: where it is not
+> enabled, every `ctx.sql` call fails. It runs only in deployed functions, never in the
+> local Functions host that `rayfin dev` starts. Statements run as the app, so entity
+> permissions such as `@authenticated(..., { policy })` do not apply to them.
+
+## Choose raw SQL or the data client
+
+| | `ctx.getDataClient()` | `ctx.sql` |
+| --- | --- | --- |
+| Identity | The signed-in caller's Rayfin token | The app. The caller's token is not sent. |
+| Entity permissions and policies | Enforced | Not applied — filter user-owned rows yourself |
+| Local `rayfin dev` host | Works | Fails — deployed functions only |
+| Availability | Wherever Functions run | Only where the service has raw SQL enabled for your tenant |
+| Language | Typed query builder | T-SQL for the app's SQL database |
+| Results | Typed objects | `{ columns, rows }` with positional rows |
+
+Prefer the data client whenever it can express the operation: it keeps permissions enforced
+and its results typed. Reach for raw SQL for reports and set-based writes.
+
+## Declare SQL access on the context
+
+Intersect the handler's context type with `WithSql`. The annotation is the declaration:
+`ctx.sql` does not exist on a plain `RayfinContext`, so using it without declaring it fails
+to compile. At build time the CLI records the declaration in the function's runtime
+metadata, and the service issues a per-invocation SQL ticket only to functions that declared
+it — redeploy after adding or removing `& WithSql`.
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  UserDataFunctions,
+  type RayfinContext,
+  type WithSql,
+} from '@microsoft/fabric-user-data-functions';
+import type { AppSchema } from '../../data/schema.js';
+
+const udf = new UserDataFunctions();
+
+udf.func(
+  'countMyTransactions',
+  async (ctx: RayfinContext<AppSchema> & WithSql): Promise<number> => {
+    const { rows } = await ctx.sql.query(
+      'SELECT COUNT(*) FROM Transactions WHERE owner_id = @ownerId',
+      { ownerId: ctx.user.id },
+    );
+    return Number(rows[0]?.[0] ?? 0);
+  },
+  [],
+);
+```
+
+- Write the intersection literally in the parameter annotation. If the functions package
+  has no `tsconfig.json`, the CLI reads annotations syntactically and can miss a type alias.
+- Like any `RayfinContext` parameter, the context is injected by the runtime and stripped
+  from the generated `AppFunctionsSchema` input.
+- Audiences still go on the base type: `RayfinContext<AppSchema, AudienceType.Fabric> & WithSql`.
+- A [dynamic auth claims](/docs/auth/dynamic-claims) provider can declare the same marker
+  as `AuthClaimsContext & WithSql`.
+
+## Know the table and column names
+
+Raw SQL addresses the tables that Rayfin creates from your entities. By default each table
+is named after the plural of the entity class (`Todo` is stored in `Todos`), each column
+takes the entity's property name, and a `@one()` relationship is stored in a
+`<property>_id` column.
+
+The examples on this page use these two entities:
+
+```typescript title="rayfin/data/Category.ts"
+import { authenticated, entity, many, text, uuid } from '@microsoft/rayfin-core';
+import { Transaction } from './Transaction.js';
+
+@entity()
+@authenticated(['create', 'read'])
+export class Category {
+  @uuid() id!: string;
+  @text({ max: 200 }) name!: string;
+  @text({ max: 200, unique: true }) normalizedName!: string;
+  @many(() => Transaction) transactions?: Transaction[];
+}
+```
+
+```typescript title="rayfin/data/Transaction.ts"
+import { authenticated, date, decimal, entity, one, text, uuid } from '@microsoft/rayfin-core';
+import { Category } from './Category.js';
+
+@entity()
+@authenticated('*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class Transaction {
+  @uuid() id!: string;
+  @date() date!: Date;
+  @text({ max: 500 }) description!: string;
+  @decimal() amount!: number;
+  @text({ max: 200 }) owner_id!: string;
+  @one(() => Category) category!: Category;
+}
+```
+
+```typescript title="rayfin/data/schema.ts"
+import type { Category } from './Category.js';
+import type { Transaction } from './Transaction.js';
+
+export type AppSchema = {
+  Category: Category;
+  Transaction: Transaction;
+};
+```
+
+| Entity | Table | Columns |
+| --- | --- | --- |
+| `Category` | `Categories` | `id`, `name`, `normalizedName` |
+| `Transaction` | `Transactions` | `id`, `date`, `description`, `amount`, `owner_id`, `category_id` |
+
+## Read rows with `ctx.sql.query`
+
+`ctx.sql.query(sql, params)` runs a statement that produces a result set and resolves to
+`{ columns, rows }`:
+
+- `columns` lists `{ name, type }` in the order the query produced them; `type` names the
+  source SQL type, such as `uuid`, `decimal`, or `datetime`.
+- `rows` is an array of arrays aligned to `columns` — not objects — so a join that returns
+  two columns with the same name keeps both.
+- Values arrive in their JSON encoding: identifiers and decimals come back as strings.
+  Convert them explicitly.
+
+This report totals the caller's spending per category, which needs a join and `HAVING`:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  UserDataFunctions,
+  type RayfinContext,
+  type SqlClient,
+  type SqlErrorDetails,
+  type SqlParameters,
+  type SqlQueryResult,
+  type WithSql,
+} from '@microsoft/fabric-user-data-functions';
+import type { AppSchema } from '../../data/schema.js';
+
+const udf = new UserDataFunctions();
+
+type CategoryTotal = { category: string; total: number; transactions: number };
+
+const SPENDING_BY_CATEGORY = `
+  SELECT TOP 10 c.[name] AS category, SUM(t.amount) AS total, COUNT(*) AS transactions
+  FROM Transactions AS t
+  JOIN Categories AS c ON c.id = t.category_id
+  WHERE t.owner_id = @ownerId
+    AND t.[date] >= DATEADD(day, -@days, GETUTCDATE())
+  GROUP BY c.[name]
+  HAVING SUM(t.amount) >= @minTotal
+  ORDER BY total DESC`;
+
+async function queryWithRetry(
+  sql: SqlClient,
+  statement: string,
+  params: SqlParameters,
+): Promise<SqlQueryResult> {
+  try {
+    return await sql.query(statement, params);
+  } catch (error) {
+    const { code, lineNumber, retryable, correlationId } = error as SqlErrorDetails;
+    console.error(
+      `SQL query failed: code=${code} line=${lineNumber} correlationId=${correlationId}`,
+    );
+    if (retryable !== true) throw error;
+    return await sql.query(statement, params);
+  }
+}
+
+udf.func(
+  'spendingByCategory',
+  async (
+    days: number,
+    minTotal: number,
+    ctx: RayfinContext<AppSchema> & WithSql,
+  ): Promise<CategoryTotal[]> => {
+    if (!Number.isInteger(days) || days < 1 || days > 366) {
+      throw new Error('days must be a whole number from 1 to 366.');
+    }
+
+    const { rows } = await queryWithRetry(ctx.sql, SPENDING_BY_CATEGORY, {
+      ownerId: ctx.user.id,
+      days,
+      minTotal,
+    });
+
+    return rows.map(([category, total, transactions]) => ({
+      category: String(category),
+      total: Number(total),
+      transactions: Number(transactions),
+    }));
+  },
+  [],
+);
+```
+
+The frontend calls it like any other function:
+`client.functions.spendingByCategory.invoke({ days: 30, minTotal: 0 })`.
+
+## Write rows with `ctx.sql.execute`
+
+`ctx.sql.execute(sql, params)` runs a statement that produces no result set — an
+`INSERT`, `UPDATE`, `DELETE`, or a stored procedure whose output you do not need — and
+resolves to `{ rowsAffected }`.
+
+This function deletes all of the caller's transactions before a date in one statement,
+which the data client can only do one row at a time:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  UserDataFunctions,
+  type RayfinContext,
+  type WithSql,
+} from '@microsoft/fabric-user-data-functions';
+import type { AppSchema } from '../../data/schema.js';
+
+const udf = new UserDataFunctions();
+
+udf.func(
+  'deleteTransactionsBefore',
+  async (
+    before: string,
+    ctx: RayfinContext<AppSchema> & WithSql,
+  ): Promise<{ deleted: number }> => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(before)) {
+      throw new Error('before must be a date in YYYY-MM-DD format.');
+    }
+
+    const { rowsAffected } = await ctx.sql.execute(
+      'DELETE FROM Transactions WHERE owner_id = @ownerId AND [date] < @before',
+      { ownerId: ctx.user.id, before },
+    );
+
+    return { deleted: rowsAffected };
+  },
+  [],
+);
+```
+
+The split between `query` and `execute` is by response shape only, not a privilege
+boundary: `execute` runs a `SELECT` and discards the rows, and `query` runs an `UPDATE`
+and returns an empty result set while the write still happens.
+
+## Filter user-owned rows yourself
+
+Entity policies do not run for raw SQL, so a statement can read or change every row in a
+table. When rows belong to a user, add the owner condition to every statement and bind it
+to [`ctx.user.id`](/docs/functions/writing-functions#stamp-the-owner-with-ctxuserid) — the
+same subject id that policies compare with `claims.sub`. Never take an owner or user id
+from function input.
+
+## Bind every value as a parameter
+
+Write each value as an `@name` placeholder and pass it in the `params` object. Parameters
+are bound by the database driver, so a value can never be parsed as SQL. Never build the
+statement with string concatenation or template-literal interpolation:
+
+```typescript
+// Wrong: the value becomes part of the statement text.
+await ctx.sql.query(`SELECT id FROM Categories WHERE [name] = '${name}'`);
+
+// Right: the value is bound to @name.
+await ctx.sql.query('SELECT id FROM Categories WHERE [name] = @name', { name });
+```
+
+Parameters bind values, not identifiers. When a statement must vary by column or sort
+direction, map the caller's choice onto a fixed set of statements in code.
+
+## Stay within the result limits
+
+Results are capped at 1,000 rows and at a maximum result size. A query that exceeds either
+limit fails with an error rather than returning a partial result, so a function never
+works from a truncated set. Wide text columns reach the size limit long before the row cap.
+
+- Select only the columns the function needs.
+- Aggregate in SQL instead of returning raw rows to sum in code.
+- Page large reads with `OFFSET`/`FETCH`:
+
+```sql
+SELECT t.id, t.[date], t.amount
+FROM Transactions AS t
+WHERE t.owner_id = @ownerId
+ORDER BY t.[date] DESC, t.id
+OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;
+```
+
+## Handle SQL errors
+
+When a statement fails, `query` and `execute` throw an `Error` that also carries the
+`SqlErrorDetails` fields. Every field is optional: a failure raised before the request
+reached the service carries none of them.
+
+| Field | Meaning |
+| --- | --- |
+| `code` | Stable error code, such as `SqlUniqueConstraintViolation` or `SqlInvalidColumn`. Branch on this. |
+| `sqlErrorNumber` | The SQL Server error number, when the database reported an error for the statement. Absent for the row and size limits and for service failures. |
+| `lineNumber` | Line within the submitted statement. |
+| `retryable` | `true` when retrying the identical call could succeed. |
+| `correlationId` | Present only for a service-side failure. Include it in a support request. |
+
+Branch on `code`, never on the message: messages are rewritten as diagnostics improve, and
+the database text behind them is versioned and localized.
+
+```typescript title="rayfin/functions/src/sqlErrors.ts"
+import type { SqlErrorDetails } from '@microsoft/fabric-user-data-functions';
+
+export function isUniqueViolation(error: unknown): boolean {
+  return (error as SqlErrorDetails).code === 'SqlUniqueConstraintViolation';
+}
+```
+
+Use `retryable` to decide whether to retry, as `queryWithRetry` does above, and log
+`correlationId` when it is present.
+
+## Troubleshoot raw SQL
+
+### `This function did not declare SQL access, so no ticket was issued.`
+
+The handler's context is not annotated `& WithSql`, or the deployed metadata predates the
+annotation. Annotate the parameter `ctx: RayfinContext<AppSchema> & WithSql` and redeploy.
+
+### `Raw SQL access is not available when running locally`
+
+Expected under `rayfin dev` and `rayfin dev functions apply`: the service issues the SQL
+ticket only for deployed invocations. Deploy with `npx rayfin up` or
+`npx rayfin up functions deploy`, then test against the deployed app.
+
+### `No SQL ticket was issued for this invocation, so the request cannot be authorized.`
+
+The function declared SQL access, but the service did not issue a ticket. Most often, raw
+SQL is not enabled for your tenant. Use `ctx.getDataClient()` until it is.
+
+```prompt title="Add a raw SQL report to a Rayfin function"
+In my Rayfin 2.0 project, add a deployed function that produces this report: <describe the report and its inputs>.
+
+First check whether the data client can express it (`ctx.getDataClient()` with select, where, orderBy, groupBy, and aggregate). If it can, use the data client and stop. Otherwise, register the handler in rayfin/functions/src/function_app.ts with `udf.func(name, handler, [])` and annotate its context parameter literally as `RayfinContext<AppSchema> & WithSql`, importing `RayfinContext` and `WithSql` from @microsoft/fabric-user-data-functions. Use `ctx.sql.query(sql, params)` for result sets and `ctx.sql.execute(sql, params)` for writes. Write T-SQL for the app's SQL database: tables are the plural of the entity class name (Todo -> Todos), columns are entity property names, and a @one() relationship is stored in `<property>_id`. Bind every value as an `@name` parameter and never interpolate values into the SQL text. Raw SQL bypasses entity permissions, so filter user-owned rows by the owner column bound to `ctx.user.id`. Select only the columns you need (results over 1,000 rows or the size limit fail), convert positional rows to typed objects, and branch on `error.code` from SqlErrorDetails rather than on the message. Raw SQL does not run under `rayfin dev`: tell me to verify the function against the deployed app after `npx rayfin up`.
+```

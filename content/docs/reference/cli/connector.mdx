@@ -6,7 +6,7 @@ description: rayfin connector manages external Fabric sources, from discovery an
 
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-`connector` is always registered in Rayfin 1.36. No connector feature-flag opt-in is required.
+`connector` is always registered. No connector feature-flag opt-in is required.
 
 Use `rayfin connector` to discover existing Microsoft Fabric sources, register them in
 `rayfin.yml`, inspect their read shape, and invoke configured operations. For the workflow
@@ -24,22 +24,40 @@ npx rayfin connector <command>
 | `fabric-sqlanalytics` | Lakehouse SQL analytics endpoint | Category A | `read` | `application` [Changed in 1.36](/docs/reference/changelog#rayfin-136) | No |
 | `fabric-warehouse` | Warehouse | Category A | `read`, `create`, `update`, `delete` | `application` [Changed in 1.36](/docs/reference/changelog#rayfin-136) | No |
 | `fabric-sqldatabase` | SQL Database | Category A | `read`, `create`, `update`, `delete` | `application` [Changed in 1.36](/docs/reference/changelog#rayfin-136) | No |
-| `fabric-semanticmodel` | Semantic model | Category B | `executeQuery` | `delegated` | Pinned to `'1'` by `connector add` |
-| `kusto` | KQL Database | Category B | `executeQuery`, `executeCommand` | `delegated`; existing entries only | New authoring held in 1.36 |
+| `fabric-semanticmodel` | Semantic model | Category B | `executeQuery` | `delegated` (only) | Pinned to `"1"` by `connector add` |
+| `fabriciqmcp` | None (itemless) | Category B | `executeQuery` | `delegated` (only) [New in 2.0](/docs/reference/changelog#rayfin-20) | Pinned to `"1"` by `connector add` |
+| `eventhouse` | KQL Database | Category B | `executeQuery`, `executeCommand` | `application` (only); existing entries only [Changed in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status) | `"1"`; new authoring held |
 
 Category A connectors generate entity configuration for Data API Builder. Category B
-connectors expose function-style query operations and are delegated-only.
+connectors expose function-style operations.
 
-`connector types`, `connector search`, and `connector add` list only authorable types. In 1.36.2, `kusto` is absent and `connector add --type kusto` fails with `Connector type "kusto" is not available in this release. Supported types: [fabric-sqlanalytics, fabric-warehouse, fabric-sqldatabase, fabric-semanticmodel].`
+`connector types`, `connector search`, and `connector add` list only authorable types. In
+2.0.0, `eventhouse` is absent, and `connector add --type eventhouse` fails with
+`Connector type "eventhouse" is not available in this release. Supported types: [fabric-sqlanalytics, fabric-warehouse, fabric-sqldatabase, fabric-semanticmodel, fabriciqmcp].`
 
-Existing Kusto entries still validate and deploy. See
-[Connectors](/docs/connectors), [Fabric SQL sources](/docs/connectors/sql-sources),
-[Semantic models](/docs/connectors/semantic-models), and [KQL databases](/docs/connectors/kusto).
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The 1.36 `kusto` type is renamed to `eventhouse`. `--type kusto` fails as an unknown connector
+type, and `rayfin up` rejects `type: kusto` entries. Existing Eventhouse entries still
+validate, deploy, and invoke. See [Connectors](/docs/connectors),
+[Fabric SQL sources](/docs/connectors/sql-sources),
+[Semantic models](/docs/connectors/semantic-models), [Fabric IQ](/docs/connectors/fabric-iq),
+and [Eventhouse](/docs/connectors/eventhouse).
 
 ## Subcommands
 
 The registered subcommands are `search`, `add`, `list`, `remove`, `types`, `inspect`, and
 `invoke`.
+
+## Connector names
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Connector names are case-insensitive. `connector add` stores new names in lowercase.
+`connector remove`, `connector invoke`, `connector inspect --name`, and
+`up connector apply --name` match the name you pass case-insensitively and then use the
+spelling in `rayfin.yml`. An exact match wins; when several entries differ from the name only
+by case, the command fails and lists the candidates.
 
 ## `connector search`
 
@@ -49,8 +67,9 @@ npx rayfin connector search [query] --all-workspaces --type <type>
 npx rayfin connector search [query]
 ```
 
-Searches Fabric items that the signed-in identity can add as connectors. Use one of these
-scopes:
+Searches Fabric items that the signed-in identity can add as connectors. It returns
+warehouses, SQL databases, Lakehouses, and semantic models; it never returns Eventhouse KQL
+databases or the itemless `fabriciqmcp` connector. Use one of these scopes:
 
 | Scope | Required flags | Behavior |
 | --- | --- | --- |
@@ -78,31 +97,51 @@ With `--json`, the command emits `{ status, query, scope, count, sources }`. Eac
 
 ```bash
 npx rayfin connector add --type fabric-sqldatabase --workspace-id <id> --item-id <id> --name sales
+npx rayfin connector add --type fabriciqmcp --name assistant
 ```
 
 Registers one source in `rayfin/rayfin.yml` and scaffolds `rayfin/connectors/<name>/`.
 
 | Flag | Description |
 | --- | --- |
-| `--type <type>` | Required. One of the authorable connector type literals: `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, or `fabric-semanticmodel`. New `kusto` authoring is held in 1.36.2. |
-| `--workspace-id <id>` | Required Fabric workspace ID. Must be a literal value; `${VAR}` placeholders are rejected. |
-| `--item-id <id>` | Required Fabric item ID. Must be a literal value; `${VAR}` placeholders are rejected. |
-| `--name <name>` | Connector name. If omitted, the CLI derives one from the Fabric item display name. Must match `/^[a-zA-Z0-9\-_]+$/` and be at most 256 characters. |
+| `--type <type>` | Required. One of the authorable connector types: `fabric-sqlanalytics`, `fabric-warehouse`, `fabric-sqldatabase`, `fabric-semanticmodel`, or `fabriciqmcp`. |
+| `--workspace-id <id>` | Fabric workspace ID, required for every type except `fabriciqmcp`. Must be a literal value; `${VAR}` placeholders are rejected. |
+| `--item-id <id>` | Fabric item ID, required for every type except `fabriciqmcp`. Must be a literal value; `${VAR}` placeholders are rejected. |
+| `--name <name>` | Connector name, stored in lowercase. If omitted, the CLI derives one from the Fabric item display name; `fabriciqmcp` has no item, so the name is required. Must match `/^[a-zA-Z0-9\-_]+$/` and be at most 256 characters. |
 | `--operations <ops>` | Comma-separated subset of allowed operations. This can narrow the catalog defaults but cannot widen them; there is no `all` meta-operation. |
+| `--auth <type>` | `delegated` (run each call as the signed-in caller) or `application` (run each call as the app owner). Omit it to use the type's default. Validated against the type's allowed auth types. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `-y, --yes` | Auto-accept confirmation prompts, including overwriting an existing connector. |
 | `-v, --verbose` | Enable verbose output. |
 | `--json` | Emit machine-readable JSON. |
 
 The command verifies the Fabric item, writes the `connectors:` entry, and writes
 `rayfin/connectors/<name>/schema.ts`. For Category A it also runs schema discovery and
-writes `metadata.json`. For `fabric-semanticmodel`, it writes the complete generated `schema.ts`.
+writes `metadata.json`. For `fabric-semanticmodel` and `fabriciqmcp`, it writes the complete
+generated `schema.ts`. Versioned Category B types get the catalog `defaultVersion`, which is
+`"1"` today. Then it regenerates the app wiring in `src/lib/connectors.ts`; see
+[Review generated app wiring](/docs/connectors/adding#review-generated-app-wiring).
 
-For authorable versioned Category B types, `connector add` writes the catalog `defaultVersion` automatically. Today `fabric-semanticmodel` uses `'1'`.
+[New in 2.0](/docs/reference/changelog#rayfin-20)
 
-Existing Kusto declarations also use version `'1'`, but new Kusto authoring is held in 1.36.2.
+Before adding an item-backed connector, the command reads the runtime settings of the app's
+recorded deployments in the target workspace and rejects an item that is their managed
+database. Use the app's data service for that database. If the settings cannot be read, the
+command fails without changing project files.
 
 `connector add` does not install packages. It prints a version-pinned `npm install` command;
 with `--json`, the same data appears under `install.packages` and `install.command`.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The `--json` result also reports `name` (the name written to `rayfin.yml`), `requestedName`
+when the name you passed was spelled differently, `auth`, `operations`, `overwritten`,
+`warnings`, `schemaDiscovery` for Category A, and the `wiring` outcome, whose `action` is
+`written`, `unchanged`, `discovered`, `manual`, `absent`, or `ambiguous`.
+
+Re-adding a name that already exists in any casing overwrites that entry after a prompt, or
+with `--yes`. It keeps the existing spelling, preserves entity files, rewrites
+`metadata.json`, and resets `auth.type` to the type's default unless you pass `--auth`.
+`--yes` also replaces a hand-written Category A aggregate `schema.ts` with a placeholder.
 
 ## `connector list`
 
@@ -114,7 +153,7 @@ Lists connectors declared in `rayfin.yml`. It does not call Fabric or the deploy
 
 | Flag | Description |
 | --- | --- |
-| `-v, --verbose` | Include catalog metadata for each connector. |
+| `-v, --verbose` | Include catalog metadata for each connector. Cannot be combined with `--json`. |
 | `--json` | Emit the configured connector entries as JSON. |
 
 ## `connector remove`
@@ -123,8 +162,13 @@ Lists connectors declared in `rayfin.yml`. It does not call Fabric or the deploy
 npx rayfin connector remove sales --yes
 ```
 
-Removes the named connector entry from `rayfin.yml` and deletes
-`rayfin/connectors/<name>/`.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Removes the named connector entry from `rayfin.yml` and regenerates the app wiring. It keeps
+the whole `rayfin/connectors/<name>/` directory, including entity files; only legacy
+temporary files under `rayfin/.temp/sources/<name>/` are deleted. Preserved files can still
+be compiled during `rayfin up`, so keep their dependencies until you have backed them up and
+deleted or excluded them.
 
 | Flag | Description |
 | --- | --- |
@@ -133,7 +177,8 @@ Removes the named connector entry from `rayfin.yml` and deletes
 | `--json` | Emit machine-readable JSON. |
 
 JSON output for a removed connector is
-`{ status, action: 'connector.remove', name, removed, directoryDeleted }`.
+`{ status, action: 'connector.remove', name, requestedName?, removed, directoryDeleted: false, recovery, wiring }`.
+Removing a name that is not declared succeeds with `removed: false`.
 
 ## `connector types`
 
@@ -151,23 +196,28 @@ Lists the connector catalog.
 
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-`--json` emits `{ status, schemaVersion, count, types }`. Each type includes `category`, `description`, `defaultAuth`, `allowedAuthTypes`, `dialect`, `allowedOperations`, `requiredConfig`, `discoverableItemTypes`, `requiresVersion`, optional `defaultVersion`, and version-pinned `packages`.
+`--json` emits `{ status, schemaVersion, count, types }`. Each type includes `type`,
+`category`, `description`, `defaultAuth`, `allowedAuthTypes`, `dialect`,
+`allowedOperations`, `requiredConfig`, `discoverableItemTypes`, `requiresVersion`, optional
+`defaultVersion`, and version-pinned `packages`. In 2.0.0, `fabriciqmcp` reports an empty
+`requiredConfig` and no discoverable item types.
 
 ## `connector inspect`
 
 ```bash
 npx rayfin connector inspect --name sales
 npx rayfin connector inspect --name sales --entity dbo.Customers --rows 10
-npx rayfin connector inspect --workspace-id <id> --item-id <id> --type fabric-warehouse --query queries\sample.sql
+npx rayfin connector inspect --workspace-id <id> --item-id <id> --type fabric-warehouse --query queries/sample.sql
 ```
 
 Inspects a source in read-only mode. It supports `fabric-sqlanalytics`,
-`fabric-warehouse`, `fabric-sqldatabase`, and `fabric-semanticmodel`. It does not support
-`kusto`; that type fails with `Unsupported connector type: kusto`.
+`fabric-warehouse`, `fabric-sqldatabase`, and `fabric-semanticmodel`. Any other type fails
+with `Unsupported connector type: <type>`, for example
+`Unsupported connector type: eventhouse`.
 
 | Flag | Description |
 | --- | --- |
-| `--name <name>` | Select a connector declared in `rayfin.yml`. Mutually exclusive with direct selectors. |
+| `--name <name>` | Select a connector declared in `rayfin.yml`, matched case-insensitively. Mutually exclusive with direct selectors. |
 | `--workspace-id <id>` / `--workspace <name>` | Direct mode workspace selector. Use with `--item-id` or `--item` and `--type`. |
 | `--item-id <id>` / `--item <name>` | Direct mode item selector. Use with a workspace selector and `--type`. |
 | `--type <type>` | Connector type for direct mode. |
@@ -202,7 +252,7 @@ forms, `--name` and `--operation`; flag values win over positionals.
 
 | Flag | Description |
 | --- | --- |
-| `<connector-name>` | Connector name declared in `rayfin.yml`. |
+| `<connector-name>` | Connector name declared in `rayfin.yml`, matched case-insensitively. |
 | `<operation>` | Operation to invoke. |
 | `--name <name>` | Connector name flag form; wins over the positional. |
 | `--operation <operation>` | Operation flag form; wins over the positional. |
@@ -219,13 +269,22 @@ Operation names match case-insensitively against the connector's `operations:` l
 entry has no operations, the command falls back to the connector type's full catalog
 allowlist.
 
+The payload is the operation's input. A semantic model takes `{ "query": "<DAX>" }`; an
+Eventhouse connector takes a saved query, `{ "queryId": "<id>", "parameters": { ... } }`.
+
 ### Invoke transports
 
 With `--transport auto`, `fabric-semanticmodel` calls Fabric and Power BI directly under the developer's own identity. It works with or without `rayfin up`, and it requires `workspaceId` and `itemId` under the connector's `config:` block.
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The direct semantic-model path queries the model-scoped `executeDaxQueries` endpoint, so the
+developer needs Read and Build permissions on the semantic model, not write access to the
+workspace.
+
 `--transport deployed` opts out of that shortcut and exercises the deployed BaaS route.
 
-Every other type, including `kusto`, POSTs to the deployed item at
+Every other type, including `eventhouse`, POSTs to the deployed item at
 `/__private/connectors/<name>/invoke` and requires a prior `rayfin up`.
 
 ### Invoke token handling
@@ -245,6 +304,11 @@ A resolved call is not
 automatically a success: a normalizing connector reports failure as `status: 'error'`, and a
 connector returning a raw envelope reports failure as `status: 'Failed'`. The CLI converts
 either failure shape into a non-zero exit.
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+When several `rayfin.yml` entries differ from the requested name only by case and none
+matches exactly, the command fails, and the `--json` error lists them under `candidates`.
 
 > [!NOTE]
 > Rayfin 1.36.1 coerces semantic-model Arrow Int64 values, including Union/Variant Int64s, before CLI output is serialized. Safe Int64 values should no longer print `Do not know how to serialize a BigInt`. Values outside JavaScript's safe integer range surface as connector `overflow` errors. [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
@@ -277,15 +341,24 @@ It requires a prior `npx rayfin up` so the remote endpoint and connector setting
 
 | Flag | Description |
 | --- | --- |
-| `--name <name>` | Apply only the named connector instead of every entry in `rayfin.yml`. |
+| `--name <name>` | Apply only the named connector instead of every entry in `rayfin.yml`. Matched case-insensitively. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `-v, --verbose` | Enable verbose output. |
 | `--json` | Emit `{ status, generate, results, steps, duration }`. `status` is `partial` when generation or apply failed for any connector. |
 
 `npx rayfin up --json` also includes connector generation and apply outcomes in the deployment `steps` map, with connector step keys namespaced as `connector:<name>`.
 
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`up connector apply`, `rayfin up`, and `rayfin dev` validate the `connectors:` block before
+any write: they reject two entries whose names differ only by case, `additionalPayload` on a
+Category A connector, and an `additionalPayload` over 64 KiB or 32 levels deep. With `--json`,
+these failures report the `invalid-connectors` code and a `hint`.
+
 ```prompt title="Register a Fabric SQL Database connector"
 Add a Rayfin connector named "sales" for my Fabric SQL Database using
 `npx rayfin connector add --type fabric-sqldatabase --workspace-id <workspace-id>
---item-id <item-id> --name sales`, then show me the resulting rayfin.yml entry and the
-scaffolded rayfin/connectors/sales/schema.ts.
+--item-id <item-id> --name sales`, then run the version-pinned npm install command it
+prints, verbatim. Show me the resulting rayfin.yml entry, the scaffolded
+rayfin/connectors/sales/schema.ts, and the `wiring` outcome the command reported. Do not
+pass `--yes` if a connector named sales already exists; ask me first.
 ```

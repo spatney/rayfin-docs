@@ -1,4 +1,5 @@
 {
   "title": "Storage",
-  "description": "Store and serve files with the blob storage client."
+  "description": "Store and serve files in typed storage folders on your Fabric app.",
+  "pages": ["files", "migrate-from-1-36"]
 }

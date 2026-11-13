@@ -1,12 +1,107 @@
 ---
 title: Telemetry
-description: What Rayfin CLI telemetry records, what it never records, and the environment variables that control telemetry.
+description: Reference for rayfin telemetry enable, disable, and query, which manage a deployed app's Application Insights telemetry, and for the Rayfin CLI's own usage telemetry and opt-out.
 ---
 
-The Rayfin CLI collects anonymous usage telemetry unless you opt out. On first run it
-prints a notice with the opt-out variable.
+This page covers two separate things:
 
-## Collected
+- **[`rayfin telemetry`](#rayfin-telemetry-commands)** commands manage your app's telemetry — [Observability](/docs/deploy/observability) — in the app's own Application Insights resource.
+- **[Rayfin CLI usage telemetry](#rayfin-cli-usage-telemetry)** is anonymous data the CLI reports about its own use. `RAYFIN_TELEMETRY_OPTOUT` controls only this, never your app's telemetry.
+
+## `rayfin telemetry` commands
+
+[New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+| Command | Description |
+| --- | --- |
+| `rayfin telemetry enable` | Enable `services.telemetry` in `rayfin.yml`. |
+| `rayfin telemetry disable` | Disable `services.telemetry` in `rayfin.yml`. |
+| `rayfin telemetry query <kql>` | Run a KQL query against the deployed app's Application Insights. |
+
+The commands need no feature flag. Allocating the app's Application Insights resource during `rayfin up`, and querying it, require Fabric service-side telemetry enablement for the target workspace; querying also needs Write permission on the app item. See [Observability](/docs/deploy/observability) for the end-to-end setup.
+
+> [!WARNING]
+> `rayfin telemetry disable` followed by `rayfin up` deletes the app's Application Insights resource and the telemetry collected in it. Re-enabling creates a new, empty resource.
+
+## `rayfin telemetry enable`
+
+```bash
+npx rayfin telemetry enable
+```
+
+| Option | Description |
+| --- | --- |
+| `--output <mode>` | Output format for the invoked subcommand: `interactive`, `plain`, or `json`. |
+| `--json` | Output result as JSON to stdout. |
+| `--verbose` | Enable verbose debug output to stderr. Cannot be combined with `--json`. |
+
+Sets `services.telemetry.enabled: true` in `rayfin/rayfin.yml` and prints `✅ Telemetry enabled.` It changes local configuration only; deploy with `rayfin up` to allocate the resource. When telemetry is already enabled, it prints `Telemetry is already enabled. No change was made.`
+
+```yaml title="rayfin/rayfin.yml"
+services:
+  telemetry:
+    enabled: true
+```
+
+With `--json`:
+
+```json
+{ "status": "success", "command": "enable", "changed": true, "telemetry": { "enabled": true } }
+```
+
+## `rayfin telemetry disable`
+
+```bash
+npx rayfin telemetry disable
+```
+
+Takes the same options as `enable`. Sets `services.telemetry.enabled: false` and prints `✅ Telemetry disabled.` followed by a warning that the next `rayfin up` deletes the observability resource. When telemetry is absent or already disabled, it prints `Telemetry is not enabled. No change was made.` With `--json`, the warning is in a `warnings` array.
+
+## `rayfin telemetry query`
+
+```bash
+npx rayfin telemetry query "<kql>" [--timespan <duration>] [--max-rows <count>] [--json]
+```
+
+| Argument or option | Description |
+| --- | --- |
+| `<kql>` | KQL query to execute. Pass the whole query as one quoted argument. |
+| `--timespan <duration>` | ISO-8601 duration limiting the query window, for example `PT1H`. |
+| `--max-rows <count>` | Maximum rows to return, from 1 to 10000. |
+| `--output <mode>` | Output format: `interactive`, `plain`, or `json`. |
+| `--json` | Return a single JSON result object. |
+
+The query runs against the Application Insights resource allocated to the active deployment, which the server selects; you cannot pass a resource ID or a Log Analytics workspace ID. Use Application Insights table names such as `traces`, `customEvents`, and `pageViews`, and columns such as `timestamp`, `message`, and `customDimensions`.
+
+```bash
+npx rayfin telemetry query "traces | project timestamp, message | order by timestamp desc | take 20"
+npx rayfin telemetry query "customEvents | summarize count() by name" --timespan PT1H --max-rows 100 --json
+```
+
+Without JSON output, each row is written to stdout as one JSON object per line. With `--json` or `--output json`, the result is one object:
+
+```json
+{ "status": "success", "count": 1, "rows": [{ "name": "observability.smoke_test", "count_": 3 }] }
+```
+
+A failure exits with code 1. It prints `Telemetry query failed: <message>` to stderr, or `{ "status": "failed", "error": { "code": "…", "message": "…" } }` in JSON mode.
+
+| Error code | Cause and fix |
+| --- | --- |
+| `INVALID_MAX_ROWS` | `--max-rows` is not an integer from 1 to 10000. |
+| `DEPLOYMENT_NOT_CONFIGURED` | No complete deployment is recorded for the project. Run `npx rayfin up` first. |
+| `AUTHENTICATION_REQUIRED` | Run `npx rayfin login` and retry. |
+| `TELEMETRY_QUERY_REQUEST_FAILED` | The telemetry service could not be reached. Check the deployment and your network connection. |
+| `TELEMETRY_QUERY_FAILED` | The service rejected the query. The message includes the HTTP status, the service code, and a request ID. `FEATURE_NOT_ENABLED` means service-side telemetry is off for the workspace; `TELEMETRY_NOT_ENABLED` means the app was not deployed with telemetry enabled; `TELEMETRY_QUERY_UNAVAILABLE` means the resource or query adapter is missing — redeploy with `rayfin up`. |
+| `INVALID_TELEMETRY_RESPONSE` | The service returned a response the CLI could not read. |
+
+`enable` and `disable` fail with `RAYFIN_PROJECT_NOT_FOUND` outside a Rayfin project, `TELEMETRY_WRITE_FAILED` when `rayfin/rayfin.yml` cannot be written, and `TELEMETRY_VERBOSE_JSON_CONFLICT` when `--verbose` is combined with `--json`.
+
+## Rayfin CLI usage telemetry
+
+The Rayfin CLI collects anonymous usage telemetry unless you opt out. On first run it prints a notice with the opt-out variable. `npm create @microsoft/rayfin` follows the same rules and opt-out.
+
+### Collected
 
 - Command name.
 - Flag names that were passed, never flag values.
@@ -15,28 +110,39 @@ prints a notice with the opt-out variable.
 - Duration.
 - OS and Node.js version.
 - Anonymous installation identifier from `~\.rayfin\dev-device-id`.
-- Telemetry environment label derived from CI/dev-container signals or `RAYFIN_TELEMETRY_ENV`.
+- Telemetry environment label derived from coding-agent, Codespaces, CI, and dev-container signals, or from `RAYFIN_TELEMETRY_ENV`. Coding-agent detection is [New in 2.0](/docs/reference/changelog#rayfin-20).
+- Activity IDs from Fabric API responses, to correlate a failure with the service.
+- For `rayfin up`, the installed versions of approved `@microsoft/*` packages the project declares, and the project-origin identifier from `rayfin/.project.json` when that file exists.
+- For a project created with `npm create @microsoft/rayfin`, how long each scaffold step took and how it ended. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
-## Not collected
+### Not collected
 
 Rayfin CLI telemetry does not collect project names, workspace names, file contents,
 connection strings, secret values, flag values, or command arguments.
 
-## Opt out
+### Opt out
 
 ```bash
 export RAYFIN_TELEMETRY_OPTOUT=1
 ```
 
-When telemetry is off, the CLI does not create `~\.rayfin\dev-device-id`.
+```powershell
+$env:RAYFIN_TELEMETRY_OPTOUT = '1'
+```
 
-## Environment label override
+Only the value `1` opts out. When telemetry is off, the CLI does not create `~\.rayfin\dev-device-id`.
+
+`rayfin/.project.json` holds a random project-origin identifier that `npm create @microsoft/rayfin` writes when telemetry is on, so later `rayfin up` events can be correlated with the scaffold without names. Delete the file to stop that correlation; deployments keep working.
+
+### Environment label override
 
 `RAYFIN_TELEMETRY_ENV` overrides the environment label. Values are trimmed and lowercased.
-Known labels include `github-actions`, `azure-pipelines`, `gitlab-ci`, `jenkins`,
-`codespaces`, `devcontainer`, `local`, and `other`. Custom labels may contain 1–64 ASCII
-letters, digits, hyphens, or underscores. Invalid non-empty values map to `other`; an
-empty value uses automatic detection.
+Known labels include `copilot-cli`, `claude-code`, `codex`, `cursor`, `gemini-cli`, and
+`opencode` [New in 2.0](/docs/reference/changelog#rayfin-20), plus `github-actions`,
+`azure-pipelines`, `gitlab-ci`, `jenkins`, `codespaces`, `devcontainer`, `local`, and
+`other`. Custom labels may contain 1–64 ASCII letters, digits, hyphens, or underscores.
+Invalid non-empty values map to `other`; an empty value uses automatic detection, which
+checks coding-agent markers before Codespaces, CI providers, and dev containers.
 
 Do not put identifying or sensitive values in `RAYFIN_TELEMETRY_ENV`.
 
@@ -44,13 +150,23 @@ Tools that run the CLI for you can set a label of their own.
 [Fabricator](https://spatney.github.io/rayfin-fabricator/) sets `RAYFIN_TELEMETRY_ENV` to
 `fabricator` for the Rayfin commands it runs.
 
-## Endpoint override
+### Endpoint override
 
 `RAYFIN_APPINSIGHTS_CONNECTION_STRING` overrides the Application Insights endpoint used by
 the CLI and VS Code extension. It is intended for contributors and controlled test
-environments.
+environments, and it is unrelated to your app's Observability resource.
 
 ```prompt title="Disable Rayfin CLI telemetry in CI"
 Set `RAYFIN_TELEMETRY_OPTOUT=1` in my CI workflow environment so Rayfin CLI commands do
-not send usage telemetry from automated runs.
+not send usage telemetry from automated runs. Do not change services.telemetry in
+rayfin/rayfin.yml — that setting controls my app's Observability, not CLI telemetry.
+```
+
+```prompt title="Query my Rayfin app's telemetry"
+In my deployed Rayfin 2.0 app, show the 20 most recent page views and the custom event names
+recorded in the last hour. Run `npx rayfin up status` to confirm the active deployment, then
+run `npx rayfin telemetry query "pageViews | where timestamp >= ago(1h) | project timestamp, name, duration | order by timestamp desc | take 20" --timespan PT1H --json`
+and `npx rayfin telemetry query "customEvents | where timestamp >= ago(1h) | summarize count() by name" --timespan PT1H --json`.
+Use Application Insights table names, not Log Analytics tables. If a query fails, report the
+error code and request ID; do not run `rayfin telemetry disable` or redeploy.
 ```

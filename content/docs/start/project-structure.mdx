@@ -1,11 +1,13 @@
 ---
 title: Project structure
-description: Understand the Rayfin scaffold layout, including rayfin.yml, deployment metadata, environment files, and the 1.36 universal app workspace.
+description: Understand the Rayfin scaffold layout — rayfin.yml, the rayfin/ schema project and its ESM marker, deployment metadata, environment files, and the Universal App workspace.
 ---
 
-Rayfin templates keep backend configuration, deployment state, and frontend code in predictable places. Flat templates and the 1.36 default `blankapp` template share root commands, but the default now creates the Universal App npm workspace.
+Rayfin templates keep backend configuration, deployment state, and frontend code in predictable places. Flat templates and the default `blankapp` template share root commands, but the default creates the Universal App npm workspace.
 
 ## Flat template layout
+
+The `todoapp`, `gettingstartedauth`, and `dataapp` templates use this layout:
 
 ```text
 my-app/
@@ -21,6 +23,7 @@ my-app/
 ├── src/
 ├── package.json
 ├── tsconfig.json
+├── vite.config.ts
 └── README.md
 ```
 
@@ -28,7 +31,7 @@ my-app/
 
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
-The CLI-facing `blankapp` template now creates the Universal App workspace. The hidden `universal-app` template name is still accepted, but users normally choose `blankapp` or the default prompt. The root owns orchestration scripts and `rayfin/rayfin.yml`; packages own runtime code.
+The CLI-facing `blankapp` template creates the Universal App workspace. The hidden `universal-app` template name is still accepted, but users normally choose `blankapp` or the default prompt. The root owns orchestration scripts and `rayfin/rayfin.yml`; packages own runtime code.
 
 ```text
 my-app/
@@ -39,7 +42,8 @@ my-app/
 │   ├── .env
 │   ├── .project.json
 │   ├── .deployments.json
-│   └── rayfin.yml
+│   ├── rayfin.yml
+│   └── tsconfig.json
 └── packages/
     ├── frontend/
     ├── data/
@@ -51,25 +55,53 @@ my-app/
 | `packages/frontend` | `@rayfin-app/frontend` | React, Vite, Fabric auth wiring, browser UI, and static output. |
 | `packages/data` | `@rayfin-app/data` | Entity registration and schema exports. |
 | `packages/shared` | `@rayfin-app/shared` | Types shared across browser, data, and Functions code. |
-| `packages/functions` | `@rayfin-app/functions` | Added only when the Functions capability pack is applied. |
+| `packages/functions` | `@rayfin-app/functions` | Added only when the `functions` capability pack is applied. |
+| `packages/storage` | `@rayfin-app/storage` | Added only when the `storage` capability pack is applied. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
 Root scripts coordinate the workspace:
 
 ```json title="package.json"
 {
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "workspaces": ["packages/*"],
   "scripts": {
     "dev": "rayfin dev",
     "dev:frontend": "npm run -w @rayfin-app/frontend dev",
     "build:fabric": "npm run -w @rayfin-app/shared build && npm run -w @rayfin-app/data build && npm run -w @rayfin-app/frontend build:fabric",
+    "pack:add": "node scripts/scaffold.mjs",
     "rayfin:up": "rayfin up"
   }
 }
 ```
 
+The root `package.json` declares Node.js 22.13 or later. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The frontend follows the operating system's light or dark theme by default. A `data-theme` or `data-appearance` attribute of `light` or `dark` on the `<html>` element, set by the app or the Fabric host, takes precedence, and the app's theme toggle sets `data-theme`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+### Capability packs
+
+Apply a capability pack from the workspace root:
+
+```bash
+npm run pack:add -- <pack>
+```
+
+The command patches service flags in `rayfin/rayfin.yml`, merges dependencies into the owning workspace package, copies the pack's starter files, and runs `npm install`. Add `--no-install` to skip the install or `--dry-run` to print the planned changes.
+
+| Pack | Adds |
+| --- | --- |
+| `data-modeling` | The data service (MSSQL) and a starter `Item` entity with owner-scoped access. |
+| `storage` | Storage and the data service it requires, a starter folder with owner-scoped access, and typed storage on the app client. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `functions` | The `packages/functions` package for typed user-defined functions, with `services.functions.auth.type: application`. |
+| `connectors` | The frontend connector SDK and client wiring for existing Fabric sources. Declare the sources with `rayfin connector add`. |
+| `analytics` | The `fabric-semanticmodel` connector and a semantic-model query hook. |
+| `visuals` | Chart and table components for query results. |
+
 ## rayfin/rayfin.yml
 
-`rayfin.yml` is the checked-in service declaration that `rayfin dev` and `rayfin up` sync to Fabric.
+`rayfin.yml` is the checked-in service declaration that `rayfin dev` and `rayfin up` sync to Fabric. The Universal App starts with this declaration:
 
 ```yaml title="rayfin/rayfin.yml"
 id: universal-app
@@ -100,7 +132,6 @@ services:
 
 `services.staticHosting.assetAccess` replaces the older `anonymousAccess` authoring shape. [New in 1.35.1](/docs/reference/changelog#rayfin-1351)
 
-
 ## Service configuration fields
 
 | Field | Type | Description |
@@ -114,13 +145,14 @@ services:
 | `services.data.enabled` | `boolean` | Enables the data service. Fabric deployments use `dialect: mssql`. |
 | `services.data.path` | `string` | Data package directory for workspace layouts. |
 | `services.data.buildCommand` | `string` | Command run from the data service path before packaging. |
+| `services.storage.enabled` | `boolean` | Enables remote Storage on the deployed Fabric backend. Storage requires the data service. Generally available, with no feature flag. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `services.staticHosting.path` | `string` | Frontend package directory for static hosting. |
 | `services.staticHosting.folder` | `string` | Built asset folder, usually `dist`. |
 | `services.staticHosting.assetAccess` | `protected` \| `public` | Hosted asset access posture. [New in 1.35.1](/docs/reference/changelog#rayfin-1351) |
 | `services.functions.enabled` | `boolean` | Enables Rayfin Functions. |
 | `services.functions.auth.type` | `application` | Required for enabled Functions. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 
-String values in `rayfin.yml` support `${VAR}` and `${VAR:-default}` interpolation from `rayfin/.env` and the shell environment. See [Environment variables](/docs/deploy/environments).
+String values in `rayfin.yml` support `${VAR}` and `${VAR:-default}` interpolation from `rayfin/.env` and the shell environment. See [Environment variables](/docs/deploy/environments). To collect application telemetry, see [Observability](/docs/deploy/observability). See [Storage](/docs/storage) for Storage folders and the [`rayfin.yml` reference](/docs/reference/config/rayfin-yml) for every field.
 
 ## Generated and local files
 
@@ -130,18 +162,76 @@ String values in `rayfin.yml` support `${VAR}` and `${VAR:-default}` interpolati
 | `.env.local` | Framework-specific values generated from `rayfin/.env`; in a universal app it lives under `packages/frontend`. | No |
 | `rayfin/.project.json` | Scaffold lineage identifier used for telemetry correlation. | Usually yes |
 | `rayfin/.deployments.json` | Fabric workspace IDs, item IDs, item names, publishable keys, hosting URLs, and active deployment. | No |
+| `rayfin/package.json` | ES module marker that `rayfin init` adds when the app's `package.json` does not set `"type": "module"`. [New in 2.0](/docs/reference/changelog#rayfin-20) | Yes |
 | `rayfin/.temp/` | Generated backend artifacts. | No |
 
 ## Data and TypeScript files
 
 Flat templates keep entity classes under `rayfin/data/` and register them in `rayfin/data/schema.ts`. Universal apps keep data code under `packages/data`, and `services.data.path` tells the CLI where to build it.
 
-Rayfin decorators require an ES2022 or later target. Templates already configure TypeScript and Vite; do not enable `emitDecoratorMetadata`, and do not switch to `@vitejs/plugin-react-swc`.
+Rayfin decorators are TC39 Stage 3 decorators and require an ES2022 or later target. Templates already configure TypeScript and Vite; do not enable `emitDecoratorMetadata`. Schema compilation needs TypeScript `^5.7.2 || ^6.0.2` in the package that owns the schema; see [Installation](/docs/start/installation#install-a-supported-typescript-version). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
+## rayfin/tsconfig.json
 
-## rayfin/tsconfig.json and root tsconfig.json
+The Rayfin CLI compiles your decorated entity files as a TypeScript project. Flat templates include `rayfin/tsconfig.json`, which extends the root `tsconfig.json` and switches to Node.js module resolution, because Node.js loads the compiled entities directly. This file matches the 2.0.0 `todoapp` template:
 
-The Rayfin CLI compiles decorated entity files as a TypeScript project. Flat templates include `rayfin/tsconfig.json` and a project reference from the root `tsconfig.json`:
+```json title="rayfin/tsconfig.json"
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": ".temp/compiled",
+    "rootDir": ".",
+    "declaration": true,
+    "composite": true,
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "module": "nodenext",
+    "moduleResolution": "nodenext"
+  },
+  "include": ["**/*"],
+  "exclude": [".temp/**/*"]
+}
+```
+
+With NodeNext resolution, relative imports between files under `rayfin/` need a `.js` extension even though the source files end in `.ts`, for example `import { Category } from './Category.js';`. An import without an extension, such as `./Category`, fails to compile with `TS2835`. Add `.js` when you move existing entities into `rayfin/data/`.
+
+When `rayfin init` creates `rayfin/tsconfig.json` for an existing app, it writes the same NodeNext settings, sets `target` to `ES2022`, adds `ESNext.Decorators` to the inherited `lib`, adds `node` to `types`, and turns off `experimentalDecorators` and `emitDecoratorMetadata`. It also adds `@types/node` to the app's dev dependencies. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The Universal App keeps its entities in `packages/data`, which builds with its own `tsconfig.json`. Its `rayfin/tsconfig.json` extends `tsconfig.base.json` and uses `module: ESNext` with `moduleResolution: Bundler` and `types: ["node"]`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+## rayfin/package.json
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`@microsoft/rayfin-core` is an ES module package, so your entities and their compiled output must load as ES modules. When your app's `package.json` does not set `"type": "module"`, `rayfin init` adds this file:
+
+```json title="rayfin/package.json"
+{
+  "type": "module"
+}
+```
+
+Keep it. Without it, NodeNext compiles the entities as CommonJS, and schema compilation stops with a message that names the file to restore:
+
+```text
+With NodeNext module settings in "<path>/rayfin/tsconfig.json", schema source "<path>/rayfin/data/Todo.ts" compiles as CommonJS because "<path>/package.json" does not set "type": "module", but @microsoft/rayfin-core is ESM-only. Create "<path>/rayfin/package.json" containing {"type": "module"}, or set "type": "module" in "<path>/package.json".
+```
+
+Apps whose `package.json` already sets `"type": "module"`, including every bundled template, do not get this file.
+
+### The rayfin/ package boundary
+
+`rayfin/package.json` also makes `rayfin/` its own package. Node.js and TypeScript resolve `#` subpath imports (the `imports` field) and imports of your app by its own package name from the nearest `package.json`, which is now `rayfin/package.json`. Files under `rayfin/` therefore cannot use the `imports` aliases or the package name from your root `package.json`, and schema compilation reports those imports as modules it cannot find.
+
+To fix those imports, choose one:
+
+- Use relative imports that end in `.js`.
+- Define the aliases in an `imports` field in `rayfin/package.json`. Alias targets must start with `./` and stay inside `rayfin/`; Node.js rejects targets such as `../shared/*`.
+- If the rest of your app can run as ES modules, set `"type": "module"` in your app's `package.json` and delete `rayfin/package.json`, so files under `rayfin/` use the root aliases again.
+
+## Root tsconfig.json
+
+A flat template's root `tsconfig.json` covers the frontend and references the `rayfin/` project:
 
 ```json title="tsconfig.json"
 {
@@ -165,28 +255,79 @@ Do not set `emitDecoratorMetadata` to `true`. It requires legacy decorators, whi
 
 ## Vite configuration
 
-Templates set an ES2022 target in Vite so decorator syntax is parsed consistently:
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Templates set an ES2022 target for Vite, esbuild, and dependency pre-bundling so decorator syntax is parsed consistently. They use `@vitejs/plugin-react-swc` with Stage 3 decorators enabled, so frontend code can import entity classes as values — for example for `getFieldConstraints`, `toStandardSchema`, or a connector's `connectorConfig.entities`. This file matches the 2.0.0 `todoapp` template:
 
 ```typescript title="vite.config.ts"
 import { rayfinLocalDev } from '@microsoft/rayfin-local-dev/vite';
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
+import { resolve } from 'path';
 import { defineConfig, loadEnv } from 'vite';
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
+  // Pin the dev server to Rayfin's per-project port (VITE_PORT, mapped from
+  // RAYFIN_PUBLIC_FRONTEND_PORT in .env.local) so multiple local frontends
+  // don't collide and the deployed backend can allow-list one stable origin.
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const port = env.VITE_PORT ? Number(env.VITE_PORT) : undefined;
 
+  // Fail the production build early when the Rayfin publishable key is missing
+  // for a remote backend. Vite statically inlines `import.meta.env.*`, so an
+  // unset key would otherwise ship as `undefined` and only crash at runtime.
+  // A localhost API URL resolves to the local-dev path, which needs no key.
+  if (command === 'build') {
+    const apiUrl = env.VITE_RAYFIN_API_URL;
+    const isRemoteBackend =
+      !!apiUrl && !/^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(apiUrl);
+    if (isRemoteBackend && !env.VITE_RAYFIN_PUBLISHABLE_KEY) {
+      throw new Error(
+        'Missing required Rayfin client environment variable: VITE_RAYFIN_PUBLISHABLE_KEY.\n' +
+          'Regenerate .env.local from rayfin/.env with: rayfin env --framework vite\n' +
+          '(run `rayfin up` first if rayfin/.env has not been populated yet).'
+      );
+    }
+  }
+
   return {
-    plugins: [react(), rayfinLocalDev()],
+    plugins: [
+      react({
+        // Rayfin entities use TC39 Stage-3 decorators, which SWC rejects by
+        // default ("Expression expected" at `@entity()`). Enable them so the
+        // frontend can import entity classes at runtime, e.g. for
+        // getFieldConstraints() or toStandardSchema().
+        useAtYourOwnRisk_mutateSwcOptions({ jsc }) {
+          if (!jsc?.parser) return;
+          jsc.parser.decorators = true;
+          jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' };
+        },
+      }),
+      tailwindcss(),
+      rayfinLocalDev(),
+    ],
+    resolve: {
+      alias: {
+        '@': resolve(import.meta.dirname, 'src'),
+      },
+    },
     ...(port ? { server: { port, strictPort: true } } : {}),
-    build: { target: 'es2022' },
-    esbuild: { target: 'es2022' },
+    build: {
+      target: 'es2022',
+    },
+    esbuild: {
+      target: 'es2022',
+    },
     optimizeDeps: {
-      esbuildOptions: { target: 'es2022' },
+      esbuildOptions: {
+        target: 'es2022',
+      },
     },
   };
 });
 ```
+
+Without the `useAtYourOwnRisk_mutateSwcOptions` setting, `@vitejs/plugin-react-swc` does not compile TC39 decorators. The dev server fails with an `Expression expected` error on `@entity()`, and on Vite 8, `vite build` emits raw `@decorator` syntax that browsers cannot parse, so `rayfin up` refuses the bundle. Type-only imports (`import type`) are unaffected. Apps created from older templates need this change too, or can switch to the default `@vitejs/plugin-react` plugin.
 
 The `rayfinLocalDev()` plugin is development-only. It serves local `rayfin.config.json`, proxies Rayfin backend routes, routes local Functions calls, and supports local automatic sign-in for protected static assets.
 
@@ -201,6 +342,7 @@ The `rayfinLocalDev()` plugin is development-only. It serves local `rayfin.confi
 | `RAYFIN_PUBLIC_WORKSPACE_ID` | `VITE_FABRIC_WORKSPACE_ID` |
 | `RAYFIN_PUBLIC_ITEM_ID` | `VITE_FABRIC_ITEM_ID` |
 | `RAYFIN_PUBLIC_PORTAL_URL` | `VITE_FABRIC_PORTAL_URL` |
+| `RAYFIN_PUBLIC_TENANT_ID` | `VITE_FABRIC_TENANT_ID` |
 | `RAYFIN_PUBLIC_FRONTEND_PORT` | `VITE_PORT` |
 | `RAYFIN_PUBLIC_FUNCTIONS_URL` | `VITE_RAYFIN_FUNCTIONS_URL` |
 
@@ -211,7 +353,7 @@ In a workspace layout, the file is written under `services.staticHosting.path`, 
 `rayfin/.temp/` contains generated backend artifacts, including compiled entity metadata and Data API Builder configuration. If the backend appears stale, restart `rayfin dev` or run `npx rayfin up` so the CLI regenerates and reapplies the artifacts.
 
 ```prompt title="Explain my Rayfin project layout"
-Inspect my Rayfin project's package.json, rayfin/rayfin.yml, rayfin/.env, rayfin/.deployments.json, and any npm workspaces. Tell me whether it is a flat template or the 1.36 universal app layout, identify the data and static-hosting service paths, and explain which files are committed versus generated or gitignored.
+Inspect my Rayfin project's package.json, rayfin/rayfin.yml, rayfin/tsconfig.json, rayfin/package.json if present, rayfin/.env, rayfin/.deployments.json, and any npm workspaces. Tell me whether it is a flat template or the Universal App workspace layout, identify the data and static-hosting service paths, and explain which files are committed versus generated or gitignored. Check that the schema package uses TypeScript ^5.7.2 or ^6.0.2, that relative imports between files under rayfin/ end in .js, that rayfin/package.json declares {"type": "module"} when the root package.json is not an ES module package, and that a @vitejs/plugin-react-swc config enables Stage 3 decorators with useAtYourOwnRisk_mutateSwcOptions.
 ```
 
 ## Next

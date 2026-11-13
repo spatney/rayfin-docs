@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Overview of the rayfin CLI — root options, the Fabric development workflow, and links to every visible command in Rayfin 1.36.2.
+description: Overview of the rayfin CLI — root options, the Fabric development workflow, and links to every visible command in Rayfin 2.0.0.
 ---
 
 Use `@microsoft/rayfin-cli` from a Rayfin project root to scaffold projects, run the local
@@ -20,7 +20,7 @@ npx rayfin up
 
 `npm run dev` in the bundled templates runs `rayfin dev`, which prepares the Fabric
 backend and starts the local frontend. Use `rayfin up` when you want to deploy static
-content and Functions to Fabric.
+content, Functions, and the rest of the backend configuration to Fabric.
 
 ## Root options
 
@@ -52,6 +52,8 @@ the subcommand name.
 | [`login`](/docs/reference/cli/login) | Sign in to the Rayfin platform. |
 | `logout` | Sign out and clear cached credentials; see [Login](/docs/reference/cli/login). |
 | [`docs`](/docs/reference/cli/docs) | Query Rayfin docs from installed packages, or discover packages not yet installed. |
+| [`storage`](/docs/reference/cli/storage) | Initialize storage sources and client integration. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| [`telemetry`](/docs/reference/cli/telemetry) | Manage the application telemetry service. [New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status) |
 
 ## Reference pages
 
@@ -59,13 +61,14 @@ the subcommand name.
 | --- | --- |
 | [CLI installation](/docs/reference/cli/installation) | Install and update `@microsoft/rayfin-cli`. |
 | [Init](/docs/reference/cli/init) | `rayfin init`, `npm create @microsoft/rayfin`, templates, services, and generated files. |
-| [rayfin dev](/docs/reference/cli/dev) | Fabric-backed local development and `dev functions apply`. |
-| [Up](/docs/reference/cli/up) | Full deploy, dry runs, service exclusions, status, switch, and deploy-only subcommands. |
+| [rayfin dev](/docs/reference/cli/dev) | Fabric-backed local development, `dev storage apply`, and `dev functions apply`. |
+| [Up](/docs/reference/cli/up) | Full deploy, dry runs, service exclusions, static-upload skipping, status, switch, and deploy-only subcommands. |
 | [Env](/docs/reference/cli/env) | Framework `.env.local` generation. |
 | [Docs](/docs/reference/cli/docs) | CLI documentation search and symbol lookup. |
 | [Ai-files](/docs/reference/cli/ai-files) | `AGENTS.md`, `.mcp.json`, and Rayfin skills management. |
 | [Templates](/docs/reference/cli/templates) | Built-in, local, git, and registered template sources. |
-| [Telemetry](/docs/reference/cli/telemetry) | CLI telemetry and opt-out variables. |
+| [Telemetry](/docs/reference/cli/telemetry) | Application telemetry commands, plus CLI usage telemetry and its opt-out variables. |
+| [Storage](/docs/reference/cli/storage) | `rayfin storage init` and the Storage apply commands. For folder declarations and the client, see [Storage](/docs/storage). |
 
 ## Configuration reference
 

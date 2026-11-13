@@ -1,7 +1,7 @@
 ---
 title: Connector authentication
 appliesTo: "@microsoft/rayfin-connectors >= 1.36"
-description: Configure connector auth.type values, validation rules, and caller identity for delegated and application connector access.
+description: Choose whether a connector runs as the signed-in user or as the app — auth.type values, defaults and allowed identities per connector type, validation, and the permissions each needs.
 ---
 
 Choose connector authentication in `rayfin/rayfin.yml` before you deploy a connector.
@@ -17,14 +17,7 @@ For the conceptual overview across auth, functions, connectors, and data policie
 
 ## Declare `auth.type`
 
-Each connector entry has an `auth:` block:
-
-```yaml
-auth:
-  type: application
-```
-
-In context, the entry looks like this:
+Each connector entry has an `auth:` block. In context, the entry looks like this:
 
 ```yaml title="rayfin/rayfin.yml"
 connectors:
@@ -42,10 +35,28 @@ connectors:
       - name: delete
 ```
 
-`npx rayfin connector add ...` writes `auth.type: application` by default for Category A SQL connectors. It writes `auth.type: delegated` for Category B connectors.
+The value is lowercase: `delegated` or `application`. Other values, including uppercase
+variants, fail validation, and omitting `auth.type` is a validation error.
 
-This default changed in 1.36. The value is lowercase: `delegated` or `application`. Other values, including uppercase variants, fail
-validation.
+`npx rayfin connector add ...` writes the type's default: `application` for Category A SQL
+connectors, and `delegated` for `fabric-semanticmodel` and `fabriciqmcp`. The Category A
+default changed in 1.36.
+
+## Set the identity at add time
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Pass `--auth` to `connector add` to write a non-default identity without editing
+`rayfin.yml` afterwards:
+
+```bash
+npx rayfin connector add --type fabric-sqldatabase --workspace-id <workspace-id> --item-id <item-id> --auth delegated
+```
+
+The CLI rejects an identity the type does not allow before writing anything, for example
+`Invalid --auth "application" for connector type "fabric-semanticmodel". Allowed: [delegated].`
+Re-adding an existing connector resets `auth.type` to the type's default unless you pass
+`--auth` again.
 
 ## Use an allowed value for the connector type
 
@@ -58,11 +69,19 @@ deployment starts.
 | `fabric-warehouse` | `application` | `delegated`, `application` |
 | `fabric-sqldatabase` | `application` | `delegated`, `application` |
 | `fabric-semanticmodel` | `delegated` | `delegated` only |
-| `kusto` | `delegated` | Existing connectors only; `delegated` only |
+| `fabriciqmcp` | `delegated` | `delegated` only [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `eventhouse` | `application` | `application` only; existing connectors only [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 
-Category B connectors are delegated-only. `auth.type: application` on `fabric-semanticmodel` or an existing `kusto` connector is rejected by `rayfin up` before deployment.
+A disallowed value fails with
+`Connector "<name>" (<type>) does not support auth type "<auth>".`
 
-New Kusto authoring is held in 1.36.2.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The Eventhouse adapter authorizes as the app owner and rejects a delegated caller token, so
+`eventhouse` accepts only `application`. Its 1.36 predecessor, `kusto`, accepted only
+`delegated`: migrate an existing entry as described in
+[Eventhouse](/docs/connectors/eventhouse#migrate-a-136-kusto-connector). New Eventhouse
+authoring is held in 2.0.0.
 
 ## Run queries as the signed-in user
 
@@ -76,14 +95,18 @@ can compare `claims.sub` or `claims.email` to fields on the connector entity. Se
 [policy DSL](/docs/data/permissions) and
 [connector entity generation](/docs/connectors/entity-generation).
 
+`fabric-semanticmodel` and `fabriciqmcp` always run as the signed-in user.
+
 ## Run queries as the app
 
-Use `auth.type: application` only when a Category A connector should run as the app identity
-instead of the caller. It is available for `fabric-sqlanalytics`, `fabric-warehouse`, and
-`fabric-sqldatabase`.
+Use `auth.type: application` when a connector should run as the app identity instead of the
+caller. It is available for `fabric-sqlanalytics`, `fabric-warehouse`, and
+`fabric-sqldatabase`, and it is the only identity for `eventhouse`.
 
 Because the caller's identity is no longer in play, row-level policies keyed on `claims` no
-longer distinguish users. Do not choose application auth for per-user access control.
+longer distinguish users, and any row-level security at the source is evaluated against the
+app owner. Do not choose application auth for per-user access control; enforce it in your
+app instead.
 
 ## Separate discovery permissions from runtime auth
 
@@ -94,17 +117,27 @@ CLI can inspect tables and columns.
 Runtime auth is separate. After deployment, connector queries use the configured
 `auth.type`: the signed-in user for `delegated`, or the app identity for `application`.
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+For semantic models, `npx rayfin connector invoke` calls Power BI directly under the
+developer's identity by default. That direct path needs Read and Build permissions on the
+semantic model, not write access to the workspace. See
+[Semantic models](/docs/connectors/semantic-models#exercise-the-connector-from-the-cli).
+
 ```prompt title="Configure connector authentication"
-In my Rayfin project, review the connectors block in rayfin/rayfin.yml and set the correct
-auth.type for each connector.
+In my Rayfin 2.0 project, review the connectors block in rayfin/rayfin.yml and set the
+correct auth.type for each connector.
 
 Use auth.type: delegated when queries should run as the signed-in user and the user has
 permission on the target Fabric workspace and item. Use auth.type: application only for
 fabric-sqlanalytics, fabric-warehouse, or fabric-sqldatabase when the connector should run
-as the app identity. Do not set application auth on fabric-semanticmodel or existing kusto because
-rayfin up rejects that combination.
+as the app identity. fabric-semanticmodel and fabriciqmcp accept only delegated, and
+eventhouse accepts only application — rayfin up rejects any other combination. For a new
+connector, pass `--auth delegated` or `--auth application` to `npx rayfin connector add`
+instead of editing the file afterwards; re-adding an existing connector resets auth.type to
+the type's default unless --auth is passed.
 
 If the connector is Category A and uses @role() policies on generated entities, explain how
-the chosen auth type affects claims-based row-level security. Then run npx rayfin up far
+the chosen auth type affects claims-based row-level security. Then run `npx rayfin up` far
 enough to catch connector validation errors and report the result.
 ```

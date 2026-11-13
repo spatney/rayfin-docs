@@ -1,7 +1,7 @@
 ---
 title: Calling functions from your app
-description: Invoke Rayfin functions from the frontend with RayfinClient, AppFunctionsSchema, per-call options, and local Vite routing.
-appliesTo: "@microsoft/rayfin-functions >= 1.36"
+description: Invoke Rayfin functions from the frontend — register functionsService on RayfinClient, call typed invoke(), pass per-call options, handle errors, and route local Vite calls.
+appliesTo: "@microsoft/rayfin-functions >= 2.0"
 ---
 
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
@@ -11,30 +11,51 @@ Call functions from browser code through `client.functions.<name>.invoke(...)`. 
 > [!NOTE]
 > Functions are generally available in Rayfin 1.36 and are not available in every Fabric region or tenant.
 
-## Pass the generated functions schema
+## Register the functions service
 
-Import `AppFunctionsSchema` from the generated functions package and pass it as the second type parameter to `RayfinClient`:
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Install `@microsoft/rayfin-functions` in the frontend package at the same version as your other Rayfin packages. The 2.0 client no longer depends on it, so your `package.json` must declare it:
+
+```bash
+npm install @microsoft/rayfin-functions@2.0.0
+```
+
+Register `functionsService<AppFunctionsSchema>()` in `services` when you create the client, passing the generated `AppFunctionsSchema` as its type argument:
 
 ```typescript title="src/services/rayfinClient.ts"
 import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
 import type { AppSchema } from '../../rayfin/data/schema';
-import type { AppFunctionsSchema } from '../../rayfin/functions/src/types.js';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types';
 
-export const client = new RayfinClient<AppSchema, AppFunctionsSchema>({
+export const rayfinClient = RayfinClient.create({
   baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
   publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+    functions: functionsService<AppFunctionsSchema>(),
+  },
 });
+
+export type AppClient = typeof rayfinClient;
 ```
 
-Only names in `AppFunctionsSchema` are available on `client.functions`.
+- Only names in `AppFunctionsSchema` are available on `client.functions`. Adjust the import path to where your frontend sits relative to `rayfin/functions/src/types.ts`.
+- `client.functions` exists only when you register the service. Keep the rest of your existing `RayfinClient.create` call — its auth adapter and other services — unchanged.
+- The bundled templates resolve deployment settings with `resolveRayfinConfig()` before they create the client; see [Create a client](/docs/reference/sdk/rayfin-client#create-a-client).
+- In 1.x you passed the schema as the second type parameter of `new RayfinClient<AppSchema, AppFunctionsSchema>(...)`. 2.0 removes that constructor, and `@microsoft/rayfin-client` no longer re-exports the `FunctionsSchema` type: import it from `@microsoft/rayfin-functions`. See [Migrate from 1.x](/docs/reference/sdk/rayfin-client#migrate-from-1x).
 
 ## Invoke a function
 
 ```typescript title="src/features/greet.ts"
-import { client } from '../services/rayfinClient';
+import { rayfinClient } from '../services/rayfinClient';
 
 export async function greet(): Promise<string> {
-  return await client.functions.greet.invoke({
+  return await rayfinClient.functions.greet.invoke({
     firstName: 'Ada',
     lastName: 'Lovelace',
   });
@@ -44,7 +65,7 @@ export async function greet(): Promise<string> {
 For a no-input function, call `invoke()`:
 
 ```typescript
-const entries = await client.functions.getEntries.invoke();
+const entries = await rayfinClient.functions.getEntries.invoke();
 ```
 
 `invoke()` resolves to the function output directly, not to a transport envelope.
@@ -54,26 +75,28 @@ const entries = await client.functions.getEntries.invoke();
 `InvokeOptions` supports headers and a per-call timeout. Options always occupy the second argument slot.
 
 ```typescript
-await client.functions.longRunning.invoke(
+await rayfinClient.functions.longRunning.invoke(
   { input: 'value' },
   { timeoutMs: 5_000, headers: { 'x-request-id': crypto.randomUUID() } },
 );
 
-await client.functions.ping.invoke(undefined, { timeoutMs: 5_000 });
+await rayfinClient.functions.ping.invoke(undefined, { timeoutMs: 5_000 });
 ```
 
 `timeoutMs` is capped at 250 seconds, the Fabric UDF host invocation ceiling.
 
 ## Handle failures
 
+Catch `FunctionsError` from `@microsoft/rayfin-functions` before generic errors. Import `NetworkError` by name from `@microsoft/rayfin-client`; in 1.x it came from `@microsoft/rayfin-lib`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 ```typescript title="src/features/greet.ts"
+import { NetworkError } from '@microsoft/rayfin-client';
 import { FunctionsError } from '@microsoft/rayfin-functions';
-import { NetworkError } from '@microsoft/rayfin-lib';
-import { client } from '../services/rayfinClient';
+import { rayfinClient } from '../services/rayfinClient';
 
 export async function safeGreet(): Promise<string> {
   try {
-    return await client.functions.greet.invoke({
+    return await rayfinClient.functions.greet.invoke({
       firstName: 'Ada',
       lastName: 'Lovelace',
     });
@@ -95,12 +118,18 @@ export async function safeGreet(): Promise<string> {
 
 ## Route local Vite calls through the adapter
 
-The package `@microsoft/rayfin-local-dev` is published at 1.36.2 and the bundled Vite templates use it for local Functions routing. During `vite serve`, the adapter proxies the SDK's same-origin `/functions/<name>/invoke` route to the Functions host selected by `npx rayfin dev` or `npx rayfin dev functions apply`. It also supports the legacy `/.rayfin/api/<name>` route when code passes an explicit `functionsBaseUrl` from `resolveRayfinFunctionsBaseUrl()`.
+The bundled Vite templates register the `@microsoft/rayfin-local-dev` adapter. While `vite serve` runs, it handles the SDK's default same-origin route, `/functions/<name>/invoke`:
+
+| Situation | Where the call goes |
+| --- | --- |
+| `npx rayfin dev` or `npx rayfin dev functions apply` started a local Functions host | The local Functions host. |
+| No local Functions host is configured | The configured Fabric backend, so the deployed function code runs. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| A local Functions host is configured but not reachable | Nowhere — the adapter returns HTTP 502 and never falls back to deployed code. |
 
 For an older or custom Vite app, install and register the adapter:
 
 ```bash
-npm install @microsoft/rayfin-local-dev
+npm install @microsoft/rayfin-local-dev@2.0.0
 ```
 
 ```typescript title="vite.config.ts"
@@ -112,29 +141,43 @@ export default defineConfig({
 });
 ```
 
-Most apps can leave `functionsBaseUrl` unset and let the adapter proxy the default `/functions` route. If existing code needs an explicit local Functions base URL, set `functionsBaseUrl` only during local development:
+Leave `functionsBaseUrl` unset so local and deployed calls use the same route. The proxy is reachable wherever the Vite dev server is, so keep Vite bound to loopback or restrict its `host` and `allowedHosts` settings to a trusted development network.
+
+### Use an explicit Functions base URL
+
+`functionsBaseUrl` remains a client option, and it changes only function routing: when it is set, the SDK calls `${functionsBaseUrl}/api/<name>` instead of `${baseUrl}/functions/<name>/invoke`. Existing code that sets it from `resolveRayfinFunctionsBaseUrl()` keeps working:
 
 ```typescript title="src/services/rayfinClient.ts"
-import { resolveRayfinFunctionsBaseUrl } from '@microsoft/rayfin-local-dev';
 import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
+import { resolveRayfinFunctionsBaseUrl } from '@microsoft/rayfin-local-dev';
 import type { AppSchema } from '../../rayfin/data/schema';
-import type { AppFunctionsSchema } from '../../rayfin/functions/src/types.js';
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types';
 
-export const client = new RayfinClient<AppSchema, AppFunctionsSchema>({
+export const rayfinClient = RayfinClient.create({
   baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
   publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
   functionsBaseUrl: resolveRayfinFunctionsBaseUrl(),
+  auth: browserSession({ storage: true }),
+  services: {
+    data: dataService<AppSchema>(),
+    functions: functionsService<AppFunctionsSchema>(),
+  },
 });
+
+export type AppClient = typeof rayfinClient;
 ```
 
-When `functionsBaseUrl` is set, the SDK calls `${functionsBaseUrl}/api/<name>`; `resolveRayfinFunctionsBaseUrl()` resolves that to the adapter's same-origin `/.rayfin` base only while the Vite adapter is active. When `functionsBaseUrl` is unset, the SDK calls `${baseUrl}/functions/<name>/invoke`; in Vite dev the adapter proxies that same-origin `/functions` route to the local host, and in production it reaches the deployed Fabric backend.
+`resolveRayfinFunctionsBaseUrl()` returns the adapter's same-origin `/.rayfin` base only while the Vite adapter has a local Functions host to route to; the adapter then forwards `/.rayfin/api/<name>` to that host and returns HTTP 502 if it is down. Otherwise the helper returns `undefined`, so production builds call the deployed Fabric backend.
 
-If the local Functions host is down while the Vite adapter is active, the `/functions` and `/.rayfin/api` proxies return HTTP 502 instead of falling back to deployed function code.
+For frameworks other than Vite, pass the framework's Functions URL variable as `functionsBaseUrl` only during development and leave it undefined in production — for example, `NEXT_PUBLIC_RAYFIN_FUNCTIONS_URL` behind an explicit development check in Next.js.
 
 Do not call a function from the frontend until it is deployed or the local Functions host is running. A generated type proves the function was discovered at build time; it does not prove the deployed or local runtime currently has that handler loaded.
 
 ```prompt title="Call a Rayfin function from the frontend"
-In my Rayfin app, wire the frontend to call an existing function.
+In my Rayfin 2.0 app, wire the frontend to call an existing function.
 
-Import `AppFunctionsSchema` from rayfin/functions/src/types.js and pass it as the second type parameter to `RayfinClient<AppSchema, AppFunctionsSchema>`. Call `client.functions.<name>.invoke(...)` with the generated input type. Put per-call headers or `timeoutMs` in the second argument; for a no-input function use `invoke(undefined, options)` when passing options. Catch `FunctionsError` from `@microsoft/rayfin-functions` before generic errors. If this is a Vite app that needs local function routing, add `@microsoft/rayfin-local-dev` and register `rayfinLocalDev()` in vite.config.ts. Leave `functionsBaseUrl` unset unless existing code explicitly needs the legacy `/.rayfin/api` route; in that case set it with `resolveRayfinFunctionsBaseUrl()`.
+Add @microsoft/rayfin-functions to the frontend package.json at the same exact version as @microsoft/rayfin-client. In the existing `RayfinClient.create({...})` call, keep the auth adapter and other services and add `functions: functionsService<AppFunctionsSchema>()` to `services`, importing `functionsService` from @microsoft/rayfin-functions and `AppFunctionsSchema` from rayfin/functions/src/types. Call `client.functions.<name>.invoke(...)` with the generated input type. Put per-call headers or `timeoutMs` in the second argument; for a no-input function use `invoke(undefined, options)` when passing options. Catch `FunctionsError` from @microsoft/rayfin-functions before generic errors, and import `NetworkError` from @microsoft/rayfin-client. If this is a Vite app without local function routing, add @microsoft/rayfin-local-dev and register `rayfinLocalDev()` from @microsoft/rayfin-local-dev/vite in vite.config.ts. Leave `functionsBaseUrl` unset unless existing code needs the `/.rayfin/api` route; in that case set it with `resolveRayfinFunctionsBaseUrl()`.
 ```

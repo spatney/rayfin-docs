@@ -60,7 +60,9 @@ On every run, fresh scaffold or not, the command installs dependencies, builds, 
 
 The scaffold pins `@microsoft/fabric-user-data-functions` to the exact version of the running CLI. Re-running without `--force` preserves the existing package version.
 
-Fresh Rayfin 1.36.2 scaffolds write `host.json` with `extensionBundle.id: "Microsoft.Azure.Functions.ExtensionBundle.Preview"` and `extensionBundle.version: "[4.49.0, 5.0.0)"`. Existing apps are not migrated; update `<services.functions.path>/host.json` separately when upgrading. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
+Because the Rayfin 2.0 CLI writes runtime metadata schema 3.0, a preserved older worker stops the type-generation step with an `npm install @microsoft/fabric-user-data-functions@<cli-version>` command to run in the functions package. Re-running `functions init` does not upgrade it. See [Match the worker package to the CLI](/docs/functions#match-the-worker-package-to-the-cli). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Fresh scaffolds from Rayfin 1.36.2 and later write `host.json` with `extensionBundle.id: "Microsoft.Azure.Functions.ExtensionBundle.Preview"` and `extensionBundle.version: "[4.49.0, 5.0.0)"`. Existing apps are not migrated; update `<services.functions.path>/host.json` separately when upgrading. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
 
 ## `rayfin dev functions apply`
 
@@ -71,6 +73,8 @@ npx rayfin dev functions apply [--port <port>] [--inspect-port <port>] [--no-deb
 Verifies prerequisites, merges local settings, starts a local Azure Functions Core Tools host, starts watchers, and writes debugger configuration. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
 Rayfin 1.36.1 and later reduce Functions host restart output to `Functions host restarted.` and update an existing **Functions: Attach** debugger entry when the inspector port changes. [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
+
+Before starting the host, the command checks that the installed `@microsoft/fabric-user-data-functions` can read runtime metadata schema 3.0 and stops with an `npm install` command when it cannot. [Changed in 2.0](/docs/reference/changelog#rayfin-20) It also warns when the functions `host.json` still allows a Preview extension bundle older than 4.49.0, and when Core Tools exits with `A window handle must be configured`, it replaces the generic hint with the `host.json` fix. `rayfin dev` does the same when it starts the local Functions host. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -100,11 +104,15 @@ Builds, packages, and deploys functions to an existing remote Rayfin item.
 
 This command uploads code only. It does not validate or apply `services.functions.auth.type` to the remote app; run a full `npx rayfin up` after changing Functions auth settings.
 
+A `404` from this command usually means Functions are not enabled on the remote item — for example, because you ran `rayfin functions init` after the last full deploy. Run a full `npx rayfin up` once to apply `services.functions` from `rayfin.yml`, then retry. On a 404 the CLI prints that tip. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+A functions project whose only function is a `udf.authClaims` provider can generate types and deploy. See [Dynamic auth claims](/docs/auth/dynamic-claims). [New in 2.0](/docs/reference/changelog#rayfin-20)
+
 ## Related `rayfin up` flags
 
 | Command or flag | Description |
 | --- | --- |
-| `npx rayfin up` | Full app deploy. Deploys Functions when enabled and not excluded. |
+| `npx rayfin up` | Full app deploy. Deploys Functions when enabled and not excluded. Before changing anything remotely, it stops on an invalid custom audience. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `npx rayfin up --exclude-services functions` | Skip the functions build/package/deploy phase. Runtime settings remain unchanged. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `npx rayfin init --services functions` | Scaffold a new app with Functions enabled. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 
@@ -118,9 +126,14 @@ This command uploads code only. It does not validate or apply `services.function
 | `No active deployment found. Run 'rayfin up' to deploy your Rayfin item first.` | Deploy once before running the standalone local Functions host. |
 | `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.` | Use Node.js 20 or later. |
 | ``Azure Functions Core Tools still not detected on PATH. Open a new shell so PATH updates take effect, then re-run `rayfin dev functions apply`.`` | Open a new shell and rerun after installing Core Tools. |
+| `The installed @microsoft/fabric-user-data-functions@<version> ... but this CLI writes '3.0'.` | Run the printed `npm install @microsoft/fabric-user-data-functions@<cli-version>` in the functions package. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `<path>/host.json allows Functions extension bundles older than 4.49.0, ...` | Warning. Set `extensionBundle.version` to `[4.49.0, 5.0.0)` in the functions `host.json`. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `The Functions host could not sign in without a terminal window. ...` | Set `extensionBundle.version` to `[4.49.0, 5.0.0)` in the named `host.json`, then retry. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `Function '<name>': '<audience>' is not a valid custom audience. ...` | Use an application ID (GUID) or an `https://` or `api://` resource URI without a scope, query, or wildcard. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `Functions may not be enabled on the remote item. Run a full 'rayfin up' ...` | Run a full `npx rayfin up` once, then retry `rayfin up functions deploy`. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 
 ```prompt title="Initialize and run Rayfin Functions commands"
-In my Rayfin project, set up Functions with the Rayfin 1.36 CLI.
+In my Rayfin project, set up Functions with the Rayfin 2.0 CLI.
 
-Run `npx rayfin functions init` unless a functions package already exists. If this is an npm-workspace layout, use `--path <relative-path>` or confirm the saved `services.functions.path`. Ensure `services.functions.enabled: true`, `services.functions.auth.type: application`, and `services.functions.buildCommand: npm run build` are present in rayfin/rayfin.yml. Start local debugging with `npx rayfin dev functions apply`, and deploy with full `npx rayfin up` after auth changes or `npx rayfin up functions deploy` for a code-only update. Report exact errors if any command fails.
+Run `npx rayfin functions init` unless a functions package already exists. If this is an npm-workspace layout, use `--path <relative-path>` or confirm the saved `services.functions.path`. Ensure `services.functions.enabled: true`, `services.functions.auth.type: application`, and `services.functions.buildCommand: npm run build` are present in rayfin/rayfin.yml, and that the functions package depends on @microsoft/fabric-user-data-functions at the CLI's exact version (2.0.0). Start local debugging with `npx rayfin dev functions apply`, and deploy with full `npx rayfin up` after auth changes or `npx rayfin up functions deploy` for a code-only update. Report exact errors if any command fails, and follow the fix the CLI prints for worker-version, host.json, or 404 errors.
 ```

@@ -1,23 +1,27 @@
 ---
 title: Testing a Rayfin app
-description: Test Rayfin data and auth logic in Vitest with injectable auth stubs and the todo template's in-memory data seam.
+description: Test Rayfin data and auth logic in Vitest without calling Fabric, using the todo template's auth and data seams and stand-ins for the composed 2.0 client.
 ---
 
 A Rayfin frontend can be tested without calling Fabric from the test process.
-The 1.36.2 todo template already has two useful seams:
+The 2.0.0 todo template already has two useful seams:
 
 1. `AuthProvider` accepts an `IAuthService`, so tests can pass a stub object instead of opening a Fabric sign-in flow.
-2. `src/services/todos.ts` checks `isLocalBackend()` before every data operation, so tests can mock `src/services/rayfinClient.ts` and force the in-memory branch.
+2. `src/services/todos.ts` gets the client and `isLocalBackend()` from `src/services/rayfinClient.ts` before every data operation, so tests can mock that one module to force the in-memory branch or to return a stand-in client.
+
+In Rayfin 2.0, `RayfinClient.create` composes the client from the parts you register: `client.auth` comes from the `browserSession()` adapter and `client.data` from `dataService()`. A stand-in client only needs the members the code under test calls. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```prompt title="Test Rayfin data and auth logic without Fabric calls"
-In my Rayfin React + Vite project, set up Vitest with jsdom and a setup file that shims localStorage. For data service tests, mock src/services/rayfinClient.ts before importing the service under test so isLocalBackend returns true and getRayfinClient is a vi.fn(), forcing the in-memory branch. For component tests, create a plain object implementing IAuthService and pass it to AuthProvider as authService. Add tests that cover create/list/update/delete service behavior and an AuthProvider render without calling Fabric.
+In my Rayfin 2.0 React + Vite project created from the todoapp template, set up Vitest with jsdom, a setup file that shims localStorage, and the same @vitejs/plugin-react-swc decorator setting that vite.config.ts uses. For data service tests, mock src/services/rayfinClient.ts before importing the service under test. To force the in-memory branch, return isLocalBackend as vi.fn(() => true) and getRayfinClient as vi.fn(). To test the remote branch, make isLocalBackend return false and make getRayfinClient return a plain object with only the members the service calls (auth.getSession() and data.Todo.select, create, update, or delete), cast to the AppClient type exported by rayfinClient.ts. For component tests, pass a plain object implementing IAuthService to AuthProvider as authService. For RayfinAuthService, mock @microsoft/rayfin-auth-provider-fabric and pass { auth } with stubbed getSession and signOut. Cover create, list, update, and delete, user_id stamping from the session, an AuthProvider render, and an on-load sign-in error, then run `npm run test`.
 ```
 
 ## Test runner setup
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 Vitest runs in `jsdom` so React components can render.
-The config keeps the app's `@/*` import alias and loads a setup file before each test file.
-This file matches the 1.36.2 todo template.
+The config keeps the app's `@/*` import alias, enables Stage 3 decorators in the SWC plugin the same way `vite.config.ts` does so tests can import decorated entity classes, and loads a setup file before each test file.
+This file matches the 2.0.0 todo template.
 
 ```typescript title="vitest.config.ts"
 import react from '@vitejs/plugin-react-swc';
@@ -25,7 +29,16 @@ import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react({
+      // Match vite.config.ts so specs can import decorated Rayfin entities.
+      useAtYourOwnRisk_mutateSwcOptions({ jsc }) {
+        if (!jsc?.parser) return;
+        jsc.parser.decorators = true;
+        jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' };
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': resolve(import.meta.dirname, 'src'),
@@ -45,7 +58,7 @@ export default defineConfig({
 
 `jsdom` does not provide the same `localStorage` behavior as a browser.
 Rayfin auth code reads and writes session state through browser storage, so the setup file provides a minimal implementation and clears it between tests.
-This file matches the 1.36.2 todo template.
+This file matches the 2.0.0 todo template.
 
 ```typescript title="src/__tests__/setup.ts"
 import '@testing-library/jest-dom';
@@ -84,7 +97,7 @@ beforeEach(() => {
 Production code never imports `MockAuthService` or `RayfinAuthService` directly.
 It depends on an `IAuthService` interface instead.
 
-This interface and helper match the 1.36.2 todo template.
+This interface and helper match the 2.0.0 todo template.
 
 ```typescript title="src/services/IAuthService.ts"
 /** Trimmed view of the authenticated user shown in the UI. */
@@ -147,8 +160,11 @@ export function toAuthUser(user: {
 
 ## How `bootstrapAuth()` chooses implementations
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 At runtime, `bootstrapAuth()` reads the generated Vite environment variables, initializes the Rayfin client, and chooses an auth service.
-This file matches the 1.36.2 todo template.
+In 2.0 it also passes the runtime config's `tenantId` to the Fabric sign-in options.
+This file matches the 2.0.0 todo template.
 
 ```typescript title="src/services/bootstrap.ts"
 import { resolveRayfinFunctionsBaseUrl } from '@microsoft/rayfin-local-dev';
@@ -205,6 +221,7 @@ export async function bootstrapAuth(): Promise<IAuthService> {
     workspaceId,
     itemId: projectId,
     portalUrl: fabricPortalUrl,
+    tenantId,
   } = client.runtimeConfig ?? {};
 
   if (!workspaceId || !projectId || !fabricPortalUrl) {
@@ -217,6 +234,7 @@ export async function bootstrapAuth(): Promise<IAuthService> {
     workspaceId,
     projectId,
     fabricPortalUrl,
+    tenantId,
     returnOrigin: window.location.origin,
   });
 }
@@ -228,43 +246,230 @@ That keeps tests independent of generated environment variables, Fabric SSO, loc
 
 ## MockAuthService scope caveat
 
-The 1.36.2 todo template still includes `MockAuthService` for the template's localhost branch.
-That implementation signs into a bundled local backend with fixture credentials.
-The service file is unchanged from 1.35.1, but that credential-based local backend path is outside this documentation site's Fabric-only product scope.
+The 2.0.0 todo template still includes `MockAuthService` for the localhost branch of `bootstrapAuth()`.
+That implementation signs in to a local backend with fixture credentials, which is outside this documentation site's Fabric-only product scope.
+`rayfin dev` writes the Fabric backend URL to `VITE_RAYFIN_API_URL`, so the template uses `RayfinAuthService` during development and after deployment.
 
 Keep the seam; do not copy the credential sign-in pattern into new application guidance.
 For tests, pass an `IAuthService` stub instead of using `MockAuthService`.
 
-The relevant template constants are:
+## The client module
 
-```typescript title="src/services/MockAuthService.ts (excerpt)"
-// Local-dev fixture credentials. The bundled local backend ships without
-// Fabric/Entra, so this auth service signs in with a shared dev account.
-// These values only ever reach a developer's local machine — never use
-// them in production.
-const MOCK_EMAIL = 'dev@contoso.com';
-const MOCK_PASSWORD = 'LocalDev!Pass123';
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Both data-seam techniques below mock `src/services/rayfinClient.ts`, so it helps to know its exports.
+`initRayfinClient()` builds the client once with `RayfinClient.create`, `getRayfinClient()` returns it, `isLocalBackend()` reports the localhost branch, and `AppClient` is the client type inferred from `createClient`.
+This file matches the 2.0.0 todo template.
+
+```typescript title="src/services/rayfinClient.ts"
+import { browserSession } from '@microsoft/rayfin-auth';
+import {
+  RayfinClient,
+  resolveRayfinConfig,
+  type RayfinRuntimeConfig,
+} from '@microsoft/rayfin-client';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
+
+import type { TodoAppSchema } from '../../rayfin/data/schema';
+
+export interface RayfinClientConfig {
+  baseUrl: string;
+  publishableKey: string;
+  /** True when the API URL points at localhost. Exposed via {@link isLocalBackend}. */
+  localDev: boolean;
+  /** Absolute same-origin URL for local Functions calls when the Vite adapter is active. */
+  functionsBaseUrl?: string;
+  /** Fabric coordinates fallback for local dev, where no runtime config is emitted. */
+  runtimeConfig?: RayfinRuntimeConfig;
+}
+
+function createClient(config: {
+  baseUrl: string;
+  publishableKey: string;
+  functionsBaseUrl?: string;
+  runtimeConfig?: RayfinRuntimeConfig;
+}) {
+  return RayfinClient.create({
+    ...config,
+    auth: browserSession({ storage: true }),
+    services: {
+      data: dataService<TodoAppSchema>(),
+      functions: functionsService(),
+    },
+  });
+}
+
+export type AppClient = ReturnType<typeof createClient>;
+let client: AppClient | null = null;
+let localDev = false;
+
+export async function initRayfinClient(
+  config: RayfinClientConfig
+): Promise<AppClient> {
+  if (client) {
+    throw new Error('Rayfin client is already initialized.');
+  }
+  const resolved = await resolveRayfinConfig({
+    apiUrl: config.baseUrl,
+    publishableKey: config.publishableKey,
+    ...config.runtimeConfig,
+  });
+  client = createClient({
+    // resolved.baseUrl/publishableKey are always set: config.baseUrl/publishableKey
+    // are non-optional defaults, so the resolve step can only overlay on top of them.
+    baseUrl: resolved.baseUrl!,
+    publishableKey: resolved.publishableKey!,
+    functionsBaseUrl: config.functionsBaseUrl,
+    runtimeConfig: resolved.runtimeConfig,
+  });
+  localDev = config.localDev;
+  return client;
+}
+
+export function getRayfinClient(): AppClient {
+  if (!client) {
+    throw new Error(
+      'Rayfin client not initialized. Call bootstrapAuth() first.'
+    );
+  }
+  return client;
+}
+
+/** True when the app was bootstrapped against a localhost backend. */
+export function isLocalBackend(): boolean {
+  return localDev;
+}
 ```
 
 ## The data seam: `isLocalBackend()`
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 `src/services/todos.ts` checks `isLocalBackend()` before every operation.
 When it is `true`, the service uses an in-memory array instead of `client.data.Todo`.
+In 2.0, `updateTodo` resolves with no value in both branches; the page reloads its selected list after a change instead of reading the row back.
+This file matches the 2.0.0 todo template.
 
-Tests force that branch by mocking `src/services/rayfinClient.ts` before importing `todos.ts`.
+```typescript title="src/services/todos.ts"
+import { getRayfinClient, isLocalBackend } from './rayfinClient';
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  isCompleted: boolean;
+  createdAt: Date;
+}
+
+// Local-dev fallback: when no Fabric backend is configured, keep todos in
+// memory so the sample is fully functional without a database.
+let inMemoryTodos: TodoItem[] = [];
+
+export async function getTodos(): Promise<TodoItem[]> {
+  if (isLocalBackend()) {
+    return [...inMemoryTodos].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    );
+  }
+
+  const client = getRayfinClient();
+  const results = await client.data.Todo.select([
+    'id',
+    'title',
+    'isCompleted',
+    'createdAt',
+  ])
+    .orderBy({ createdAt: 'desc' })
+    .execute();
+  return results as TodoItem[];
+}
+
+export async function createTodo(title: string): Promise<TodoItem> {
+  if (isLocalBackend()) {
+    const todo: TodoItem = {
+      id: crypto.randomUUID(),
+      title,
+      isCompleted: false,
+      createdAt: new Date(),
+    };
+    inMemoryTodos.push(todo);
+    return todo;
+  }
+
+  const client = getRayfinClient();
+  const session = client.auth.getSession();
+  if (!session.isAuthenticated || !session.user) {
+    throw new Error('Cannot create todo: user is not authenticated.');
+  }
+  const todo = await client.data.Todo.create({
+    title,
+    isCompleted: false,
+    createdAt: new Date(),
+    user_id: session.user.id,
+  });
+  return todo as TodoItem;
+}
+
+export async function updateTodo(
+  id: string,
+  updates: Partial<Pick<TodoItem, 'title' | 'isCompleted'>>
+): Promise<void> {
+  if (isLocalBackend()) {
+    const todo = inMemoryTodos.find((t) => t.id === id);
+    if (!todo) throw new Error('Todo not found');
+    Object.assign(todo, updates);
+    return;
+  }
+
+  const client = getRayfinClient();
+  await client.data.Todo.update({ id }, updates);
+}
+
+export async function deleteTodo(id: string): Promise<void> {
+  if (isLocalBackend()) {
+    inMemoryTodos = inMemoryTodos.filter((t) => t.id !== id);
+    return;
+  }
+
+  const client = getRayfinClient();
+  await client.data.Todo.delete({ id });
+}
+```
+
+## Test both branches of the data service
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The template's test mocks `src/services/rayfinClient.ts` before importing `todos.ts`, so `isLocalBackend` and `getRayfinClient` are `vi.fn()` mocks that each test can steer.
 That ordering matters: keep `vi.mock()` visually above the import of the module under test.
 
-The following file matches the 1.36.2 todo template.
+The in-memory tests run with `isLocalBackend()` returning `true`.
+The remote tests set it to `false` and return a real 2.0 client whose global `fetch` is stubbed, so they check the GraphQL request the SDK sends without a network call.
+That client's `browserSession({ storage: false, autoRefreshToken: false, multiTabSync: false })` keeps it from touching storage, starting a refresh timer, or syncing across tabs, and `client.dispose()` releases it after each test.
+
+The following file matches the 2.0.0 todo template.
 
 ```typescript title="src/__tests__/todos.test.ts"
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { dataService } from '@microsoft/rayfin-data';
+import { functionsService } from '@microsoft/rayfin-functions';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/services/rayfinClient', () => ({
-  isLocalBackend: () => true,
+  isLocalBackend: vi.fn(() => true),
   getRayfinClient: vi.fn(),
 }));
 
+import type { TodoAppSchema } from '../../rayfin/data/schema';
+
+import { getRayfinClient, isLocalBackend } from '@/services/rayfinClient';
 import { createTodo, deleteTodo, getTodos, updateTodo } from '@/services/todos';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.mocked(isLocalBackend).mockReturnValue(true);
+});
 
 describe('todos service (in-memory mode)', () => {
   beforeEach(async () => {
@@ -286,10 +491,298 @@ describe('todos service (in-memory mode)', () => {
     expect(list[0]?.id).toBe(created.id);
 
     const updated = await updateTodo(created.id, { isCompleted: true });
-    expect(updated.isCompleted).toBe(true);
+    expect(updated).toBeUndefined();
+    expect((await getTodos())[0]?.isCompleted).toBe(true);
 
     await deleteTodo(created.id);
     expect(await getTodos()).toEqual([]);
+  });
+
+  it('preserves the not-found update error', async () => {
+    await expect(updateTodo('missing', { title: 'No row' })).rejects.toThrow(
+      'Todo not found'
+    );
+  });
+});
+
+describe('todos service (remote mode with the real SDK)', () => {
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  let client: ReturnType<typeof getRayfinClient>;
+
+  afterEach(() => {
+    client.dispose();
+  });
+
+  beforeEach(() => {
+    fetch.mockReset();
+    vi.stubGlobal('fetch', fetch);
+    vi.mocked(isLocalBackend).mockReturnValue(false);
+    client = RayfinClient.create({
+      baseUrl: 'https://example.test',
+      publishableKey: 'test-key',
+      auth: browserSession({
+        storage: false,
+        autoRefreshToken: false,
+        multiTabSync: false,
+      }),
+      services: {
+        data: dataService<TodoAppSchema>(),
+        functions: functionsService(),
+      },
+    });
+    vi.mocked(getRayfinClient).mockReturnValue(client);
+  });
+
+  it('updates without pretending an id-only response is a complete Todo or hydrating again', async () => {
+    fetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { updateTodo: { id: 'todo-1', isCompleted: true } },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    expect(await updateTodo('todo-1', { isCompleted: true })).toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const options = fetch.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(options.body as string) as { query: string };
+    expect(body.query).toContain('updateTodo');
+    expect(body.query).toContain('isCompleted: true');
+    expect(body.query).not.toContain('todo_by_pk');
+  });
+
+  it('propagates backend mutation errors without a hydration request', async () => {
+    fetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          errors: [{ message: 'Update denied' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    await expect(updateTodo('todo-1', { title: 'New title' })).rejects.toThrow(
+      'Update denied'
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+```
+
+## Stand in for the client with a plain object
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+To test the remote branch without building GraphQL responses, make `getRayfinClient()` return a plain object that has only the members `todos.ts` calls: `client.auth.getSession()` and `client.data.Todo`.
+Cast it to the `AppClient` type that `rayfinClient.ts` exports.
+The template does not ship this file; it runs against the 2.0.0 template unchanged.
+
+```typescript title="src/__tests__/todos.remote.test.ts"
+import type { OpaqueSession } from '@microsoft/rayfin-auth';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/services/rayfinClient', () => ({
+  isLocalBackend: vi.fn(() => false),
+  getRayfinClient: vi.fn(),
+}));
+
+import { getRayfinClient, type AppClient } from '@/services/rayfinClient';
+import { createTodo, getTodos } from '@/services/todos';
+
+const signedIn: OpaqueSession = {
+  user: { id: 'user-1', email: 'ada@contoso.com' },
+  isAuthenticated: true,
+  isAnonymous: false,
+};
+
+const execute = vi.fn();
+const orderBy = vi.fn(() => ({ execute }));
+const select = vi.fn(() => ({ orderBy }));
+const create = vi.fn();
+const getSession = vi.fn(() => signedIn);
+
+// Only the members todos.ts calls: client.auth and client.data.Todo.
+const fakeClient = {
+  auth: { getSession },
+  data: { Todo: { select, create } },
+} as unknown as AppClient;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  getSession.mockReturnValue(signedIn);
+  vi.mocked(getRayfinClient).mockReturnValue(fakeClient);
+});
+
+describe('todos service (remote branch)', () => {
+  it('selects the list fields, newest first', async () => {
+    execute.mockResolvedValue([]);
+
+    await getTodos();
+
+    expect(select).toHaveBeenCalledWith([
+      'id',
+      'title',
+      'isCompleted',
+      'createdAt',
+    ]);
+    expect(orderBy).toHaveBeenCalledWith({ createdAt: 'desc' });
+  });
+
+  it('stamps user_id from the signed-in session', async () => {
+    create.mockResolvedValue({ id: 'todo-1', title: 'ship it' });
+
+    await createTodo('ship it');
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'ship it', user_id: 'user-1' })
+    );
+  });
+
+  it('refuses to create a todo without a session', async () => {
+    getSession.mockReturnValue({
+      user: null,
+      isAuthenticated: false,
+      isAnonymous: false,
+    });
+
+    await expect(createTodo('ship it')).rejects.toThrow(
+      'Cannot create todo: user is not authenticated.'
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+```
+
+Add members to the stand-in as the code under test needs them, such as `update` and `delete` on `data.Todo` for `updateTodo` and `deleteTodo`.
+A missing member fails the test with a `TypeError`, which shows that the service started calling something new.
+
+## Test `RayfinAuthService` with a stand-in `auth`
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+In 2.0, the template's `RayfinAuthService` and `MockAuthService` take any object with an `auth` member (`{ readonly auth: Auth }`) instead of the whole client.
+This file matches the 2.0.0 todo template.
+
+```typescript title="src/services/RayfinAuthService.ts"
+import type { Auth } from '@microsoft/rayfin-auth';
+import {
+  ensureSignedInWithFabric,
+  initEmbeddedAuth as sdkInitEmbeddedAuth,
+  type FabricAuthOptions,
+} from '@microsoft/rayfin-auth-provider-fabric';
+
+import { type AuthUser, type IAuthService, toAuthUser } from './IAuthService';
+
+/**
+ * Production auth service. Wraps the Fabric brokered authentication SDK
+ * (`@microsoft/rayfin-auth-provider-fabric`).
+ *
+ * Used whenever the API URL is not localhost. Requires Fabric workspace,
+ * project, and portal config to be passed at construction time — see
+ * `bootstrapAuth()` for how those are read from VITE_FABRIC_* env vars.
+ */
+export class RayfinAuthService implements IAuthService {
+  readonly fabricAuthEnabled = true;
+
+  constructor(
+    private readonly client: { readonly auth: Auth },
+    private readonly fabricOptions: FabricAuthOptions
+  ) {}
+
+  async signIn(): Promise<AuthUser> {
+    const session = await ensureSignedInWithFabric(
+      this.client.auth,
+      this.fabricOptions
+    );
+    if (!session.isAuthenticated || !session.user) {
+      throw new Error(
+        'Fabric authentication completed but no session was established.'
+      );
+    }
+    return toAuthUser(session.user);
+  }
+
+  async signOut(): Promise<void> {
+    await this.client.auth.signOut();
+  }
+
+  async getCurrentUser(): Promise<AuthUser | null> {
+    const session = this.client.auth.getSession();
+    if (!session.isAuthenticated || !session.user) return null;
+    return toAuthUser(session.user);
+  }
+
+  async initEmbeddedAuth(): Promise<AuthUser | null> {
+    const session = await sdkInitEmbeddedAuth(
+      this.client.auth,
+      this.fabricOptions
+    );
+    if (!session?.isAuthenticated || !session.user) return null;
+    return toAuthUser(session.user);
+  }
+}
+```
+
+A test can pass a stub `auth` and mock the Fabric sign-in functions, so no popup or iframe handshake runs.
+The template does not ship this file; it runs against the 2.0.0 template unchanged.
+
+```typescript title="src/__tests__/RayfinAuthService.test.ts"
+import type { Auth, OpaqueSession } from '@microsoft/rayfin-auth';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@microsoft/rayfin-auth-provider-fabric', () => ({
+  ensureSignedInWithFabric: vi.fn(),
+  initEmbeddedAuth: vi.fn(),
+}));
+
+import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
+
+import { RayfinAuthService } from '@/services/RayfinAuthService';
+
+const session: OpaqueSession = {
+  user: { id: 'user-1', email: 'ada@contoso.com' },
+  isAuthenticated: true,
+  isAnonymous: false,
+};
+
+const fabricOptions = {
+  workspaceId: 'workspace-id',
+  projectId: 'item-id',
+  fabricPortalUrl: 'https://app.fabric.microsoft.com',
+  returnOrigin: 'http://localhost:5173',
+};
+
+function createService() {
+  const auth = {
+    getSession: vi.fn(() => session),
+    signOut: vi.fn(async () => {}),
+  };
+  // RayfinAuthService needs only an object with `auth`, not a whole client.
+  const service = new RayfinAuthService(
+    { auth: auth as unknown as Auth },
+    fabricOptions
+  );
+  return { auth, service };
+}
+
+describe('RayfinAuthService', () => {
+  it('maps the Fabric session to the UI user', async () => {
+    vi.mocked(ensureSignedInWithFabric).mockResolvedValue(session);
+    const { auth, service } = createService();
+
+    await expect(service.signIn()).resolves.toEqual({
+      id: 'user-1',
+      email: 'ada@contoso.com',
+      name: 'ada',
+    });
+    expect(ensureSignedInWithFabric).toHaveBeenCalledWith(auth, fabricOptions);
+  });
+
+  it('signs out through client.auth', async () => {
+    const { auth, service } = createService();
+
+    await service.signOut();
+
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
   });
 });
 ```
@@ -297,15 +790,14 @@ describe('todos service (in-memory mode)', () => {
 ## Test `AuthProvider` directly
 
 Start with a small provider test before exercising a page.
-This confirms the injected auth service is used and the provider finishes its initial session check.
-
-The following file matches the 1.36.2 todo template.
+The first test confirms the injected auth service is used and the provider finishes its initial session check; it ships with the 2.0.0 todo template.
+The second covers a 2.0 template change: when the on-load sign-in fails, `AuthProvider` now exposes the message as `error` instead of discarding it, and the template's `AuthPage` displays it. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```tsx title="src/__tests__/AuthProvider.test.tsx"
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { AuthProvider } from '@/hooks/AuthContext';
+import { AuthProvider, useAuth } from '@/hooks/AuthContext';
 import type { IAuthService } from '@/services/IAuthService';
 
 const stubAuthService: IAuthService = {
@@ -322,6 +814,11 @@ const stubAuthService: IAuthService = {
   },
 };
 
+function AuthError() {
+  const { error, loading } = useAuth();
+  return <p>{loading ? 'loading' : (error ?? 'no error')}</p>;
+}
+
 describe('AuthProvider', () => {
   it('renders children once initial auth check completes', async () => {
     render(
@@ -334,6 +831,25 @@ describe('AuthProvider', () => {
       expect(screen.getByTestId('content')).toHaveTextContent('ready');
     });
   });
+
+  it('exposes an on-load sign-in failure as error', async () => {
+    const failingAuthService: IAuthService = {
+      ...stubAuthService,
+      async initEmbeddedAuth() {
+        throw new Error('Sign-in was cancelled.');
+      },
+    };
+
+    render(
+      <AuthProvider authService={failingAuthService}>
+        <AuthError />
+      </AuthProvider>
+    );
+
+    expect(
+      await screen.findByText('Sign-in was cancelled.')
+    ).toBeInTheDocument();
+  });
 });
 ```
 
@@ -343,12 +859,13 @@ A page-level test combines both replacements:
 
 1. Mock `rayfinClient.ts` so `todos.ts` stays in memory.
 2. Render through `AuthProvider` with an authenticated `IAuthService` stub.
-3. Assert on UI and on spies over the service functions.
+3. Assert on the UI and on spies over the service functions.
 
-The todo template does not ship this `HomePage` test file, but it uses the same seams as the shipped tests.
+The template's `HomePage` adds, toggles, and deletes todos, then reloads the list after each change.
+The template does not ship this test file; it runs against the 2.0.0 template's `HomePage` unchanged.
 
 ```tsx title="src/__tests__/HomePage.test.tsx"
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthUser, IAuthService } from '@/services/IAuthService';
@@ -388,50 +905,51 @@ function renderHome() {
 
 describe('HomePage', () => {
   beforeEach(async () => {
+    vi.restoreAllMocks();
     for (const todo of await todosService.getTodos()) {
       await todosService.deleteTodo(todo.id);
     }
-    vi.restoreAllMocks();
   });
 
   it('shows the empty state once loaded', async () => {
     renderHome();
-    expect(await screen.findByText(/All caught up/i)).toBeInTheDocument();
+
+    expect(
+      await screen.findByText('No todos yet. Add one above!')
+    ).toBeInTheDocument();
   });
 
-  it('adds a todo optimistically and renders it immediately', async () => {
-    renderHome();
-    await screen.findByText(/All caught up/i);
-
+  it('adds a todo and shows it after the list reloads', async () => {
     const createSpy = vi.spyOn(todosService, 'createTodo');
+    renderHome();
+    await screen.findByText('No todos yet. Add one above!');
 
-    const input = screen.getByLabelText(/New todo title/i);
+    const input = screen.getByPlaceholderText('What needs to be done?');
     fireEvent.change(input, { target: { value: 'buy milk' } });
     fireEvent.submit(input.closest('form')!);
 
-    expect(screen.getByText('buy milk')).toBeInTheDocument();
-    await waitFor(() => expect(createSpy).toHaveBeenCalledWith('buy milk'));
+    expect(await screen.findByText('buy milk')).toBeInTheDocument();
+    expect(createSpy).toHaveBeenCalledWith('buy milk');
   });
 
-  it('rolls back and shows an error when a mutation fails', async () => {
-    await todosService.createTodo('rollback me');
+  it('moves a todo to Completed when it is toggled', async () => {
+    await todosService.createTodo('write docs');
     renderHome();
 
-    await screen.findByText('rollback me');
+    fireEvent.click(await screen.findByLabelText('Mark complete'));
 
-    const failure = new Error('network down');
-    const deleteSpy = vi
-      .spyOn(todosService, 'deleteTodo')
-      .mockRejectedValueOnce(failure);
+    expect(await screen.findByText('Completed (1)')).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByLabelText(/Delete todo/i));
+  it('removes a todo when it is deleted', async () => {
+    await todosService.createTodo('old task');
+    renderHome();
 
-    expect(deleteSpy).toHaveBeenCalledTimes(1);
+    fireEvent.click(await screen.findByLabelText('Delete todo'));
 
-    await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent('network down')
-    );
-    expect(screen.getByText('rollback me')).toBeInTheDocument();
+    expect(
+      await screen.findByText('No todos yet. Add one above!')
+    ).toBeInTheDocument();
   });
 });
 ```

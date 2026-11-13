@@ -11,10 +11,11 @@ Static hosting serves your built frontend from the same Fabric app as the Rayfin
 2. The CLI resolves the frontend package directory from `path` and `root`.
 3. The CLI refreshes the frontend `.env.local` when it can detect the framework.
 4. Rayfin runs `buildCommand` unless the command is skipped.
-5. The output folder is validated and packaged into a compressed archive.
-6. The archive is uploaded to the Fabric app.
-7. The returned hosting URL is recorded in `rayfin/.deployments.json`.
-8. The hosting origin is registered in `allowedRedirectUris` for Fabric SSO.
+5. The output folder is validated.
+6. A full `rayfin up` skips the upload when the built files, workspace, item, backend URL, and publishable key match the last successful static deployment. [New in 2.0](/docs/reference/changelog#rayfin-20)
+7. Otherwise every emitted `.js` and `.mjs` file is checked to parse as JavaScript [New in 1.36](/docs/reference/changelog#rayfin-136), and the folder is packaged into a compressed archive and uploaded to the Fabric app.
+8. The returned hosting URL is recorded in `rayfin/.deployments.json`.
+9. The hosting origin is registered in `allowedRedirectUris` for Fabric SSO.
 
 ## Configure static hosting
 
@@ -52,7 +53,7 @@ Do not combine `assetAccess: public` with `embedded.only: true`. An embedded-onl
 
 ## Workspace frontend example
 
-The 1.36 universal app uses an npm workspace and points static hosting at the frontend package:
+The Universal App, the default template since 1.36, uses an npm workspace and points static hosting at the frontend package:
 
 ```yaml title="rayfin/rayfin.yml"
 services:
@@ -89,13 +90,23 @@ A full deploy builds and uploads static content:
 npx rayfin up
 ```
 
+When nothing changed since the last successful static deployment, the full deploy still
+runs the build but skips the upload and prints
+`ℹ️  Static app re-deployment skipped: the built static files, workspace, and backend are unchanged since the last successful deployment.`
+Pass `--force-static-deploy` to upload anyway. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```bash
+npx rayfin up --force-static-deploy
+```
+
 For static-only updates after an initial deploy:
 
 ```bash
 npx rayfin up staticapp deploy
 ```
 
-Skip the build step only when the output folder already contains the production build you want to publish:
+`staticapp deploy` always uploads, even when the content is unchanged. Skip the build step
+only when the output folder already contains the production build you want to publish:
 
 ```bash
 npx rayfin up staticapp deploy --skip-build
@@ -143,12 +154,14 @@ The compressed static archive must be at most **100 MB**. If the archive is too 
 
 - Exclude source maps from production output.
 - Optimize or move large images and binary assets.
-- Store large user-facing files in a service designed for file storage instead of bundling them into the app shell.
+- Store large user-facing files in a service designed for file storage, such as [Storage](/docs/storage), instead of bundling them into the app shell.
 - Re-run `npx rayfin up staticapp deploy` after rebuilding.
 
 ## Local Vite adapter
 
 Templates register `rayfinLocalDev()` from `@microsoft/rayfin-local-dev/vite`. The adapter is for `rayfin dev`, not production builds. It serves local `rayfin.config.json`, proxies backend and Functions routes, and supports local automatic sign-in for protected static assets. See [Develop locally](/docs/start/develop-locally).
+
+When no local Functions host is configured, the adapter forwards `/functions/<name>/invoke` to the deployed backend, so frontend-only development still calls the deployed functions. [New in 2.0](/docs/reference/changelog#rayfin-20) A configured local host that is unavailable returns HTTP 502 instead of falling back to deployed code.
 
 ## Troubleshooting
 
@@ -157,10 +170,12 @@ Templates register `rayfinLocalDev()` from `@microsoft/rayfin-local-dev/vite`. T
 | Static folder not found | Check `path`, `root`, and `folder`; run the build command manually. |
 | Empty static folder | Confirm the build command writes files to the configured output folder. |
 | `Compressed package size (...) exceeds the 100 MB limit.` | Reduce the compressed output size and redeploy. |
+| `The built bundle is not parseable JavaScript, so the deployed app would be a blank page:` | Fix the build output. A common cause is `@vitejs/plugin-react-swc` emitting raw decorators; see [Deployment troubleshooting](/docs/deploy/troubleshooting#enable-decorators-in-the-swc-plugin). [New in 1.36](/docs/reference/changelog#rayfin-136) |
+| Static app re-deployment skipped | Nothing changed since the last successful deployment. Rebuild if you expected new content, or run `npx rayfin up --force-static-deploy`. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `Static hosting is enabled but services.staticHosting.assetAccess is not set in rayfin.yml` | Add `assetAccess: protected` or `assetAccess: public`, or run `rayfin up` interactively. |
 | `Invalid static hosting posture: 'services.staticHosting.embedded.only: true' cannot be combined with 'services.staticHosting.assetAccess: public' because an embedded app has no standalone surface to make public.` | Use `assetAccess: protected` or set `embedded.only: false`. |
 | No remote endpoint configured | Run `npx rayfin up` once before `npx rayfin up staticapp deploy`. |
 
 ```prompt title="Enable and deploy Rayfin static hosting"
-In my Rayfin project, configure `services.staticHosting` with the correct frontend `path`, `folder`, `buildCommand`, `indexDocument`, and `assetAccess: protected` unless I explicitly need public assets. Run `npx rayfin up --dry-run` to validate the static inputs and declared packageVersions, then deploy with `npx rayfin up` and report `deployment.hostingUrl` from `npx rayfin up status --json`.
+In my Rayfin project, configure `services.staticHosting` with the correct frontend `path`, `folder`, `buildCommand`, `indexDocument`, and `assetAccess: protected` unless I explicitly need public assets. Run `npx rayfin up --dry-run` to validate the static inputs and declared packageVersions, then deploy with `npx rayfin up` and report `deployment.hostingUrl` from `npx rayfin up status --json`. If the deploy reports that static re-deployment was skipped although I changed the frontend, check that the build output changed before rerunning with `--force-static-deploy`.
 ```

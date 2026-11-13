@@ -27,7 +27,9 @@ identity. In 1.35, both ran as the signed-in user.
 | --- | --- | --- | --- |
 | [Your own data](/docs/data/permissions) from the browser — `client.data.<Entity>` | `@role()` / `@authenticated()` policies on the entity | Signed-in user | Nobody — entity policies decide |
 | Your own data from a function — `ctx.getDataClient()` | The same entity policies | Signed-in caller | Nobody — entity policies decide |
-| [Function connections](/docs/functions/connections) — `ctx.Tokens.<Audience>` | `RayfinContext<Schema, AudienceType.X>` and `services.functions.auth.type: application` | App identity | The app identity |
+| [Raw SQL](/docs/functions/raw-sql) from a function — `ctx.sql` | `RayfinContext<Schema> & WithSql` | App identity; entity policies do not apply [New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status) | Nobody — filter rows by the caller yourself |
+| [Function connections](/docs/functions/connections) — `ctx.Tokens.<Audience>` | `RayfinContext<Schema, AudienceType.X>`, or a custom audience such as `'api://contoso-api'` [New in 2.0](/docs/reference/changelog#rayfin-20), and `services.functions.auth.type: application` | App identity | The app identity |
+| [Dynamic claims function](/docs/auth/dynamic-claims) — `udf.authClaims` | `services.auth.dynamicClaims.enabled: true` | The app, at sign-in, before the user has a Rayfin token [New in 2.0](/docs/reference/changelog#rayfin-20) | Your entitlement source, through the secret the function reads |
 | [SQL connectors](/docs/connectors/auth) — warehouse, SQL database, Lakehouse SQL endpoint | `auth.type` in `rayfin.yml`; `connector add` writes `application` | App identity, or the signed-in user with `delegated` | The app identity, or each user |
 | [Semantic model connectors](/docs/connectors/semantic-models) | `auth.type: delegated` (the only allowed value) | Signed-in user | Each user |
 
@@ -40,7 +42,16 @@ A `policy` callback compares the caller's claims to fields on each row, so
 The same is true inside a function. `ctx.getDataClient()` uses the invocation's Rayfin token,
 so entity policies apply to the user who invoked the function. Setting
 `services.functions.auth.type: application` does **not** switch your Rayfin data to the app
-identity.
+identity. To stamp an owner field that a policy compares with `claims.sub`, use
+`ctx.user.id`; see [Stamp the owner with `ctx.user.id`](/docs/functions/writing-functions#stamp-the-owner-with-ctxuserid). [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+The exception is [raw SQL](/docs/functions/raw-sql): `ctx.sql` runs as the app and bypasses
+entity policies, so a function that uses it must filter rows by the caller itself.
+[New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+To let policies filter on facts Entra does not provide, such as a customer account or
+region, add them to the token with [dynamic auth claims](/docs/auth/dynamic-claims) and compare
+`claims.<name>` in the policy. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Function connections run as the app
 
@@ -99,6 +110,12 @@ for Fabric REST calls, or a data-plane role for Azure Storage — and check that
 API you call supports application identities. [Connections](/docs/functions/connections)
 lists the five supported audiences and what to grant for each.
 
+For your own Entra-protected API, declare its application ID or resource URI as a custom
+audience — for example `RayfinContext<AppSchema, 'api://contoso-api'>` — and read
+`ctx.Tokens['api://contoso-api']`. The token is issued to the app identity, so the API must
+accept tokens from it, for example by assigning it an app role.
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
 Signing in to the app and being allowed to invoke a function work as before; application
 authentication only changes which identity the function uses for external resources.
 
@@ -140,24 +157,29 @@ target resource decides:
 | You need | Use |
 | --- | --- |
 | Per-user rows from entities your app owns | Entity policies on [your own data](/docs/data/permissions) |
+| Rows scoped by an account, region, or role that Entra does not provide | [Dynamic auth claims](/docs/auth/dynamic-claims) compared in entity policies [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | Per-user rows from an existing warehouse or SQL database | A SQL connector with `auth.type: delegated` |
 | One shared view of an existing Fabric source | A SQL connector with `auth.type: application` |
 | DAX over a semantic model, scoped to each user | A [semantic model connector](/docs/connectors/semantic-models) |
 | Custom server-side calls to Fabric, OneLake, Azure Storage, Azure AI Foundry, or Azure DevOps | A [function connection](/docs/functions/connections) |
+| Calls to your own Entra-protected API | A function connection with a custom audience [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | Any other HTTPS API | A function that reads an API key from [`ctx.Secrets`](/docs/functions/secrets) |
 
 ```prompt title="Choose the identity for a Rayfin integration"
-In my Rayfin project, help me decide which identity each server-side integration should use,
-then configure it.
+In my Rayfin 2.0 project, help me decide which identity each server-side integration should
+use, then configure it.
 
 For data my app owns in rayfin/data, keep access caller-scoped with @role() or
-@authenticated() policies — this also applies to ctx.getDataClient() inside functions.
+@authenticated() policies — this also applies to ctx.getDataClient() inside functions; stamp
+owner fields from ctx.user.id. Avoid raw SQL (ctx.sql) for user-owned rows unless the query
+filters by the caller itself, because it runs as the app and bypasses entity policies.
 For an existing Fabric warehouse, SQL database, or Lakehouse SQL endpoint, add a connector
 and set auth.type in rayfin/rayfin.yml: delegated when each user should see only what they
 are allowed to see at the source, application when every user should see the same data
 through the app identity. Semantic model connectors must use delegated. For custom calls to
-Fabric REST, OneLake, Azure Storage, Azure AI Foundry, or Azure DevOps, write a function
-that declares the audience on RayfinContext and reads ctx.Tokens, with
+Fabric REST, OneLake, Azure Storage, Azure AI Foundry, Azure DevOps, or my own
+Entra-protected API (declared as a custom audience such as 'api://contoso-api'), write a
+function that declares the audience on RayfinContext and reads ctx.Tokens, with
 services.functions.auth.type: application in rayfin.yml — those calls run as the app
 identity, which is the owner of the Fabric app item.
 

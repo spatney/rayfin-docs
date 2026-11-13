@@ -9,8 +9,8 @@ typed client method for it — you never write SQL or a schema file by hand.
 
 This page covers the mechanics of defining an entity: where the file lives, how the
 primary key works, how to register the entity so the client can see it, and the
-TypeScript compiler settings the decorators require. For the full list of field
-decorators, see [Field types](/docs/data/field-types). For foreign keys and navigation
+TypeScript version and compiler settings that schema compilation requires. For the full list
+of field decorators, see [Field types](/docs/data/field-types). For foreign keys and navigation
 properties, see [Relationships](/docs/data/relationships).
 
 ## Where entity files live
@@ -24,9 +24,11 @@ your-project/
 │   ├── data/
 │   │   ├── Todo.ts
 │   │   └── schema.ts
+│   ├── package.json      # added by rayfin init when the app is not ESM
 │   ├── rayfin.yml
 │   └── tsconfig.json
 ├── src/
+├── package.json
 └── tsconfig.json
 ```
 
@@ -71,6 +73,28 @@ full CRUD access for any signed-in user. See
 [the warning on the permissions page](/docs/data/permissions#entities-without-a-permission-decorator)
 before you ship anything.
 
+## Property names
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Each property becomes a GraphQL field name, so it must match `/^[_A-Za-z][_0-9A-Za-z]*$/` and
+must not start with `__`. The CLI rejects other names — such as `$price` or `'my-col'` — while
+it analyzes the schema, before anything is applied, and the error suggests a valid name. The
+rule covers relationship properties too. When an existing column has such a name, give the
+property a valid name and map it to the column with the `column` option:
+
+```typescript title="rayfin/data/Product.ts"
+import { entity, authenticated, uuid, text, decimal } from '@microsoft/rayfin-core';
+
+@entity()
+@authenticated('*')
+export class Product {
+  @uuid() id!: string;
+  @text({ max: 200 }) name!: string;
+  @decimal({ column: '$price' }) price!: number;
+}
+```
+
 ## Entity primary key
 
 Every entity has a UUID `string` primary key named `id`.
@@ -78,7 +102,7 @@ Every entity has a UUID `string` primary key named `id`.
 - If you omit `id` from the class body, Rayfin adds it to the schema automatically.
 - Declaring it explicitly (`@uuid() id!: string;`) is optional but recommended — it keeps
   the TypeScript type complete and makes the field visible to tooling.
-- `id` is **optional when creating a record**: omit it and the server generates a UUID: `.
+- `id` is **optional when creating a record**: omit it and the server generates a UUID.
   Supply your own UUID at creation time if you need a client-generated identifier.
 - Composite primary keys, or primary keys on a field other than `id`, are not supported.
 
@@ -95,9 +119,10 @@ export class Category {
 
 ## Register the entity in `schema.ts`
 
-`rayfin/data/schema.ts` maps entity names to their classes. `RayfinClient` uses this map
-to type `client.data.<Entity>` and to resolve relationship targets. Add every new entity
-to both the value array and the exported type.
+`rayfin/data/schema.ts` maps entity names to their classes. The client's data service takes
+the `AppSchema` type — `dataService<AppSchema>()` — to type `client.data.<Entity>` and
+resolve relationship targets. Add every new entity to both the value array and the exported
+type. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript title="rayfin/data/schema.ts"
 import { Todo } from './Todo.js';
@@ -123,13 +148,16 @@ export type AppSchema = {
 export const schema = [Todo, Category];
 ```
 
-Import the `AppSchema` type wherever you construct a `RayfinClient` — see
-[Querying](/docs/data/querying) for client setup.
+Pass the `AppSchema` type to `dataService<AppSchema>()` wherever you create the client — see
+[Set up the client](/docs/data#set-up-the-client).
 
 > [!NOTE]
-> Use `.js` extensions on relative imports between files under `rayfin/data/` (for example
-> `from './Todo.js'`), even though the source files are `.ts`. This matches the emitted
-> ESM output and is required for the imports to resolve at runtime.
+> Use `.js` extensions on relative imports between files under `rayfin/` (for example
+> `from './Todo.js'`), even though the source files are `.ts`. Rayfin compiles these files as
+> ES modules with `NodeNext` resolution and Node.js loads the output directly, so an import
+> without an extension, such as `./Todo`, fails to compile with `TS2835`. Add `.js` when you
+> move existing entities into `rayfin/data/`.
+> [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## The TC39 decorator requirement
 
@@ -164,7 +192,10 @@ two concrete consequences for your `tsconfig.json`:
 
 The `references` entry points at `rayfin/tsconfig.json`, a project-reference config the
 CLI uses to compile your entity definitions. It extends your root config and sets
-`composite: true`; you should not need to edit it directly.
+`composite: true`; you should not need to edit it directly. `rayfin init` writes it with
+`module` and `moduleResolution` set to `NodeNext`; in 2.0 it also adds `ESNext.Decorators` to
+`lib` and `node` to `types`, and adds `@types/node` to your app.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 Projects scaffolded with `npm create @microsoft/rayfin@latest` already have these settings.
 If you are adding Rayfin to an existing project, verify your `tsconfig.json` matches the
@@ -174,9 +205,68 @@ example above.
 > If your frontend build tool compiles independently of `tsc` (for example Vite with
 > esbuild), it must also target ES2022 or later, or decorator syntax fails to parse. Set
 > `target: 'es2022'` under `build`, `esbuild`, and `optimizeDeps.esbuildOptions` in
-> `vite.config.ts`, and use the default `@vitejs/plugin-react` (esbuild-based) plugin —
-> `@vitejs/plugin-react-swc` cannot parse TC39 decorators at any target setting and fails
-> with `Expression expected`.
+> `vite.config.ts`. `@vitejs/plugin-react-swc` compiles Rayfin's decorators only after you
+> enable its Stage 3 decorator support — without it, frontend code that imports an entity
+> class as a value fails with `Expression expected`. See
+> [Configure Vite for entity imports](/docs/data/validation#configure-vite-for-entity-imports).
+> [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+## Supported TypeScript versions
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Rayfin compiles your schema with the TypeScript compiler installed in your app, and 2.0
+requires TypeScript `^5.7.2 || ^6.0.2`. TypeScript 6 is now supported; TypeScript 5.0 through
+5.7.1, 6.0.0, 6.0.1, prereleases, and 7.x are not. An unsupported compiler stops schema
+compilation with `Unsupported TypeScript <version> at <path>` — Rayfin does not swap in its
+own compiler.
+
+Update TypeScript in the package that owns your schema (the app root in a scaffolded project),
+then commit the updated manifest and lockfile. To stay on TypeScript 5:
+
+```bash
+npm install --save-dev "typescript@^5.7.2"
+```
+
+Or move to TypeScript 6:
+
+```bash
+npm install --save-dev "typescript@^6.0.2"
+```
+
+`@microsoft/rayfin-core` declares the same range as a TypeScript peer dependency, so npm can
+report the conflict at install time as `ERESOLVE`. Run `npm ls typescript @microsoft/rayfin-core`
+to see which compiler is installed, and fix the version rather than installing with `--force`
+or `--legacy-peer-deps` — bypassing the peer check does not make an unsupported compiler work.
+
+## `rayfin/package.json` and the package boundary
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`@microsoft/rayfin-core` needs your entities to load as ES modules. When your app's
+`package.json` does not set `"type": "module"`, `rayfin init` adds this file:
+
+```json title="rayfin/package.json"
+{
+  "type": "module"
+}
+```
+
+Keep it — without it, schema compilation stops with a message that explains how to restore
+it. Apps whose root `package.json` already sets `"type": "module"` do not get the file.
+
+`rayfin/package.json` also makes `rayfin/` its own package boundary. Node.js and TypeScript
+resolve `#` subpath imports (the `imports` field) and imports of your app by its own package
+name from the nearest `package.json`, so files under `rayfin/` cannot use the aliases or
+package name declared in your root `package.json`; schema compilation reports those imports
+as modules it cannot find. Choose one fix:
+
+- Use relative imports that end in `.js`.
+- Define the aliases in an `imports` field in `rayfin/package.json`. Alias targets must start
+  with `./` and stay inside `rayfin/` — Node.js rejects targets such as `../shared/*`.
+- If the rest of your app can run as ES modules, set `"type": "module"` in the root
+  `package.json` and delete `rayfin/package.json`, so files under `rayfin/` use the root
+  aliases again.
 
 ## Applying your changes
 
@@ -194,6 +284,7 @@ next time you run `rayfin up` (or the narrower `rayfin up db apply`). See
   [Field types](/docs/data/field-types#text-length-and-mssql) for why.
 - Keep one entity class per file, named after the class, so the CLI's file scan and your
   imports stay predictable.
+- End every relative import under `rayfin/` with `.js`.
 
 ```prompt title="Add a new entity"
 In my Rayfin project, add a new entity called Project in rayfin/data/Project.ts with
@@ -201,5 +292,20 @@ fields: name (text, max 150), description (optional text, max 2000), isArchived 
 default false), createdAt (date), and user_id (text, max 128) for ownership. Add an
 @authenticated('*') permission decorator with a policy comparing claims.sub to
 item.user_id. Register the entity in rayfin/data/schema.ts by adding it to both the
-AppSchema type and the schema array. Then apply the schema change with `rayfin up`.
+AppSchema type and the schema array, importing it with a relative path that ends in .js
+(from './Project.js'). Then apply the schema change with `rayfin up`.
+```
+
+```prompt title="Fix Rayfin 2.0 schema compilation errors"
+My Rayfin 2.0 project fails to compile its schema. Check TypeScript first: run
+`npm ls typescript @microsoft/rayfin-core` and, if the installed compiler is outside
+^5.7.2 || ^6.0.2, install "typescript@^5.7.2" (or "typescript@^6.0.2") as a dev dependency of
+the package that owns rayfin/ and commit the lockfile — do not use --force or
+--legacy-peer-deps. Then make every relative import between files under rayfin/ end in .js. If
+my root package.json does not set "type": "module", make sure rayfin/package.json exists and
+contains {"type": "module"}, and replace any root `imports` aliases (#...) or package-name
+self-imports used under rayfin/ with relative .js imports. Rename any entity property that is
+not a valid GraphQL name (letters, digits, and underscores, not starting with a digit or __)
+and keep the original column with { column: '...' } on its field decorator. Then rerun
+`rayfin up`.
 ```

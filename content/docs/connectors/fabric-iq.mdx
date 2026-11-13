@@ -1,0 +1,323 @@
+---
+title: Fabric IQ
+appliesTo: "@microsoft/rayfin-connector-fabric-iq-mcp >= 2.0"
+description: Let users ask natural-language questions about Power BI data in a Rayfin app with the Fabric IQ connector — add it, wire it, keep a conversation, show progress, and cancel.
+---
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Use the Fabric IQ connector when your app should answer natural-language questions about
+Power BI data — "What were sales last month?", then "Break those down by region." — as a
+conversation. The `fabriciqmcp` connector carries the Fabric IQ MCP protocol over Rayfin's
+authenticated connector route, and the `@microsoft/rayfin-connector-fabric-iq-mcp` package
+owns tool discovery, tool calls, long-running tasks, progress, and cancellation.
+
+> [!NOTE]
+> `rayfin connector add` can author `fabriciqmcp` connectors, but authoring support does not
+> guarantee that the Fabric IQ backend adapter is enabled in your Fabric environment.
+> `rayfin connector search` does not discover this connector, because it is not tied to a
+> Fabric item: add it directly by name.
+
+## Choose Fabric IQ or a semantic model connector
+
+| You want to | Use |
+| --- | --- |
+| Answer free-form questions about Power BI data in a chat-style UI | Fabric IQ (`fabriciqmcp`) |
+| Run a known DAX query for a dashboard, chart, or table | A [semantic model connector](/docs/connectors/semantic-models) (`fabric-semanticmodel`) |
+
+Both are [Category B connectors](/docs/connectors#the-two-categories), and both run every
+request as the signed-in user.
+
+## Add the connector
+
+```bash
+npx rayfin connector add --type fabriciqmcp --name assistant
+```
+
+The connector is itemless: it takes no `--workspace-id` or `--item-id`, so pass `--name` —
+without a Fabric item, the CLI cannot derive one. Names are stored in lowercase.
+
+`connector add` writes this entry to `rayfin/rayfin.yml`:
+
+```yaml title="rayfin/rayfin.yml"
+connectors:
+  - name: assistant
+    type: fabriciqmcp
+    config: {}
+    auth:
+      type: delegated
+    version: "1"
+    operations:
+      - name: executeQuery
+```
+
+- `auth.type` is `delegated`, the only allowed value. Each request runs as the signed-in
+  user.
+- Declare the literal `executeQuery` operation, not `all`.
+- Keep `config` empty: there is no workspace, item, or semantic model to configure. Never
+  put credentials, endpoints, headers, or session state in it.
+
+The command also prints a version-pinned install command. Run it verbatim:
+
+```bash
+npm install @microsoft/rayfin-connector-fabric-iq-mcp@2.0.0 @microsoft/rayfin-connectors@2.0.0
+```
+
+## Keep the generated schema
+
+`connector add` writes `rayfin/connectors/assistant/schema.ts`. Do not edit it; re-run
+`connector add` to regenerate it.
+
+```typescript title="rayfin/connectors/assistant/schema.ts"
+// @generated — do not edit.
+
+// Connector: assistant (fabriciqmcp)
+
+import type { ConnectorConfig } from '@microsoft/rayfin-connectors';
+import type { FabricIqMcp } from '@microsoft/rayfin-connector-fabric-iq-mcp';
+
+/**
+ * Typed connector schema for "assistant" (fabriciqmcp).
+ * Plug into your AppConnectorsSchema in your RayfinClient setup.
+ */
+export type AssistantSchema = FabricIqMcp<'executeQuery'>;
+
+export const connectorConfig = {
+  connector: 'fabriciqmcp',
+} as const satisfies ConnectorConfig;
+```
+
+When your app has a CLI-generated `src/lib/connectors.ts`, `connector add` also wires the
+connector there, including its `fabricIqMcp()` runtime. See
+[Wiring connectors into your app](/docs/connectors/client-setup).
+
+## Register the runtime
+
+Register `fabricIqMcp()` in the `runtime` map of `connectorsService`, under the same
+connector name. Always register it: it carries cancellation and deadlines to the HTTP
+transport and keeps requests from being replayed.
+
+```typescript title="src/services/rayfinClient.ts"
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { connectorsService } from '@microsoft/rayfin-connectors';
+import { fabricIqMcp } from '@microsoft/rayfin-connector-fabric-iq-mcp';
+import {
+  connectorConfig as assistantConfig,
+  type AssistantSchema,
+} from '../../rayfin/connectors/assistant/schema';
+
+type AppConnectorsSchema = {
+  assistant: AssistantSchema;
+};
+
+export const rayfinClient = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession({ storage: true }),
+  services: {
+    connectors: connectorsService<AppConnectorsSchema>({
+      configs: { assistant: assistantConfig },
+      runtime: { assistant: fabricIqMcp() },
+    }),
+  },
+});
+
+export type AppClient = typeof rayfinClient;
+```
+
+The wrapper uses the client's existing authenticated session. It does not create its own
+sign-in, and it accepts no bearer tokens or MCP endpoints.
+
+## Ask a question
+
+Wrap `client.connectors.assistant` with `createFabricIqMcpConnectorClient`, then call
+`ask(artifactId, messages)`:
+
+```typescript title="src/features/assistant/assistant.ts"
+import {
+  createFabricIqMcpConnectorClient,
+  type FabricIqMcpChatMessage,
+  type FabricIqMcpToolResult,
+} from '@microsoft/rayfin-connector-fabric-iq-mcp';
+import { rayfinClient } from '../../services/rayfinClient';
+
+export const assistant = createFabricIqMcpConnectorClient(rayfinClient.connectors.assistant);
+
+export function askQuestion(
+  artifactId: string,
+  history: readonly FabricIqMcpChatMessage[],
+  question: string,
+) {
+  return assistant.ask(artifactId, [...history, { role: 'user', content: question }]);
+}
+
+export function answerText(result: FabricIqMcpToolResult): string {
+  return result.content
+    .flatMap((block) =>
+      typeof block === 'object' &&
+      block !== null &&
+      'type' in block &&
+      block.type === 'text' &&
+      'text' in block &&
+      typeof block.text === 'string'
+        ? [block.text]
+        : [],
+    )
+    .join('\n\n');
+}
+```
+
+- `artifactId` is the nonzero GUID of the Power BI artifact the question is about. The
+  wrapper passes it to the Fabric IQ `AskPowerBI` tool as an argument; it is not connector
+  configuration, so one connector can ask about different artifacts. An empty or all-zero
+  GUID fails before any request.
+- `messages` is the complete conversation, ending with a nonempty user message. The wrapper
+  sends the last user message as the question and every earlier entry, unsummarized, as
+  context.
+
+`ask` resolves to `{ result, messages }`:
+
+- `result` is the terminal tool result: `content` blocks (a text answer is
+  `{ type: 'text', text }`), plus `structuredContent`, `_meta`, and `resources` when the
+  service supplies them. When `result.isError` is `true`, the tool reported a failure: show
+  it as an error, not an answer.
+- `messages` is a new history snapshot — everything you passed, followed by the assistant's
+  result.
+
+## Continue the conversation
+
+Pass the returned `messages` back with the next user message:
+
+```typescript title="src/features/assistant/salesByRegion.ts"
+import { answerText, assistant } from './assistant';
+
+export async function salesByRegion(artifactId: string) {
+  const first = await assistant.ask(artifactId, [
+    { role: 'user', content: 'What were sales last month?' },
+  ]);
+  const second = await assistant.ask(artifactId, [
+    ...first.messages,
+    { role: 'user', content: 'Break those down by region.' },
+  ]);
+  return answerText(second.result);
+}
+```
+
+- The service keeps no conversation memory: the history you pass is the context. Earlier
+  assistant entries keep their complete tool results, including structured content.
+- Keep one history per conversation. Independent conversations need independent histories.
+- A question over 20,000 characters, or a history over 40,000 characters once serialized,
+  fails before any request with `FabricIqMcpAdapterError`. The wrapper never truncates
+  history; start a new conversation instead.
+
+## Show progress and cancel
+
+Pass an `AbortSignal` and progress callbacks as the third argument:
+
+```typescript title="src/features/assistant/askWithCancel.ts"
+import type { FabricIqMcpChatMessage } from '@microsoft/rayfin-connector-fabric-iq-mcp';
+import { assistant } from './assistant';
+
+export function askWithCancel(
+  artifactId: string,
+  messages: readonly FabricIqMcpChatMessage[],
+  onStatus: (status: string) => void,
+) {
+  const controller = new AbortController();
+  const response = assistant.ask(artifactId, messages, {
+    signal: controller.signal,
+    onTaskUpdate: ({ status }) => onStatus(status),
+  });
+  return { response, cancel: () => controller.abort() };
+}
+```
+
+- `onTaskUpdate` receives status-only updates.
+- `onTaskProgress` opts into content-bearing progress — `statusMessage`, `progress`, `total`,
+  `message`, `messages`, and `events` when the service supplies them. Treat it as untrusted
+  customer content: do not log it, render it as HTML, run queries it contains, or add it to
+  the conversation history. Progress is never the final answer. Ignore callbacks that arrive
+  after you cancel.
+- Aborting the signal sends a cooperative cancel request once the service has created the
+  task, and `ask` rejects with an `AbortError`.
+- Each request has a five-minute deadline. There is no overall deadline for a long-running
+  task.
+- `close()` cancels active tasks and closes the connection. Call it when the user leaves the
+  conversation; the wrapper cannot be used afterwards.
+
+## Handle errors
+
+| Error | Thrown when | What to do |
+| --- | --- | --- |
+| `FabricIqMcpAdapterError` | The input is invalid (artifact ID, an empty or malformed conversation, an oversized question or history), the wrapper is closed, or the Rayfin backend answered with a non-2xx status. The message carries only the HTTP status. | Fix the input, or check the deployment. |
+| `FabricIqMcpHttpError` | Fabric IQ answered with a non-2xx HTTP status. `status` holds it, and `getResponseHeader(name)` reads a response header such as `Retry-After`. | Do not log or replay the headers. A retry hint does not make it safe to repeat a tool call automatically. |
+| `FabricIqMcpContractError` | A request or response broke the connector contract. `code` is `INVALID_ENVELOPE`, `INVALID_PROTOCOL`, `INVALID_HEADERS`, or `LIMIT_EXCEEDED`. | Report it. |
+| `AbortError` | You aborted the signal. | Expected. |
+| `AggregateError` | Polling a task and its cooperative cancellation both failed. | Read both failures from `errors`. |
+
+Authentication and network failures from the Rayfin client propagate unchanged. The wrapper
+never refreshes or replays a request after a `401`: make sure the user is signed in before
+the first question, and after an authentication failure, sign in again and send the question
+again.
+
+## Call other tools
+
+`listTools()` lists the tools Fabric IQ exposes, without selecting an artifact.
+`callTool(name, args, options)` calls a discovered tool with arguments that match its schema
+— for example extra `AskPowerBI` arguments such as `reportUrl`. When you call a tool
+directly, you supply its complete context yourself.
+
+```typescript title="src/features/assistant/listAssistantTools.ts"
+import { assistant } from './assistant';
+
+export async function listAssistantTools() {
+  const { tools } = await assistant.listTools();
+  return tools.map((tool) => tool.name);
+}
+```
+
+## Verify it in the deployed app
+
+Deploy with `npx rayfin up` before you test: `rayfin dev` does not wire connectors. Open the
+deployed app, sign in, and ask one question before you build UI on the connector.
+
+## Troubleshoot Fabric IQ
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `connector add` fails with `Connector name is required` | The connector has no Fabric item to derive a name from. | Pass `--name <name>`. |
+| `connector search` does not list Fabric IQ | The connector is itemless and not discoverable. | Add it with `connector add --type fabriciqmcp --name <name>`. |
+| `rayfin up` rejects `auth.type: application` | Fabric IQ is delegated-only. | Set `auth.type: delegated`. |
+| `rayfin up` reports `does not support operation "all"` | The entry declares `all` instead of the literal operation. | Declare `- name: executeQuery`, then run `rayfin up`. |
+| `ask` throws `AskPowerBI requires a nonempty artifact GUID` | `artifactId` is missing, malformed, or all zeros. | Pass the artifact's GUID. |
+| `ask` throws about 20000 query characters and 40000 context characters | The question or history is too long. | Start a new conversation. |
+| Cancelling does not stop the in-flight request | `fabricIqMcp()` is not in the `runtime` map, so cancellation and deadlines never reach the HTTP transport. | Register `{ assistant: fabricIqMcp() }` under the exact connector name. |
+| Every question fails although the connector is configured correctly | The Fabric IQ backend adapter may not be enabled in your Fabric environment. | Check availability with your Fabric administrator; do not work around it in app code. |
+
+```prompt title="Add a Fabric IQ assistant to a Rayfin app"
+In my Rayfin 2.0 project, add a chat panel that answers natural-language questions about
+Power BI data through the Fabric IQ connector. Ask me for the GUID of the Power BI artifact to
+ask about; do not invent it.
+
+1. Run `npx rayfin connector add --type fabriciqmcp --name assistant` (the connector is
+   itemless, so pass no workspace or item ID), then run the version-pinned npm install
+   command it prints, verbatim. Do not edit rayfin/connectors/assistant/schema.ts.
+2. In the app's `RayfinClient.create` call, register
+   `services.connectors = connectorsService<AppConnectorsSchema>({ configs, runtime })` from
+   @microsoft/rayfin-connectors, keeping the existing auth and other services. Use
+   `assistant: connectorConfig` from rayfin/connectors/assistant/schema.ts in `configs` and
+   `assistant: fabricIqMcp()` from @microsoft/rayfin-connector-fabric-iq-mcp in `runtime`. If
+   the CLI regenerated src/lib/connectors.ts, use its connectorConfigs, connectorRuntimes,
+   and AppConnectorsSchema instead.
+3. Create the wrapper with `createFabricIqMcpConnectorClient(client.connectors.assistant)`
+   and call `assistant.ask(artifactId, messages, { signal, onTaskUpdate })`, where `messages`
+   is the complete conversation ending with the new user message. Keep `response.messages`
+   as the history for the next turn. Render the text blocks of `response.result.content`
+   (`{ type: 'text', text }`), show `result.isError` results as errors, and add a Cancel
+   button that aborts the signal. Never log progress content or render it as HTML. Call
+   `assistant.close()` when the chat unmounts.
+4. Deploy with `npx rayfin up` and ask one question from the deployed app. If it fails while
+   everything is configured, report that the Fabric IQ backend adapter may not be enabled in
+   this Fabric environment instead of working around it.
+```

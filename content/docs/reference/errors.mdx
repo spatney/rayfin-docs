@@ -1,6 +1,6 @@
 ---
 title: Errors and troubleshooting
-description: A symptom-to-fix index of the errors Rayfin builders hit most — deployment, capacity, static hosting, schema apply, secrets, functions, connectors, and Fabric auth.
+description: A symptom-to-fix index of the errors Rayfin builders hit most — client setup, deployment, schema apply, secrets, functions, connectors, and Fabric auth.
 ---
 
 This page is a symptom → cause → fix index across every area of Rayfin. Search it by the
@@ -23,13 +23,24 @@ troubleshooting section — for the full fix.
 | `No remote endpoint configured` from `staticapp deploy` | No full deployment has happened yet | Run `rayfin up` once, then use `staticapp deploy` for subsequent updates |
 | Static deploy exceeds the size limit | Build output includes source maps or dev-only assets | Exclude dev artifacts from the production build |
 | `rayfin secret set` exits without prompting | stdin is not a TTY, or `CI=true` | Pass the value with `--stdin`, or many values with `--env-file` |
-| `Invalid services.functions.auth: authentication is required when Functions are enabled.` | Rayfin 1.36 requires application auth for enabled Functions | Set `services.functions.auth.type: application` |
+| `Invalid services.functions.auth: authentication is required when Functions are enabled.` | Since Rayfin 1.36, enabled Functions require application auth | Set `services.functions.auth.type: application` |
 | `No value available for secret '<NAME>'.` in a function | The secret isn't declared in `rayfin.yml` or has no value | Declare and set it with `rayfin secret set <NAME>` |
-| HTTP 502 from a function call while `npm run dev` is running | The local Functions host is not running | Restart `npm run dev`; see [Run functions locally](/docs/functions/local-development) |
-| `Connector type "kusto" is not available in this release.` | Rayfin 1.36 holds new Kusto connectors back | Keep existing Kusto connectors; choose another connector type for new sources |
+| HTTP 502 from a function call while `npm run dev` is running | A local Functions host is configured but not running | Restart `npm run dev`; see [Run functions locally](/docs/functions/local-development) |
+| `The installed @microsoft/fabric-user-data-functions@<version> ... but this CLI writes '3.0'.` | The functions project's worker is older than the 2.0 CLI | Install `@microsoft/fabric-user-data-functions` at the CLI's exact version; see [Functions worker is older than the CLI](#functions-worker-is-older-than-the-cli) |
+| `A window handle must be configured` when the local Functions host starts | The functions `host.json` allows a Preview extension bundle older than 4.49.0 | Set `extensionBundle.version` to `[4.49.0, 5.0.0)`; see [Run functions locally](/docs/functions/local-development) |
+| `MISSING_BASE_URL`, `MISSING_AUTH_MODE`, or `INVALID_CONFIG` when the app starts | The 2.0 client was built with 1.x options or without an auth adapter | Use `RayfinClient.create` with `auth`; see [Client construction errors](#client-construction-errors) |
+| `The built bundle is not parseable JavaScript` from `rayfin up` | The frontend bundle still contains TC39 decorator syntax | Enable Stage 3 decorators in the SWC plugin; see [The built bundle is not parseable JavaScript](#the-built-bundle-is-not-parseable-javascript) |
+| `Unsupported TypeScript <version> at <path>.` | Schema compilation needs TypeScript `^5.7.2 \|\| ^6.0.2` | Update TypeScript in the schema package |
+| HTTP 403 `ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN` on schema apply | An entity grants the `anonymous` role and the tenant setting is off | Ask a Fabric admin to enable anonymous data access, or use `@authenticated()` |
+| `Connector type "eventhouse" is not available in this release.` | New Eventhouse connectors are held back in 2.0 | Keep existing Eventhouse connectors; choose another connector type for new sources |
+| `Unknown connector type "kusto"` | `rayfin connector add`, `inspect`, or `search` was given `--type kusto`, which 2.0 renamed to `eventhouse` | Choose another connector type for a new source; new Eventhouse connectors are held back in 2.0 |
+| `Connector "<name>" has unsupported type "kusto"` | `rayfin.yml` still declares a 1.36 `kusto` connector | Migrate the entry as [Eventhouse](/docs/connectors/eventhouse#migrate-a-136-kusto-connector) describes |
 | `SELECTION_REQUIRED` from a connector query | The chain has no explicit selection | Add `.select([...])`, or list the entity in `connectorConfig.entities` |
 | `FEATURE_NOT_ENABLED` or 404 from `/connector-invoke/<name>` | Connector invocation is not enabled for the Fabric workspace | Ask your Fabric admin to enable it; app changes do not help |
 | Popup blocked during Fabric sign-in | `ensureSignedInWithFabric` was called outside a user-gesture handler | Call it directly from a button's `onClick` |
+| `FABRIC_AUTH_POPUP_CLOSED` | The user closed the Fabric sign-in window | Show `error.message` and let the user retry |
+| `SIGN_IN_DENIED` or `AUTH_CLAIMS_*` on sign-in | The app's dynamic claims provider denied or failed the sign-in | See [Dynamic auth claims](/docs/auth/dynamic-claims) |
+| `Can't reach Microsoft Entra ID` from `rayfin login` | The network blocks Entra ID, often WSL2 behind Global Secure Access or a VPN | See [`rayfin login`](/docs/reference/cli/login) |
 
 ## Deployment and schema apply
 
@@ -99,6 +110,51 @@ stale schema.
 
 **Fix:** `npx rayfin login` to reauthenticate, then retry `npx rayfin up`.
 
+### The built bundle is not parseable JavaScript
+
+[New in 1.36](/docs/reference/changelog#rayfin-136)
+
+**Symptom:** `npm run build` succeeds, but `rayfin up` stops with
+`The built bundle is not parseable JavaScript, so the deployed app would be a blank page`,
+or the Vite dev server reports `Expression expected` at `@entity()`.
+
+**Cause:** frontend code imports an entity class as a value — for example for
+`toStandardSchema()` or a connector's `connectorConfig` — and `@vitejs/plugin-react-swc`
+is not compiling TC39 Stage 3 decorators.
+
+**Fix:** enable Stage 3 decorators in the SWC plugin (and in `vitest.config.ts` if specs
+import entities), then rebuild. See
+[Enable decorators in the SWC plugin](/docs/deploy/troubleshooting#enable-decorators-in-the-swc-plugin).
+
+### Unsupported TypeScript for schema compilation
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Symptom:** `rayfin dev` or `rayfin up` fails with
+`Unsupported TypeScript <version> at <path>. Rayfin tooling supports ^5.7.2 || ^6.0.2.`
+
+**Cause:** the package that holds your schema has a TypeScript version outside the range
+the 2.0 CLI compiles with.
+
+**Fix:** install a supported version in that package and commit the lockfile:
+
+```bash
+npm install --save-dev "typescript@^5.7.2"
+```
+
+### Anonymous data access is blocked by the tenant
+
+**Symptom:** applying the schema fails with HTTP 403 and
+`ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`, in `rayfin dev` or `rayfin up`.
+
+**Cause:** an entity grants the `anonymous` role a permission, and the Fabric tenant
+setting **Enable anonymous data access for Fabric Apps (Preview)** is off — or limited to
+security groups that do not include the app owner.
+
+**Fix:** ask a Fabric tenant administrator to enable the setting for the app owner, or
+replace `@anonymous(...)` with `@authenticated(...)` and sign users in. See
+[Permissions](/docs/data/permissions).
+
 ## Sign-in and secrets
 
 ### Sign-in or keychain failures
@@ -140,6 +196,37 @@ the project has not been deployed yet.
 **Fix:** run `npx rayfin up` first so the workload exists. Then confirm you're signed in
 with an account that has workspace access — run `npx rayfin login` again, the account
 picker is always shown.
+
+### "Can't reach Microsoft Entra ID"
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Symptom:** `rayfin login` fails with `Can't reach Microsoft Entra ID` before or after
+the browser opens.
+
+**Cause:** the CLI cannot reach `login.microsoftonline.com`. Inside WSL2 or a dev
+container, a Windows network client such as Global Secure Access or a VPN commonly
+answers DNS with addresses WSL2 cannot reach.
+
+**Fix:** follow the recovery steps the CLI prints. See
+[`rayfin login`](/docs/reference/cli/login) for the WSL2 configuration change and the
+`RAYFIN_TOKEN` fallback.
+
+## Client construction errors
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Symptom:** the app throws a `ClientCompositionError` or `SdkError` with a code such as
+`MISSING_BASE_URL`, `MISSING_PUBLISHABLE_KEY`, `MISSING_AUTH_MODE`, `INVALID_CONFIG`,
+`INVALID_AUTH_CONFIG`, or `INVALID_SERVICE_FACTORY` as soon as it creates the client.
+
+**Cause:** the client is built with 1.x options. Common cases: no `auth` adapter,
+`useProxy` instead of `baseUrl: ''`, top-level `authStorage` or `accessToken`, or an
+`async` service factory.
+
+**Fix:** build the client with `RayfinClient.create`, pass `browserSession()` or
+`suppliedToken()` as `auth`, and register services synchronously. See
+[`@microsoft/rayfin-client`](/docs/reference/sdk/rayfin-client#errors) for every code.
 
 ## Static hosting
 
@@ -206,7 +293,7 @@ See [Run functions locally](/docs/functions/local-development) and
 **Symptom:** `rayfin up` or `rayfin dev` fails with
 `Invalid services.functions.auth: authentication is required when Functions are enabled.`
 
-**Cause:** Rayfin 1.36 requires enabled Functions to declare application authentication.
+**Cause:** since Rayfin 1.36, enabled Functions must declare application authentication.
 
 **Fix:** add the `auth` block:
 
@@ -234,10 +321,39 @@ redeploy. See [Secrets in functions](/docs/functions/secrets).
 **Symptom:** while `npm run dev` is running, `client.functions.<name>.invoke()` fails with
 HTTP 502.
 
-**Cause:** the Vite dev server proxies function calls to the local Functions host, and that
-host is not running. The proxy never falls back to the deployed function.
+**Cause:** the Vite dev server proxies function calls to the local Functions host that
+`rayfin dev` configured, and that host is not running. The proxy never falls back to the
+deployed function. When no local Functions host is configured at all, the adapter forwards
+the call to the deployed backend instead. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 **Fix:** restart `npm run dev`, or run `npx rayfin dev functions apply` and read its output.
+
+### Functions worker is older than the CLI
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Symptom:** `rayfin dev`, `rayfin functions init`, or `rayfin up` stops before generating
+types or deploying, with a message such as
+`The installed @microsoft/fabric-user-data-functions@1.36.2 ... but this CLI writes '3.0'.`
+
+**Cause:** the 2.0 CLI writes runtime metadata schema 3.0, which older workers cannot read.
+
+**Fix:** run the `npm install` command the CLI prints — it installs
+`@microsoft/fabric-user-data-functions` at the CLI's exact version in the functions
+project — then retry. See [Run functions locally](/docs/functions/local-development).
+
+### "A window handle must be configured"
+
+**Symptom:** the local Functions host exits on startup with
+`A window handle must be configured`, typically when a coding agent runs `rayfin dev`.
+
+**Cause:** a function declares an audience, so the host must sign you in, and a Preview
+extension bundle older than 4.49.0 cannot show that prompt without a terminal window.
+
+**Fix:** set `extensionBundle.version` to `[4.49.0, 5.0.0)` in the functions `host.json`.
+Since 2.0, `rayfin dev` warns before starting the host and names the file to change.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20) See
+[Run functions locally](/docs/functions/local-development).
 
 ## Connectors
 
@@ -260,11 +376,65 @@ from the service, not from your app.
 **Fix:** ask your Fabric administrator to enable it for the workspace. Changing the app
 does not help.
 
-### `Connector type "kusto" is not available in this release.`
+### `Connector type "eventhouse" is not available in this release.`
 
-**Cause:** Rayfin 1.36 holds new Kusto (Eventhouse) connectors back.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-**Fix:** existing Kusto connectors keep working; see [KQL databases](/docs/connectors/kusto).
+**Cause:** new Eventhouse connectors — the type 1.x called `kusto` — are held back in 2.0.
+
+**Fix:** existing Eventhouse connectors keep working; see
+[Eventhouse](/docs/connectors/eventhouse). Choose another connector type for new sources.
+
+### `Unknown connector type "kusto"`
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Cause:** `rayfin connector add`, `rayfin connector inspect`, or `rayfin connector search`
+received `--type kusto`. 2.0 renamed the type to `eventhouse`.
+
+**Fix:** new Eventhouse connectors cannot be added in 2.0, so choose another connector type
+for a new source. To work with an existing Eventhouse connector, see
+[Eventhouse](/docs/connectors/eventhouse).
+
+### `Connector "<name>" has unsupported type "kusto"`
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Cause:** `rayfin.yml` still declares a 1.36 connector with `type: kusto`, and `rayfin up`
+validation no longer recognizes it.
+
+**Fix:** change the entry to `type: eventhouse` with `auth.type: application`, move its
+queries into `additionalPayload`, and switch to `@microsoft/rayfin-connector-eventhouse`.
+See [Migrate a 1.36 `kusto` connector](/docs/connectors/eventhouse#migrate-a-136-kusto-connector).
+
+### `INVALID_QUERY_INPUT` from an Eventhouse connector
+
+**Cause:** the call sent query text or cluster fields instead of a saved `queryId`, or its
+`parameters` do not match the saved template.
+
+**Fix:** save the query under the connector's `additionalPayload.queries`, run
+`npx rayfin up`, and call it with `{ queryId, parameters }`. See
+[Eventhouse](/docs/connectors/eventhouse).
+
+### `AMBIGUOUS_CONNECTOR`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Cause:** connector names are case-insensitive, and two keys in your connector configs
+differ only by case, so `client.connectors.<name>` cannot pick one.
+
+**Fix:** rename or remove one of the entries in `rayfin.yml` and in the configs passed to
+`connectorsService`. `rayfin up` and `rayfin dev` validation also flag the duplicate.
+
+### `connector-additional-payload-not-acknowledged`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Cause:** the backend saved the connector settings but dropped a declared
+`additionalPayload`, which means it does not support the field yet.
+
+**Fix:** deploy to a backend that supports it, or remove `additionalPayload` from the named
+connectors.
 
 ## Fabric brokered auth
 
@@ -278,12 +448,45 @@ synchronous user-gesture handler.
 
 **Fix:** call it directly from a button's `onClick`, not on page load or after an `await`.
 
+### Sign-in fails with no visible message
+
+**Cause:** the app catches the sign-in error and discards it, for example with an empty
+`catch` or by only resetting the user to signed out.
+
+**Fix:** catch errors from every `ensureSignedInWithFabric()` call and render
+`error.message` on the sign-in screen; it is a user-safe, localized description.
+`initEmbeddedAuth()` does not reject, so when it returns `null`, show the sign-in button and
+let the click report the error. See [Fabric SSO](/docs/auth/fabric-sso).
+
+### `FABRIC_AUTH_POPUP_CLOSED`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Cause:** the user closed the Fabric sign-in window before sign-in completed. The call
+rejects about one second later instead of waiting for the five-minute timeout.
+
+**Fix:** show `error.message` and keep the sign-in button available so the user can retry.
+
+### `SIGN_IN_DENIED` or `AUTH_CLAIMS_*`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Cause:** the app's `udf.authClaims` provider denied the user (`SIGN_IN_DENIED`), timed
+out (`AUTH_CLAIMS_UNAVAILABLE`), threw or is not deployed (`AUTH_CLAIMS_FAILED`), or
+returned claims that do not match the deployed contract (`AUTH_CLAIMS_INVALID_OUTPUT`).
+
+**Fix:** see [Dynamic auth claims](/docs/auth/dynamic-claims). To stop a failing provider
+without redeploying functions, set `services.auth.dynamicClaims.enabled: false` and run
+any deploy.
+
 ### Session not persisting
 
-**Cause:** `RayfinClient` is misconfigured — usually the wrong `baseUrl` or
-`publishableKey`.
+**Cause:** the client is misconfigured — usually the wrong `baseUrl` or `publishableKey`,
+or `browserSession({ storage: false })` or `persistSession: false`, which keep the session
+in memory only.
 
-**Fix:** confirm both match your deployed backend.
+**Fix:** confirm both values match your deployed backend, and that the browser session
+adapter uses storage.
 
 ### Timeout after 5 minutes
 
@@ -300,10 +503,12 @@ using (production, PPE, dev).
 
 ### `initEmbeddedAuth` returns `null`
 
-**Cause:** the SDK didn't detect embedded mode.
+**Cause:** the SDK didn't detect embedded mode, or embedded sign-in failed — it logs a
+console warning and resolves to `null` instead of rejecting.
 
 **Fix:** ensure the URL includes `?fabricEmbedded=true`, or set `fabricEmbedded: true`
-explicitly in `FabricAuthOptions`.
+explicitly in `FabricAuthOptions`. If embedded mode is detected, check the console warning,
+or click sign in to see the error.
 
 ### State mismatch error
 

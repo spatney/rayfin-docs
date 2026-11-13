@@ -24,7 +24,7 @@ npx rayfin login --encryption-fallback-enabled
 npm run dev
 ```
 
-Every bundled template's `package.json` contains the same root workflow:
+The flat templates (`todoapp`, `gettingstartedauth`, and `dataapp`) declare this root workflow in `package.json`:
 
 ```json title="package.json"
 {
@@ -35,7 +35,7 @@ Every bundled template's `package.json` contains the same root workflow:
 }
 ```
 
-The 1.36 universal app keeps the same root `dev` command, but its `dev:frontend` script targets the frontend workspace:
+The Universal App (the default `blankapp` template) keeps the same root `dev` command, but its `dev:frontend` script targets the frontend workspace:
 
 ```json title="package.json"
 {
@@ -46,6 +46,20 @@ The 1.36 universal app keeps the same root `dev` command, but its `dev:frontend`
 }
 ```
 
+`rayfin dev` starts `npm run dev:frontend` when that script exists and falls back to `npm run dev` for existing projects. It resolves these scripts from `services.staticHosting.path` when that is set, otherwise from the project root, so a nested frontend package declares `dev:frontend` in its own `package.json`.
+
+### Switch an existing project to rayfin dev
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+When `rayfin init` adds Rayfin to an existing project from scratch, without a template, it rewires the `dev` script once `@microsoft/rayfin-cli` is installed or declared as a dependency: `dev` becomes `rayfin dev`, and the previous command moves to `dev:frontend`.
+
+```text
+🔧 Updated package.json: "dev" now runs "rayfin dev" (previous command moved to "dev:frontend")
+```
+
+`rayfin init` leaves `dev` unchanged when it already runs `rayfin dev`, or when `dev:frontend` already holds a different command. To migrate by hand, set both scripts as shown above and keep `dev:frontend` non-recursive; otherwise `rayfin dev` stops with a recursion error.
+
 ## What rayfin dev does
 
 `rayfin dev` uses the Fabric provider by default. During startup it:
@@ -55,12 +69,15 @@ The 1.36 universal app keeps the same root `dev` command, but its `dev:frontend`
 3. Provisions or reuses the Fabric AppBackend for the project.
 4. Applies runtime settings from `rayfin.yml`, including auth, static hosting posture, Functions, and connector declarations.
 5. Applies the data schema unless `--skip-db-apply` is set.
-6. Writes backend values to `rayfin/.env` using the `RAYFIN_PUBLIC_*` names.
-7. Regenerates the frontend `.env.local` unless `--no-emit-env` is set.
-8. Starts `dev:frontend`.
-9. Starts the local Functions host when `services.functions.enabled` is true.
+6. Applies Storage folder configuration to the Fabric backend when `services.storage.enabled` is true. [New in 2.0](/docs/reference/changelog#rayfin-20)
+7. Writes backend values to `rayfin/.env` using the `RAYFIN_PUBLIC_*` names.
+8. Regenerates the frontend `.env.local` unless `--no-emit-env` is set.
+9. Starts `dev:frontend`.
+10. Starts the local Functions host when `services.functions.enabled` is true.
 
 `rayfin dev` never builds or uploads static hosting assets. Use `npx rayfin up` when you want to publish the production bundle.
+
+To apply Storage changes to the development backend on their own, run `npx rayfin dev storage apply`. See [Storage](/docs/storage#apply-storage-configuration).
 
 ## Stop and restart
 
@@ -71,6 +88,7 @@ Restart the dev loop after changing:
 - `rayfin/rayfin.yml`.
 - Service `path` or `buildCommand` values.
 - Entity files or schema registration.
+- Storage folder declarations. [New in 2.0](/docs/reference/changelog#rayfin-20)
 - Functions service configuration.
 - Static hosting access posture.
 
@@ -120,9 +138,24 @@ import react from '@vitejs/plugin-react-swc';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [react(), rayfinLocalDev()],
+  plugins: [
+    react({
+      // Rayfin entities use TC39 Stage-3 decorators, which SWC rejects by
+      // default ("Expression expected" at `@entity()`). Enable them so the
+      // frontend can import entity classes at runtime, e.g. for
+      // getFieldConstraints() or toStandardSchema().
+      useAtYourOwnRisk_mutateSwcOptions({ jsc }) {
+        if (!jsc?.parser) return;
+        jsc.parser.decorators = true;
+        jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' };
+      },
+    }),
+    rayfinLocalDev(),
+  ],
 });
 ```
+
+The 2.0 templates enable Stage 3 decorators in the SWC plugin as shown; see [Vite configuration](/docs/start/project-structure#vite-configuration). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 The adapter is active only while Vite is serving. When a backend URL resolves from the active `rayfin dev` session or from Vite env values, the adapter serves `rayfin.config.json` from the Vite origin with `apiUrl` set to that same origin. It then proxies the SDK's default backend routes to the selected backend:
 
@@ -132,33 +165,45 @@ The adapter is active only while Vite is serving. When a backend URL resolves fr
 | `/graphql` | Rayfin data API route. |
 | `/connector-invoke` | Connector invocation route. |
 | `/connectors` | Connector metadata routes. |
-| `/functions/<name>/invoke` | Local Functions host selected by `rayfin dev`. |
+| `/.well-known` | Backend discovery routes, such as the JSON Web Key Set that `client.auth.getClaims()` uses to validate tokens. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `/functions/<name>/invoke` | The local Functions host selected by `rayfin dev`. When no local Functions host is configured, the configured backend. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 
-If the backend or local Functions host is unavailable, the proxy returns HTTP 502. It does not fall through to deployed code.
+Without a local Functions host, for example while you develop only the frontend locally, function calls reach the functions deployed to the backend. A configured local Functions host that is unavailable gets HTTP 502 instead of a fallback to deployed code; see [HTTP 502 from a local function call](/docs/functions/local-development#http-502-from-a-local-function-call) and [Route local Vite calls through the adapter](/docs/functions/calling-functions#route-local-vite-calls-through-the-adapter). If the backend itself is unreachable, the backend routes also return HTTP 502.
 
 ### Legacy explicit Functions base URL
 
-Older client code passes an explicit Functions base URL from this helper:
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Older client code, and frameworks other than Vite, pass an explicit Functions base URL. In 2.0, `functionsBaseUrl` is a top-level option of `RayfinClient.create`, next to the auth adapter and the registered services:
 
 ```typescript title="src/services/rayfinClient.ts"
+import { browserSession } from '@microsoft/rayfin-auth';
 import { RayfinClient, resolveRayfinConfig } from '@microsoft/rayfin-client';
+import { functionsService } from '@microsoft/rayfin-functions';
 import { resolveRayfinFunctionsBaseUrl } from '@microsoft/rayfin-local-dev';
+
+import type { AppFunctionsSchema } from '../../rayfin/functions/src/types';
 
 const resolved = await resolveRayfinConfig({
   apiUrl: import.meta.env.VITE_RAYFIN_API_URL,
   publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
 });
 
-export const client = new RayfinClient({
+export const client = RayfinClient.create({
   baseUrl: resolved.baseUrl!,
   publishableKey: resolved.publishableKey!,
+  runtimeConfig: resolved.runtimeConfig,
   functionsBaseUrl: resolveRayfinFunctionsBaseUrl(),
+  auth: browserSession({ storage: true }),
+  services: { functions: functionsService<AppFunctionsSchema>() },
 });
+
+export type AppClient = typeof client;
 ```
 
 When the adapter registered local Functions routing, `resolveRayfinFunctionsBaseUrl()` returns the same-origin `/.rayfin` base URL. The Functions client then calls the legacy local route `/.rayfin/api/<name>`, and Vite forwards it to the local Functions host. In production, the helper returns `undefined`, so the SDK uses the deployed Rayfin Functions route.
 
-New code can leave `functionsBaseUrl` unset and use the default `/functions/<name>/invoke` route.
+New code can leave `functionsBaseUrl` unset and use the default `/functions/<name>/invoke` route. See [Use an explicit Functions base URL](/docs/functions/calling-functions#use-an-explicit-functions-base-url).
 
 ## Local automatic sign-in
 
@@ -221,6 +266,20 @@ services:
 
 For Functions authoring, the `@microsoft/fabric-user-data-functions` package, local debugging, and deployment behavior, see [Functions](/docs/functions) and [Functions local development](/docs/functions/local-development).
 
+In 2.0, the Functions project must depend on `@microsoft/fabric-user-data-functions` at exactly the CLI version. `rayfin dev` stops before it generates Functions files when the installed version is incompatible, and prints the `npm install` command that fixes it; see [Match the worker package to the CLI](/docs/functions#match-the-worker-package-to-the-cli). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+### Extension bundle warning
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+`rayfin dev` warns before it starts the Functions host when the Functions `host.json` still allows a Preview extension bundle older than 4.49.0. Those bundles cannot show the host's sign-in prompt when it has no terminal window, for example when a coding agent runs `npx rayfin dev`:
+
+```text
+rayfin/functions/host.json allows Functions extension bundles older than 4.49.0, which can fail local sign-in, for example when the Functions host has no terminal window. Set "version": "[4.49.0, 5.0.0)" under extensionBundle.
+```
+
+Set that range under `extensionBundle` in the Functions `host.json` and keep its other settings. See [Upgrade an existing functions host.json](/docs/functions/local-development#upgrade-an-existing-functions-hostjson).
+
 ## Useful flags
 
 | Flag | Use it when |
@@ -243,9 +302,14 @@ See [`rayfin dev`](/docs/reference/cli/dev) for the complete CLI reference.
 | `No available frontend dev-server port was found. Free a local port or set RAYFIN_PUBLIC_FRONTEND_PORT in rayfin/.env and retry.` | Stop local servers or set a known free port in `rayfin/.env`. |
 | Provisioning consent is required | Run `rayfin dev` in an interactive terminal, pass `--yes`, or pass `--capacity-id <id>`. |
 | Functions prerequisites are missing | Run `rayfin dev functions apply` once to install Azure Functions Core Tools with consent, then retry `rayfin dev`. |
-| Browser calls to local Functions return HTTP 502 | Confirm `rayfin dev` started the local Functions host and that `@microsoft/rayfin-local-dev/vite` is registered in `vite.config.ts`. |
+| Browser calls to local Functions return HTTP 502 | Confirm `rayfin dev` started the local Functions host and that `@microsoft/rayfin-local-dev/vite` is registered in `vite.config.ts`. See [HTTP 502 from a local function call](/docs/functions/local-development#http-502-from-a-local-function-call). |
 | `External Entra exchange is not enabled.` | Set `services.auth.fabric.externalEntraExchange: true`, then run `rayfin dev` or deploy again. |
+| `... allows Functions extension bundles older than 4.49.0, which can fail local sign-in ...` | Set `"version": "[4.49.0, 5.0.0)"` under `extensionBundle` in the Functions `host.json`, then restart `rayfin dev`. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `The Functions host could not sign in without a terminal window.` | Make the same `host.json` change, then retry the command the message names. See [Local sign-in fails without a terminal window](/docs/functions/local-development#local-sign-in-fails-without-a-terminal-window). [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `Unsupported TypeScript <version> at <path>` | Install TypeScript `^5.7.2` or `^6.0.2` in the schema package. See [Installation](/docs/start/installation#install-a-supported-typescript-version). [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `... as CommonJS because ... does not set "type": "module", but @microsoft/rayfin-core is ESM-only.` | Restore `rayfin/package.json` containing `{"type": "module"}`, or set `"type": "module"` in the app's `package.json`. See [Project structure](/docs/start/project-structure#rayfinpackagejson). [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `TS2835` on a relative import under `rayfin/` | Add the `.js` extension, for example `import { Category } from './Category.js';`. |
 
 ```prompt title="Diagnose my Rayfin dev loop"
-In my Rayfin project, inspect package.json, vite.config.ts, and rayfin/rayfin.yml, then run `npx rayfin dev --verbose`. If it fails, use the exact error text to fix the local development loop. Ensure there is a non-recursive `dev:frontend` script, `rayfinLocalDev()` is registered for Vite projects, local Functions routing is not falling back to deployed code, and the frontend port values in rayfin/.env are current.
+In my Rayfin 2.0 project, inspect package.json, vite.config.ts, rayfin/rayfin.yml, and rayfin/tsconfig.json, then run `npx rayfin dev --verbose`. If it fails, use the exact error text to fix the local development loop. Ensure there is a non-recursive `dev:frontend` script, `rayfinLocalDev()` from @microsoft/rayfin-local-dev/vite is registered for Vite projects, and the frontend port values in rayfin/.env are current. If schema compilation fails, make sure the schema package uses TypeScript ^5.7.2 or ^6.0.2, that rayfin/package.json contains {"type": "module"} when the root package.json is not an ES module package, and that relative imports between files under rayfin/ end in .js. If `rayfin dev` warns that the Functions host.json allows extension bundles older than 4.49.0, set "version": "[4.49.0, 5.0.0)" under extensionBundle and keep the other settings. A configured local Functions host that is down returns HTTP 502 and must never fall back to deployed function code.
 ```

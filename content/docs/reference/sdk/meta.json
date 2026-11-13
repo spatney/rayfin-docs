@@ -10,10 +10,12 @@
     "rayfin-embed-host",
     "rayfin-functions",
     "rayfin-storage",
+    "rayfin-telemetry",
     "rayfin-connectors",
     "rayfin-connector-fabric-graphql",
     "rayfin-connector-fabric-semanticmodel",
-    "rayfin-connector-kusto",
+    "rayfin-connector-fabric-iq-mcp",
+    "rayfin-connector-eventhouse",
     "rayfin-app-state-fabric",
     "rayfin-lib"
   ]

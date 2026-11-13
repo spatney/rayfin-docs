@@ -13,6 +13,7 @@ Rayfin uses checked-in configuration for desired state and gitignored files for 
 | `rayfin/.env` | Local deployment values, `RAYFIN_PUBLIC_*`, and interpolation inputs. | No |
 | `rayfin/.env.example` | Documented placeholders for teammates. | Yes |
 | `rayfin/.project.json` | Scaffold lineage identifier. | Usually yes |
+| `rayfin/package.json` | ESM marker (`{ "type": "module" }`) that `rayfin init` writes when the app is not ESM, so schema files compile under NodeNext. [New in 2.0](/docs/reference/changelog#rayfin-20) | Yes |
 | `rayfin/.deployments.json` | Recorded Fabric deployments and active target. | No |
 | `.env.local` or package `.env.local` | Framework variables generated from `rayfin/.env`. | No |
 | `~/.rayfin/auth.json` and token cache | CLI sign-in state. | No |
@@ -40,7 +41,7 @@ Rayfin uses checked-in configuration for desired state and gitignored files for 
 | `RAYFIN_WORKSPACE_ID` | Ambient workspace target for `rayfin dev` and `rayfin up`. Do not combine with `--capacity-id`. |
 | `RAYFIN_ENV_FILE` | Alternate env file path, equivalent to `--env-file`. |
 | `RAYFIN_ENCRYPTION_FALLBACK_ENABLED` | Allows plaintext token cache when the OS keychain is unavailable. Use for development environments only. |
-| `RAYFIN_FEATURE_FLAGS` | Experimental feature opt-ins, such as storage. |
+| `RAYFIN_FEATURE_FLAGS` | Opt-in list for experimental CLI features. Storage no longer uses it: remove `storage` from the list when you upgrade. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 
 ## Workspace targeting
 

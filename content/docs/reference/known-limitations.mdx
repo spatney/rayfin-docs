@@ -1,6 +1,6 @@
 ---
 title: Known limitations
-description: Current constraints in Rayfin — service availability, functions, connectors, the data client, Data API Builder, relationships, auth, and schema apply — each with a workaround.
+description: Current constraints in Rayfin 2.0 — service availability, functions, connectors, the data client, Data API Builder, relationships, auth, and schema apply — each with a workaround.
 ---
 
 This page lists the current constraints Rayfin builders run into most often, grouped by
@@ -20,15 +20,41 @@ service is not available in every Fabric region or tenant.
 access in [`client.data.<Entity>`](/docs/data/querying) where a function is not strictly
 required.
 
-### Storage is experimental
+### Storage has no local service
 
-[Storage](/docs/storage) is experimental. It is enabled only with
-`RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled: true`, it is not available in
-every Fabric region or tenant, and `@microsoft/rayfin-storage` may change substantially
-between releases.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-**Workaround:** confirm a storage-enabled deploy succeeds in your target workspace before
-you depend on it, and pin every Rayfin package to one exact version.
+[Storage](/docs/storage) is generally available in 2.0 and needs no feature flag, but it is
+remote-only. There is no local Storage service or emulator: `rayfin dev` applies your
+folder declarations to the remote Fabric backend, and uploads and downloads always go to
+OneLake. Storage also requires the Data service.
+
+**Workaround:** use a development workspace for Storage work, and run
+`npx rayfin dev storage apply` to retry only the Storage configuration during a
+development session.
+
+### Dynamic auth claims depend on the workspace's region
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+The backend must have [dynamic auth claims](/docs/auth/dynamic-claims) enabled for the
+workspace's region. Until it does, sign-in and refresh mint base claims only and never call
+your `udf.authClaims` provider.
+
+**Workaround:** after deploying, sign in and confirm `client.auth.getClaims()` returns your
+app-defined claims before you write policies that depend on them.
+
+### Raw SQL and Observability need service-side enablement
+
+[New in 2.0](/docs/reference/changelog#rayfin-20) [Experimental](/docs/reference/changelog#feature-status)
+
+[Raw SQL in functions](/docs/functions/raw-sql) runs only where the service has enabled it
+for your tenant, and never under `rayfin dev`. [Observability](/docs/deploy/observability)
+provisions and queries an Application Insights resource only when Fabric has enabled the
+telemetry service for the workspace.
+
+**Workaround:** prefer `ctx.getDataClient()` for data access in functions, and verify both
+features against a deployed app in your target workspace before you depend on them.
 
 ### Deep linking is rolling out per tenant
 
@@ -64,15 +90,19 @@ signed in with, not for the app identity. A call that works locally can fail aft
 **Workaround:** grant the app identity access before you deploy, and test the deployed
 function once with `npx rayfin up`.
 
-### Five audiences only
+### Five built-in audiences
 
-[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 `AudienceType` has five members: `Sql`, `Storage`, `Fabric`, `AzureAI`, and `ADO`.
-`CosmosDB`, `KeyVault`, `EventGrid`, `Kusto`, and `WorkIQ` were removed in 1.36.
+`CosmosDB`, `KeyVault`, `EventGrid`, `Kusto`, and `WorkIQ` were removed in 1.36. Since
+2.0 you can also declare a custom audience — an application ID or an `https://` or
+`api://` resource URI — for any other Entra-protected resource.
 
-**Workaround:** for a service that accepts key-based access, store the credential with
-`npx rayfin secret set` and read it from `ctx.Secrets` in the function. See
+**Workaround:** for another Entra-protected API, declare it as a
+[custom audience](/docs/functions/connections) and grant the app identity access to it. For
+a service that accepts key-based access, store the credential with `npx rayfin secret set`
+and read it from `ctx.Secrets` in the function. See
 [Secrets in functions](/docs/functions/secrets).
 
 ## Connectors
@@ -87,27 +117,29 @@ against the deployed app. Prove the connector returns rows with
 [`rayfin connector invoke` or `rayfin connector inspect`](/docs/reference/cli/connector)
 before you build UI on it.
 
-### New Kusto connectors cannot be added
+### New Eventhouse connectors cannot be added
 
-[Changed in 1.36](/docs/reference/changelog#rayfin-136)
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-Rayfin 1.36 holds the `kusto` (Eventhouse) connector type back. `rayfin connector add`,
-`types`, and `search` reject it with
-`Connector type "kusto" is not available in this release.` A project that already declares
-a Kusto connector keeps validating and deploying.
+The Kusto connector type was renamed to `eventhouse` in 2.0, and it is still held back:
+`rayfin connector add`, `types`, and `search` reject it with
+`Connector type "eventhouse" is not available in this release.` A `type: kusto` entry is
+now an unknown connector type. A project that already declares an Eventhouse connector
+keeps validating and deploying once its entry uses `type: eventhouse`,
+`auth.type: application`, and saved queries in `additionalPayload`.
 
-**Workaround:** keep existing Kusto connectors as they are. See
-[KQL databases](/docs/connectors/kusto) for operating one on 1.36.
+**Workaround:** migrate an existing Kusto declaration by hand as
+[Eventhouse](/docs/connectors/eventhouse) describes. For new projects, query relational
+Fabric sources through a SQL connector instead.
 
-### `rayfin connector inspect` does not support Kusto
+### `rayfin connector inspect` does not support Eventhouse
 
 `connector inspect` works for `fabric-sqlanalytics`, `fabric-warehouse`,
-`fabric-sqldatabase`, and `fabric-semanticmodel`. A `kusto` connector fails with
-`Unsupported connector type: kusto`.
+`fabric-sqldatabase`, and `fabric-semanticmodel`. An `eventhouse` connector fails with
+`Unsupported connector type: eventhouse`.
 
-**Workaround:** use `npx rayfin connector invoke <name> executeQuery` instead. That transport
-posts to the deployed item, so it needs a prior `npx rayfin up`. See
-[KQL databases](/docs/connectors/kusto).
+**Workaround:** after `npx rayfin up`, call every saved query once from a test page in the
+deployed app. See [Eventhouse](/docs/connectors/eventhouse).
 
 ### Install connector packages at the pinned version
 
@@ -120,17 +152,36 @@ verbatim, so every `@microsoft/rayfin-*` package stays on one version.
 
 ### Decorated entity classes can break a browser bundle
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 `connectorConfig.entities` accepts either an entity's class or a string array of its field
 names. The class form is required to select a relationship — selecting one with the array
-form throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT`. But a bundler that lowers the
-decorators on an entity class produces an invalid class expression, and the deployed page
-fails to parse at runtime.
+form throws `ENTITIES_REQUIRED_FOR_RELATIONSHIP_SELECT`. Importing the class puts TC39
+decorators in the browser bundle, and `@vitejs/plugin-react-swc` does not compile them by
+default: the dev server reports `Expression expected` at `@entity()`, and a Vite 8 build can
+emit raw `@decorator` syntax that `rayfin up` refuses with
+`The built bundle is not parseable JavaScript`.
 
-**Workaround:** in code the browser loads, list each entity's fields as a string array
-unless you need relationship selects. If you use the class form, confirm the production
-build runs before you deploy. See [Client setup](/docs/connectors/client-setup).
+**Workaround:** enable Stage 3 decorators in the SWC plugin, as the 2.0 templates do, or
+use the default `@vitejs/plugin-react` plugin. See
+[Enable decorators in the SWC plugin](/docs/deploy/troubleshooting#enable-decorators-in-the-swc-plugin).
+If neither is possible, list each entity's fields as a string array unless you need
+relationship selects.
 
 ## Data client
+
+### Results contain only the fields you select
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+A query returns only the fields it requests, and 2.0 types reflect that. A query without
+`.select()` — including `findById()`, `findMany()`, and `findFirst()` on the entity
+client — requests the primary key only. Selected `Date` fields are typed `Date | string`
+and booleans `boolean | 'true' | 'false'`, because values can arrive as wire strings.
+
+**Workaround:** select every field you read, for example
+`client.data.Todo.select(['id', 'title']).where({ id: { eq: id } }).findFirst()`, and
+convert date and boolean values explicitly. See [Querying](/docs/data/querying).
 
 ### `count()` counts numeric values, not rows
 
@@ -197,15 +248,19 @@ DAB only supports forward pagination — `first` and `after`
 **Workaround:** design paged UI around forward-only navigation (a "next page" cursor kept
 in state), rather than jumping backward by cursor.
 
-### Nested queries beyond two levels aren't supported
+### Selections support one relationship level
 
-`.select()` supports one level of relationship dot-path (`'notebook.name'`) but not two
-(`'notebook.owner.email'`) — the query builder's field-selection logic only splits on the
-first `.`.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+Each `.select()` path supports one relationship followed by a scalar field: `'notebook.name'`
+for a to-one relationship and `'notes[].title'` for a to-many relationship. Deeper paths
+such as `'notebook.owner.email'`, bare relationship names, and object-valued leaves are
+rejected before the request is sent. A to-many path without the `[]` marker no longer
+requests the relationship's `items` connection.
 
 **Workaround:** issue a second query for the deeper relationship using the first query's
-result as the filter, or add a direct field/relationship on the entity that needs the
-deeper data.
+result as the filter, or add a direct field or relationship on the entity that needs the
+deeper data. Connector entities are not limited this way: their dotted paths can go deeper.
 
 ## Relationships
 
@@ -251,7 +306,31 @@ unsubscribe function. See [`@microsoft/rayfin-auth`](/docs/reference/sdk/rayfin-
 `OpaqueSession` intentionally doesn't expose tokens or internal claim structure.
 
 **Workaround:** gate UI logic on `session.isAuthenticated` or the presence of
-`session.user` — don't try to read or decode internal session fields.
+`session.user` — don't try to read or decode internal session fields. To read claims,
+call `client.auth.getClaims()`. [New in 2.0](/docs/reference/changelog#rayfin-20)
+
+### `isAuthenticated` is false while the access token is expired
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`isAuthenticated` is `true` only while the session's access token is unexpired. If the
+token lapses before it can be renewed — for example while the device is offline —
+`isAuthenticated` reads `false` while `user` stays set, and the SDK renews the token when it
+can.
+
+**Workaround:** gate authenticated API calls on `isAuthenticated`, and use `session.user`
+when you only need to show who is signed in. See [Sessions](/docs/auth/sessions).
+
+### Client-side claims are strings
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+Tokens carry every app-defined claim as a string, so `client.auth.getClaims()` returns a
+provider's `false` as `'false'` and `42` as `'42'`.
+
+**Workaround:** compare with `=== 'true'` or parse the value, and keep authorization
+decisions in server-side policies. In a function, `ctx.getClaims()` returns the declared
+types.
 
 ### Auth config changes require a backend restart
 
@@ -281,8 +360,23 @@ form.
 **Workaround:** use `@authenticated(actions, options)` for authenticated-only access, and
 `@anonymous(actions, options)` for public access. Both are exported from the package root.
 Anonymous access on a deployed Fabric app additionally requires a tenant administrator to
-enable anonymous data access for the tenant. See
+turn on **Enable anonymous data access for Fabric Apps (Preview)** for the app owner;
+without it, applying the schema fails with HTTP 403
+`ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`. See
+[Permissions](/docs/data/permissions) and
 [Permission decorators](/docs/reference/sdk/rayfin-core#permission-decorators).
+
+### Property names must be valid GraphQL field names
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+An entity property becomes a GraphQL field, so its name must match
+`/^[_A-Za-z][_0-9A-Za-z]*$/` and must not start with `__`. The CLI rejects names such as
+`$price` or `my-col` during schema analysis, before anything is applied. This applies to
+relationship properties and connector entities too.
+
+**Workaround:** give the property a valid name and map it to the column with the `column`
+option, for example `@decimal({ column: '$price' }) price!: number;`.
 
 ## Database and schema apply
 
@@ -292,6 +386,29 @@ enable anonymous data access for the tenant. See
 
 **Workaround:** run `npx rayfin up` once to create the app, then use the `db apply`
 subcommand for schema-only changes.
+
+### Schema compilation needs TypeScript 5.7.2 or later
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The CLI compiles your entities with your app's TypeScript and supports `^5.7.2 || ^6.0.2`.
+TypeScript 5.0 through 5.7.1, 6.0.0, 6.0.1, prereleases, and 7.x are rejected.
+
+**Workaround:** update TypeScript in the package that holds your schema, for example
+`npm install --save-dev "typescript@^5.7.2"`, and commit the manifest and lockfile.
+
+### Relative imports under `rayfin/` need `.js` extensions
+
+Node.js loads the compiled entities as ES modules, so an extensionless relative import
+such as `import { Category } from './Category'` fails with `TS2835`. Since 2.0,
+`rayfin init` adds `rayfin/package.json` with `{"type": "module"}` to apps that are not
+ES modules, which also makes `rayfin/` its own package: root `imports` aliases and
+self-references by package name do not resolve inside it.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Workaround:** write `import { Category } from './Category.js'`, keep
+`rayfin/package.json`, and use relative imports inside `rayfin/`. See
+[Project structure](/docs/start/project-structure).
 
 ### Entity names can't reuse GraphQL built-in type names
 

@@ -1,16 +1,22 @@
 ---
 title: Creating, updating, deleting
-description: Create, update, and delete Rayfin records through the type-safe client, and set relationship fields correctly in mutations.
+description: Create, update, upsert, and delete Rayfin records through the type-safe client, set relationship fields correctly, and know what each mutation returns.
 ---
 
-`client.data.<Entity>` also handles writes. `create`, `update`, and `delete` are fully
-typed against your entity — including relationship fields defined with `@one()`.
+`client.data.<Entity>` also handles writes. `create`, `update`, `upsert`, and `delete` are
+fully typed against your entity — including relationship fields defined with `@one()` — and a
+field the entity does not declare is a compile-time error.
 
 ## Create a record
 
 Pass every required field. `id` is optional — omit it and the server generates a UUID.
 
 ```typescript
+const session = rayfinClient.auth.getSession();
+if (!session.isAuthenticated || !session.user) {
+  throw new Error('Sign in before creating a todo.');
+}
+
 const todo = await rayfinClient.data.Todo.create({
   title: 'Ship the changelog',
   isCompleted: false,
@@ -19,8 +25,40 @@ const todo = await rayfinClient.data.Todo.create({
 });
 ```
 
-Supply your own `id` at creation time only if you specifically need a client-generated
-identifier — it is validated as a UUID like any other write.
+`session.user.id` is the subject id that row-level policies compare as `claims.sub` — see
+[Permissions](/docs/data/permissions). Supply your own `id` at creation time only if you
+specifically need a client-generated identifier — it is validated as a UUID like any other
+write.
+
+## What mutations return
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+A mutation returns the record's primary key plus the fields you sent — not the whole row:
+
+| Operation | Returns |
+| --- | --- |
+| `create(input)` | Primary key plus the scalar, `Date`, and relationship fields in `input` |
+| `update(where, input)` | Primary key plus the scalar, `Date`, and relationship fields in `input` |
+| `delete(where)` | Primary key only |
+| `upsert(where, create, update)` | The `create` result shape or the `update` result shape, depending on which branch ran |
+
+```typescript
+todo.id;        // string
+todo.title;     // string — it was in the input
+todo.createdAt; // Date | string — returned values arrive as the wire sends them
+```
+
+- A field you pass as optional, or as a value that may be `undefined`, stays optional in the
+  result.
+- A relationship you set comes back as an object holding only its key, such as
+  `note.notebook.id`.
+- Fields you did not send — server defaults, other columns — are not in the result. Read them
+  back with `.select([...]).where({ id: { eq: todo.id } }).findFirst()` (see
+  [Fetch a single record](/docs/data/querying#fetch-a-single-record)).
+- Returned `@date()` values are typed `Date | string` and `@boolean()` values
+  `boolean | 'true' | 'false'`, as in query results — see
+  [Values you read back](/docs/data/field-types#values-you-read-back).
 
 ## Update a record
 
@@ -28,10 +66,12 @@ identifier — it is validated as a UUID like any other write.
 supported in the filter.
 
 ```typescript
-await rayfinClient.data.Todo.update(
+const updated = await rayfinClient.data.Todo.update(
   { id: todo.id },
   { isCompleted: true },
 );
+
+updated.isCompleted; // boolean | 'true' | 'false'
 ```
 
 Send only the fields that changed — `update` does a partial patch, not a full replace.
@@ -39,68 +79,86 @@ Send only the fields that changed — `update` does a partial patch, not a full 
 ## Delete a record
 
 ```typescript
-await rayfinClient.data.Todo.delete({ id: todo.id });
+const deleted = await rayfinClient.data.Todo.delete({ id: todo.id });
+
+deleted.id; // the only field returned
 ```
 
-`delete` resolves once the backend confirms the row is gone.
+`delete` resolves once the backend confirms the row is gone, and returns only its primary key.
 
 ## Setting `@one()` relationships in mutations
 
-For an entity with a `@one()` field (see [Relationships](/docs/data/relationships)), pass
-the **related object** — either the full object or an object containing just its `id` —
-never the raw foreign key column directly.
+For an entity with a `@one()` field (see [Relationships](/docs/data/relationships)), pass the
+**related object** with its primary key — `{ id }` alone, or a full or selected object that
+includes `id`. The client writes only the key, into the entity's foreign key field
+(`notebook_id`).
 
 ```typescript title="rayfin/data/Note.ts (relevant fields)"
-// @uuid() notebook_id!: string;
+// @uuid({ optional: true }) notebook_id?: string;
 // @one(() => Notebook, { optional: true }) notebook?: Notebook;
 ```
 
 ```typescript
-// Correct — pass the relationship object, primary key only
+// Pass the relationship object with only the primary key
 const note = await rayfinClient.data.Note.create({
   title: 'Meeting notes',
   content: 'Discussion points…',
   createdAt: new Date(),
+  user_id: session.user.id,
   notebook: { id: notebookId },
 });
 
-// Also correct — pass the full object if you already have it
-const notebook = await rayfinClient.data.Notebook.findFirst({ name: { eq: 'Work' } });
-const note2 = await rayfinClient.data.Note.create({
-  title: 'Weekly summary',
-  content: 'Use the full object when convenient',
-  createdAt: new Date(),
-  notebook, // full Notebook object
-});
+note.notebook.id; // the key you passed
+
+// Or pass an object you already selected — only its id is written
+const work = await rayfinClient.data.Notebook.select(['id', 'name'])
+  .where({ name: { eq: 'Work' } })
+  .findFirst();
+
+if (work) {
+  await rayfinClient.data.Note.create({
+    title: 'Weekly summary',
+    content: 'Use a selected object when you already have one',
+    createdAt: new Date(),
+    user_id: session.user.id,
+    notebook: work,
+  });
+}
 ```
 
-```typescript
-// Wrong — do not set the generated foreign key column directly in a mutation
-await rayfinClient.data.Note.create({
-  title: 'Meeting notes',
-  content: 'Discussion points…',
-  createdAt: new Date(),
-  notebook_id: notebookId, // not how relationships are set on write
-});
-```
-
-Both the full-object and `{ id }` forms produce the same GraphQL mutation; the client
-converts whichever one you pass into the entity's foreign key field
-(`notebook_id`) internally. The same rule applies to `update`:
+The same rule applies to `update`:
 
 ```typescript
-// Move a note to a different notebook by passing just the target's id
+// Move a note to a different notebook by passing only the target's id
 await rayfinClient.data.Note.update(
   { id: note.id },
   { notebook: { id: newNotebookId } },
 );
 ```
 
-`@many()` fields are the inverse side of a relationship and are read-only in mutations —
-passing an array for a `@many()` field is ignored. Manage that side of the relationship by
-updating the `@one()` foreign key on the child records instead (set each child's
-`notebook: { id }` to reassign it, as shown above), not by writing to the parent's `@many()`
-collection.
+When the entity declares the foreign key field, you can set it directly instead —
+`{ notebook_id: newNotebookId }`. Pass either the relationship object or the foreign key, not
+both: if you pass both for the same relationship, the client sends one foreign key value and
+the relationship object wins. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+### Rules for relationship values
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+- **A relationship value needs a concrete key.** The client rejects a relationship object
+  whose `id` is `null` or `undefined` before it sends the mutation.
+- **A relationship value cannot be `null`.** `notebook: null` is a type error; to leave an
+  optional relationship unset, omit it.
+- **Clearing a relationship goes through the foreign key.** The client sends
+  `{ notebook_id: null }` as-is, but TypeScript accepts it only when the field's type in your
+  schema includes `null` — and a decorated entity property cannot be declared `| null` (see
+  [The nullable pattern](/docs/data/field-types#the-nullable-pattern)).
+- **Unknown fields fail to compile.** A misspelled or undeclared field name in `create`,
+  `update`, or either `upsert` branch is a type error.
+
+`@many()` fields are the inverse side of a relationship. Do not pass them in a mutation — the
+client does not turn an array into writes on the child rows. Manage that side from the child
+records instead: set each child's `notebook: { id }` to reassign it, as shown above.
 
 ## Full example
 
@@ -128,7 +186,8 @@ export async function deleteTodo(id: string) {
 ## Upsert
 
 `client.data.<Entity>` also exposes `upsert(where, create, update)`: it applies `update`
-if a record matching `where` exists, or `create` otherwise.
+if a record matching `where` exists, or `create` otherwise. The result has the shape of the
+branch that ran. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript
 await rayfinClient.data.Category.upsert(
@@ -141,6 +200,9 @@ await rayfinClient.data.Category.upsert(
 ```prompt title="Add a create-and-assign mutation"
 In my Rayfin project, write a function in src/services/notes.ts that creates a new Note
 using the RayfinClient. It should accept a title, content, and notebookId, set createdAt
-to the current time, and assign the note to its notebook by passing
-`notebook: { id: notebookId }` rather than setting a notebook_id field directly.
+to the current time, set user_id from the signed-in session
+(rayfinClient.auth.getSession().user.id, throwing if no user is signed in), and assign the note
+to its notebook by passing `notebook: { id: notebookId }`. In Rayfin 2.0, create returns only
+the id plus the fields it was given, so if the caller needs any other field, read the note back
+with .select([...]).where({ id: { eq: note.id } }).findFirst().
 ```

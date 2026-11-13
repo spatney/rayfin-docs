@@ -4,19 +4,33 @@ description: Install, refresh, disable, and audit Rayfin-managed agent files wit
 ---
 
 `rayfin init ai-files` manages the agent context that Rayfin projects ship for coding
-agents. Scaffolding runs it automatically; run it again after upgrading the CLI or when
-`rayfin up` reports drift.
+agents. Scaffolding runs it automatically; run it again after upgrading the CLI, or when
+`rayfin init ai-files status` reports items that are not `up-to-date`.
 
-## Managed items in 1.36.2
+## Managed items in 2.0.0
 
 | Item | ID | Behavior |
 | --- | --- | --- |
-| `AGENTS.md` | one-time install | Seeded only when missing. Never overwritten by `install`, even with `--force`. |
+| `AGENTS.md` | one-time install | Seeded only when missing. Never overwritten by `install`, even with `--force`. In 2.0 it also tells agents to catch errors from every sign-in call and show `error.message` instead of swallowing them. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `.mcp.json` `mcpServers.rayfin` key | `mcp:rayfin` | Owned by Rayfin. The CLI updates only the `mcpServers.rayfin` key and preserves other servers. |
 | `.agents/skills/rayfin/SKILL.md` | `skill:rayfin` | Core Rayfin project skill. |
 | `.agents/skills/rayfin-functions/SKILL.md` | `skill:rayfin-functions` | Functions skill. |
 | `.agents/skills/rayfin-connectors/SKILL.md` | `skill:rayfin-connectors` | Connectors skill. |
-| `.agents/skills/rayfin-storage/SKILL.md` | `skill:rayfin-storage` | Storage skill, installed only when the `storage` feature flag or service is enabled. [New in 1.36](/docs/reference/changelog#rayfin-136) [Experimental](/docs/reference/changelog#feature-status) |
+| `.agents/skills/rayfin-storage/SKILL.md` | `skill:rayfin-storage` | Storage skill. Installed by default; in 1.36 it was installed only when the experimental `storage` feature flag or service was enabled. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `.agents/skills/rayfin-auth-claims/SKILL.md` | `skill:rayfin-auth-claims` | Dynamic auth claims skill. Always installed. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `.agents/skills/rayfin-schema-drift/SKILL.md` | `skill:rayfin-schema-drift` | Guidance for a schema apply that is blocked by database drift. Installed unless `RAYFIN_SCHEMA_RECOVERY` is `0` or `false`. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+
+With `RAYFIN_SCHEMA_RECOVERY` set to `0` or `false`, the CLI stops shipping the
+schema-drift skill: `status` reports an installed copy as `orphaned`, and the next
+`install` removes it unless you edited it.
+
+Because `AGENTS.md` is installed only once, a project created before 2.0 keeps its old
+file. To pick up the 2.0 sign-in guidance, append the lines the 2.0 CLI ships:
+
+```md title="AGENTS.md"
+Generated sign-in code must catch errors from every sign-in call, both on page load and on button click, and display `error.message` to the user.
+Never swallow sign-in errors with an empty `catch` or by only calling `setUser(null)`.
+```
 
 The lockfile is `rayfin/.lockfile.json`. Commit it so every developer sees the same
 managed-item baseline.
@@ -27,7 +41,7 @@ managed-item baseline.
 npx rayfin init ai-files install
 ```
 
-Idempotently reconciles managed items with the bundled 1.36.2 assets.
+Idempotently reconciles managed items with the bundled 2.0.0 assets.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -111,13 +125,16 @@ Force only the MCP server entry after a malformed `.mcp.json` repair decision:
 npx rayfin init ai-files install --force mcp:rayfin --yes
 ```
 
-## Drift nudge
+## Check after upgrading the CLI
 
-`rayfin up` prints this nudge when managed files are stale, modified, missing, or newly
-available:
+After you upgrade `@microsoft/rayfin-cli`, run `status` to see what the new CLI ships.
+Items the new CLI adds, such as `skill:rayfin-auth-claims` after an upgrade from 1.36,
+show as `not-installed`; skills whose bundled content changed show as `update-available`.
+`install` applies both and preserves files you edited.
 
-```text
-ℹ️  Your project's Rayfin agent files have changes available. Run `rayfin init ai-files install` to refresh.
+```bash
+npx rayfin init ai-files status
+npx rayfin init ai-files install --yes
 ```
 
 ```prompt title="Refresh Rayfin agent files"

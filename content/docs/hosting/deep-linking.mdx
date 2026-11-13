@@ -12,7 +12,9 @@ Deep linking lets a user share a Fabric portal URL that reopens the same view in
 npm install @microsoft/rayfin-app-state-fabric
 ```
 
-Keep Rayfin package versions aligned.
+Keep Rayfin package versions aligned. Import from the package root only: the package
+declares an `exports` map, so deep imports into its `dist/` folder no longer resolve.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Create one client
 

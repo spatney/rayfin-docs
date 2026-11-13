@@ -5,8 +5,8 @@ description: Start a local frontend and optional Functions runtime against a dep
 
 
 Use `rayfin dev` for the local development loop. It provisions or reuses a Fabric
-AppBackend, applies service settings and Data schema, writes browser-visible environment
-values, then starts local project code.
+AppBackend, applies service settings, Data schema, and Storage folder declarations, writes
+browser-visible environment values, then starts local project code.
 
 ```bash
 npx rayfin dev
@@ -23,15 +23,20 @@ and Functions when enabled, on `localhost`. It never publishes static content.
    `RAYFIN_WORKSPACE_ID`, and recorded deployments can all select the workspace.
 4. Applies runtime settings from `rayfin.yml`, including connectors.
 5. Applies the Data configuration unless `--skip-db-apply` is passed.
-6. Reserves the frontend dev port and appends `http://localhost:<port>` and
+6. Applies Storage folder declarations to the Fabric backend when
+   `services.storage.enabled: true`. `--skip-db-apply` does not skip this step, and no
+   local Storage service starts. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+7. Reserves the frontend dev port and appends `http://localhost:<port>` and
    `http://127.0.0.1:<port>` to auth redirect URIs when Auth is enabled.
-7. Writes `RAYFIN_PUBLIC_*` values to `rayfin/.env` and regenerates the framework
+8. Writes `RAYFIN_PUBLIC_*` values to `rayfin/.env` and regenerates the framework
    `.env.local` unless `--no-emit-env` is passed.
-8. Starts `npm run dev:frontend` when present, otherwise `npm run dev` if it is not
+9. Starts `npm run dev:frontend` when present, otherwise `npm run dev` if it is not
    recursive.
-9. When `services.functions.enabled: true`, builds Functions, writes
-   `rayfin/functions/local.settings.json`, starts type generation and the local Functions
-   host, then starts the frontend with `RAYFIN_PUBLIC_FUNCTIONS_URL` pointing at that host.
+10. When `services.functions.enabled: true`, builds Functions, writes
+    `rayfin/functions/local.settings.json`, starts type generation and the local Functions
+    host, then starts the frontend with `RAYFIN_PUBLIC_FUNCTIONS_URL` pointing at that host.
+    It warns when the Functions `host.json` still allows a Preview extension bundle older
+    than 4.49.0. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 Press Ctrl+C to stop local runtimes. The Fabric backend is long-lived and is not deleted.
 
@@ -69,6 +74,48 @@ Press Ctrl+C to stop local runtimes. The Fabric backend is long-lived and is not
 | Functions | Starts at 7071 and slides forward when occupied. The chosen URL is written to `RAYFIN_PUBLIC_FUNCTIONS_URL`. |
 | Node inspector | Starts at 9229 and slides forward when Functions debugging is enabled. |
 
+## `dev storage apply`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```bash
+npx rayfin dev storage apply
+```
+
+Use this subcommand to retry only the Storage configuration on the Fabric backend that
+`rayfin dev` uses, without starting local runtimes or applying other settings. It
+generates the configuration from the `@blob` folders registered in
+`rayfin/storage/schema.ts` and applies it. For the folder model, see
+[Storage](/docs/storage).
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--force` | `false` | Force the storage controller to accept configuration that may result in data loss. |
+| `--gen-config-only` | `false` | Generate configuration without applying it to the server. The file is written to `rayfin/.temp/storage-config.json` under the Storage service root (`services.storage.path`, or the project root). |
+
+The subcommand needs `services.storage.enabled: true` and a backend that a full
+`rayfin dev` run has already provisioned. It always targets the active deployment, so it
+rejects `--workspace` and `--workspace-id`; run full `rayfin dev` with a workspace selector
+first when you need another workspace. When no `@blob` folders are declared, it skips the
+apply and prints
+`⚠️  No @blob folder declarations found. Storage configuration was not applied.`
+
+In 1.36 this subcommand existed only behind the experimental `storage` feature flag and
+did not target the Fabric backend.
+
+> [!WARNING]
+> Removing a folder declaration makes that folder unavailable as soon as the apply
+> succeeds, and permanently deletes its objects and metadata in the background. Deleted
+> folders cannot be restored. When a removed folder still contains objects, the apply
+> stops with `Storage apply blocked (409)` until you pass `--force`.
+
+| Message | Fix |
+| --- | --- |
+| `Storage is not enabled in rayfin.yml.` | Set `services.storage.enabled: true`, then retry. |
+| `` `dev storage apply` uses the active deployment and does not accept a workspace selector. `` | Run full `rayfin dev` with `--workspace` or `--workspace-id` first, then retry without the selector. |
+| `No configured active Fabric deployment is registered for this project.` | Run full `rayfin dev` first to provision the backend and apply project settings. |
+| `Storage apply endpoint not found (404) at …` | Run the full `rayfin dev` workflow to apply project settings and enable Storage, then retry. |
+
 ## `dev functions apply`
 
 [Changed in 1.36](/docs/reference/changelog#rayfin-136)
@@ -101,4 +148,14 @@ From my Rayfin project root, run `npx rayfin dev --workspace <workspace-name>` t
 Fabric-backed local development session. If Functions are enabled, confirm the chosen
 Functions URL was written to RAYFIN_PUBLIC_FUNCTIONS_URL and that the frontend started on
 the port written to RAYFIN_PUBLIC_FRONTEND_PORT.
+```
+
+```prompt title="Retry Storage configuration on the development backend"
+My Rayfin 2.0 project has services.storage.enabled: true in rayfin/rayfin.yml and a backend
+already provisioned by `npx rayfin dev`. Run `npx rayfin dev storage apply --gen-config-only`
+and list the folders in the generated rayfin/.temp/storage-config.json. Compare them with
+the @blob classes registered in the schema array of rayfin/storage/schema.ts. If they
+match, run `npx rayfin dev storage apply`. If the apply stops with "Storage apply blocked
+(409)", show me which folders would be removed and ask before re-running with --force,
+because removing a folder permanently deletes its objects.
 ```

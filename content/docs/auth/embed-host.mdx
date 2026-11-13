@@ -39,13 +39,27 @@ The embedded Rayfin app uses `initEmbeddedAuth()` from `@microsoft/rayfin-auth-p
 
 1. The parent page calls `createEmbedHost()` before it mounts the Rayfin iframe.
 2. The embedded app calls and awaits `initEmbeddedAuth()` during startup.
-3. The iframe posts one readiness message to the parent.
+3. With no Fabric embedded hint present, the iframe posts one readiness message to the parent.
 4. The host checks the iframe origin against `allowedOrigins` and acknowledges the `externalEmbed` scenario.
 5. The embedded app signs out any existing local session, then posts a correlated handoff request with its brokered-authorize endpoint, artifact ID, return origin, and PKCE challenge.
 6. The host validates the return origin, calls `getAccessToken()`, and posts the delegated Entra token to the embedded app's external brokered-authorize endpoint.
 7. The endpoint returns a single-use handoff code. The host sends the code to the iframe, and the embedded app exchanges it for a Rayfin session.
 
 The readiness signal is sent once with no retry. Register the host before creating or navigating the iframe.
+
+## Keep Fabric hints out of an external embed
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The embedded app looks for an external host only when no Fabric embedded hint is present. Any of these hints selects the Fabric embedded flow and skips external-host discovery:
+
+- The `fabricEmbedded` option in the app's `FabricAuthOptions`.
+- A `?fabricEmbedded=true` query parameter on the iframe URL.
+- The Fabric embedded flag the SDK remembered in the app's `sessionStorage` from an earlier load.
+
+Do not set any of them for an external host. If no host acknowledges the readiness message within 300 ms, external embedding is not detected: `initEmbeddedAuth()` returns `null`, and `ensureSignedInWithFabric()` can still resume a session or open the Fabric broker from a user gesture.
+
+In Rayfin 1.36, the discovery handshake ran first and an acknowledging host took precedence over Fabric hints.
 
 ## Register the host before mounting the iframe
 
@@ -103,17 +117,22 @@ Use origins only, for example `https://my-rayfin-app.example.com` or `http://loc
 
 ## Embedded app startup
 
-In the Rayfin app being embedded, statically import `@microsoft/rayfin-auth-provider-fabric` and await `initEmbeddedAuth()` before rendering authenticated UI or restoring a stored user:
+In the Rayfin app being embedded, statically import `@microsoft/rayfin-auth-provider-fabric` and await `initEmbeddedAuth()` before rendering authenticated UI or restoring a stored user.
+`client` is a `RayfinClient` created with `browserSession()`, as shown in [Fabric SSO](/docs/auth/fabric-sso#create-the-client). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ```typescript title="src/auth/bootstrapEmbedded.ts"
+import type { OpaqueSession } from '@microsoft/rayfin-auth';
 import { initEmbeddedAuth } from '@microsoft/rayfin-auth-provider-fabric';
 import { client } from '../services/rayfinClient';
 import { fabricOptions } from './fabricOptions';
 
-export async function bootstrapEmbeddedAuth() {
-  await initEmbeddedAuth(client.auth, fabricOptions);
+export async function bootstrapEmbeddedAuth(): Promise<OpaqueSession | null> {
+  // Resolves to null when no host acknowledged or the handoff failed; it never rejects.
+  return initEmbeddedAuth(client.auth, fabricOptions);
 }
 ```
+
+When `bootstrapEmbeddedAuth()` returns `null`, show a sign-in button that calls `ensureSignedInWithFabric()` and displays `error.message` if it rejects. `initEmbeddedAuth()` logs a console warning instead of rejecting when the handoff fails.
 
 Do not skip this call because `client.auth.getSession()` is already authenticated. In an external embed, the parent portal brokers a fresh delegated handoff and the SDK discards any prior iframe session before that handoff.
 
@@ -130,6 +149,8 @@ Do not skip this call because `client.auth.getSession()` is already authenticate
 | Symptom or error | Meaning | Fix |
 | --- | --- | --- |
 | The embedded app falls back to a popup or normal Fabric login | The readiness message was missed or the iframe origin was not allowed. | Call `createEmbedHost()` before mounting the iframe and include the iframe's exact origin in `allowedOrigins`. |
+| The embedded app uses the Fabric embedded flow instead of your host | A Fabric embedded hint is present, so the app never sent the readiness message. | Remove the `fabricEmbedded` option and any `?fabricEmbedded=true` parameter, and make sure the app does not keep a Fabric embedded flag in its `sessionStorage`. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| The app keeps its stored session without calling the external endpoint | The app checks for a stored user before `initEmbeddedAuth()` settles. | Await `initEmbeddedAuth()` before reading the session; importing the provider package alone does not start authentication. |
 | `VALIDATION_FAILED` / `returnOrigin is not permitted by the embed host.` | The request's return origin is not in `allowedOrigins`. | Add the embedded app's exact origin. |
 | `EXCHANGE_NOT_ENABLED` | The target app has not enabled external Entra exchange. | Set `services.auth.fabric.externalEntraExchange: true` and apply the setting. |
 | `AUTH_FAILED` | The delegated Entra token was rejected. | Check audience, tenant, scope, expiry, and how `getAccessToken()` acquires the token. |
@@ -138,9 +159,9 @@ Do not skip this call because `client.auth.getSession()` is already authenticate
 | `AUTHORIZE_FAILED` | The host could not reach the brokered-authorize endpoint or received an unsupported response. | Check network reachability, CORS, and backend availability. |
 
 ```prompt title="Embed a Rayfin app in my portal"
-In my portal, embed a Rayfin app in an iframe and broker sign-in with the portal user's Microsoft Entra identity.
+In my portal, embed a Rayfin 2.0 app in an iframe and broker sign-in with the portal user's Microsoft Entra identity.
 
-In the Rayfin app, enable services.auth.fabric.externalEntraExchange: true in rayfin/rayfin.yml, install @microsoft/rayfin-auth-provider-fabric, and call initEmbeddedAuth(client.auth, fabricOptions) during startup before rendering authenticated UI.
+In the Rayfin app, enable services.auth.fabric.externalEntraExchange: true in rayfin/rayfin.yml, install @microsoft/rayfin-auth and @microsoft/rayfin-auth-provider-fabric, create the client with RayfinClient.create({ ..., auth: browserSession({ storage: true }) }), and await initEmbeddedAuth(client.auth, fabricOptions) during startup before rendering authenticated UI. It resolves to null instead of rejecting, so show a sign-in button that calls ensureSignedInWithFabric() and displays error.message when it returns null. Do not set fabricEmbedded or append ?fabricEmbedded=true for this embed.
 
 In the parent portal, install @microsoft/rayfin-embed-host. Call createEmbedHost({ allowedOrigins, getAccessToken }) before mounting the iframe. allowedOrigins must contain the embedded app's exact origin. getAccessToken must return a delegated Entra token for the current user with Item.Execute.All. Dispose the host when the iframe is removed.
 ```

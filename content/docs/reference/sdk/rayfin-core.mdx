@@ -18,6 +18,22 @@ npm install @microsoft/rayfin-core
 `npm create @microsoft/rayfin@latest` and `rayfin init` configure this for you
 automatically. If you are adding Rayfin to an existing project, configure both manually.
 
+`@microsoft/rayfin-core` 2.0 declares a TypeScript peer dependency of `^5.7.2 || ^6.0.2` —
+the same range Rayfin schema compilation enforces. TypeScript 6 is now supported;
+TypeScript 5.0 through 5.7.1, 6.0.0, 6.0.1, prereleases, and 7.x are not. Before you update
+core, update TypeScript in the package that owns your schema, then commit the manifest and
+lockfile:
+
+```bash
+npm install --save-dev "typescript@^5.7.2"
+```
+
+Use `"typescript@^6.0.2"` instead to move to TypeScript 6. If npm reports `ERESOLVE` on
+core's TypeScript peer, run `npm ls typescript @microsoft/rayfin-core` and fix the installed
+version; do not bypass the check with `--force` or `--legacy-peer-deps`. See
+[Supported TypeScript versions](/docs/data/modeling#supported-typescript-versions).
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 ## TC39 Stage 3 decorators
 
 Rayfin's decorators use the TC39 Stage 3 decorators proposal, not the older experimental
@@ -42,9 +58,11 @@ decorators used by frameworks like NestJS or Angular.
 > [!WARNING]
 > Bundlers that compile decorators to an older target silently break Rayfin's metadata.
 > If you see `Expression expected` errors on `@entity()` or other decorators, your build
-> target is too old. For Vite, set `target: 'es2022'` and use `@vitejs/plugin-react`
-> (esbuild) — `@vitejs/plugin-react-swc` does not support TC39 Stage 3 decorators
-> regardless of the configured target.
+> target is too old or your compiler is not parsing TC39 decorators. For Vite, set
+> `target: 'es2022'`. `@vitejs/plugin-react` (esbuild) needs nothing more;
+> `@vitejs/plugin-react-swc` works once you enable its Stage 3 decorator support — see
+> [Configure Vite for entity imports](/docs/data/validation#configure-vite-for-entity-imports).
+> [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Class decorators
 
@@ -99,16 +117,22 @@ export class DateRecord {
 
 ### `@blob()`
 
-Marks a class as a Rayfin Storage folder configuration. This decorator is experimental and is exported from `@microsoft/rayfin-core/experimental`, not from the stable package root.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-```typescript
-import { role } from '@microsoft/rayfin-core';
+Marks a class as a Rayfin Storage folder configuration. Storage is generally available in
+2.0, and `blob`, `StorageObject`, `ContentTypes`, the `bytes` / `kb` / `mb` / `gb` helpers,
+and the `BlobFolderOptions`, `ByteSize`, and `MimeGlob` types are exported from the package
+root. The 1.x `@microsoft/rayfin-core/experimental` import path no longer resolves. The
+storage implementations are unchanged, so in this package only the import path moves.
+
+```typescript title="rayfin/storage/ProfileImage.ts"
 import {
   blob,
+  role,
   ContentTypes,
   mb,
   StorageObject,
-} from '@microsoft/rayfin-core/experimental';
+} from '@microsoft/rayfin-core';
 
 @blob({
   name: 'uploads',
@@ -151,6 +175,21 @@ shared set of base options, plus type-specific options.
 | `unique` | `boolean` | `false` | Adds a unique constraint. |
 | `default` | matches the field's type | none | Default value for the column. |
 | `column` | `string` | property name | SQL column name to create or map for this field while keeping the TypeScript property as the GraphQL field name. [New in 1.36](/docs/reference/changelog#rayfin-136) |
+
+### Property names
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+A property name becomes a GraphQL field name, so it must match the GraphQL name grammar
+`/^[_A-Za-z][_0-9A-Za-z]*$/` and must not start with `__`. The CLI rejects other property
+names, such as `$price` or `'my-col'`, during schema analysis — before the schema is applied —
+with an error that suggests a valid name. The rule applies to relationship properties and to
+connector entities as well. When the underlying column has such a name, use a valid property
+name and map it with the `column` option:
+
+```typescript
+@decimal({ column: '$price' }) price!: number;
+```
 
 ### `@text(options?)` / `@email(options?)`
 
@@ -416,20 +455,28 @@ export class PublicPost {
 ```
 
 > [!NOTE]
-> Anonymous data access on a deployed Fabric app requires a tenant administrator to enable
-> the "Enable anonymous data access for Fabric Apps" tenant setting. The decorators compile
-> to DAB anonymous-role permissions; the tenant setting controls whether those permissions
-> can be exercised in Fabric. See [Permissions](/docs/data/permissions) for the full picture.
+> On a deployed Fabric app, anonymous permissions require a Fabric tenant administrator to
+> turn on the tenant setting **Enable anonymous data access for Fabric Apps (Preview)** for
+> the app owner. The decorators always record their metadata, but without the setting,
+> applying a schema that grants the `anonymous` role any permission fails with HTTP 403
+> (`ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`). The setting covers the data API only. See
+> [Fabric tenant setting for anonymous access](/docs/data/permissions#fabric-tenant-setting-for-anonymous-access).
 
 ### Policy DSL and field visibility
 
 The `policy` callback receives two typed arguments and returns a composable expression that
 compiles to a DAB policy string:
 
-- `claims` — a `ClaimsDsl` exposing `claims.sub`, `claims.email`, and `claims.role`. These
-  are the only supported claims.
+- `claims` — a `ClaimsDsl` exposing the base claims `claims.sub`, `claims.email`, and
+  `claims.role`, plus any app-defined claims merged into `RayfinCustomClaims`.
 - `item` — a proxy with one property per entity field, typed from the class itself so a
   typo fails at compile time.
+
+App-defined claims come from a dynamic auth claims provider (`udf.authClaims`): code
+generation writes `rayfin/auth/claims.generated.d.ts`, which merges the provider's return type
+into `RayfinCustomClaims`, so `claims.accountId` type-checks in a policy. Without a provider,
+only the base claims exist. See [Dynamic auth claims](/docs/auth/dynamic-claims).
+[New in 2.0](/docs/reference/changelog#rayfin-20)
 
 Both `claims.<name>` and `item.<field>` support `.eq(value)` and `.neq(value)`, each
 returning a `PolicyExpression`. Combine expressions with `.and()` / `.or()`, which
@@ -462,11 +509,25 @@ export class Document {
 Multiple role decorators on the same class are aggregated; conflicting declarations for the
 same role and action produce a warning at generation time.
 
-## Experimental subpath exports
+## Package entry points
 
-`@microsoft/rayfin-core/experimental` now contains the experimental Storage surface only: `blob`, `StorageObject`, `bytes`, `kb`, `mb`, `gb`, `ContentTypes`, and related storage option types.
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
 
-Connector-oriented exports that were previously under the core experimental subpath — `Source`, connector-widened `entity` / field decorators, `AutoGenerated`, and the experimental connector schema types — are no longer exported there. Use the connector packages documented under [Connectors](/docs/connectors) for connector models. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
+Only the entry points declared in the package's `exports` map resolve, and deep imports into
+`dist/` fail. 2.0 changes the map:
+
+| Import | 2.0 status |
+| --- | --- |
+| `@microsoft/rayfin-core` | Every public API: decorators, field options, the policy DSL, form validation, storage declarations (`blob`, `StorageObject`, `ContentTypes`, `bytes` / `kb` / `mb` / `gb`, `BlobFolderOptions`, `ByteSize`, `MimeGlob`), and the claims types `RayfinBaseClaims`, `RayfinCustomClaims`, `AllClaims`, and `ClientClaims`. |
+| `@microsoft/rayfin-core/experimental` | Removed. Import storage symbols and claims types from the package root. [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `@microsoft/rayfin-core/experimental/index` | Compatibility alias that re-exports only the claims types and `ClaimRef` / `ClaimsDsl` — not the storage symbols. Prefer the package root. |
+| `@microsoft/rayfin-core/decorators` | Removed. Import decorators from the package root. [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `@microsoft/rayfin-core/analysis`, `@microsoft/rayfin-core/schema` | Removed. Their internal replacements under `_internal/` are for Rayfin tooling, not applications. [Removed in 2.0](/docs/reference/changelog#rayfin-20) |
+
+Because `@microsoft/rayfin-core/experimental/index` re-exports the same claims declarations as
+the root, augmenting `RayfinCustomClaims` through either specifier merges into one interface.
+
+Connector-oriented exports that were previously under the core experimental subpath — `Source`, connector-widened `entity` / field decorators, `AutoGenerated`, and the experimental connector schema types — were removed in 1.36. Use the connector packages documented under [Connectors](/docs/connectors) for connector models. [Removed in 1.36](/docs/reference/changelog#rayfin-136)
 
 ## Form validation
 

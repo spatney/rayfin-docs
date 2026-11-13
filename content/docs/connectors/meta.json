@@ -1,13 +1,14 @@
 {
   "title": "Connectors",
-  "description": "Query Fabric warehouses, SQL databases, semantic models, and KQL databases from your app.",
+  "description": "Query Fabric warehouses, SQL databases, semantic models, Fabric IQ, and Eventhouse KQL databases from your app.",
   "pages": [
     "adding",
     "client-setup",
     "sql-sources",
     "entity-generation",
     "semantic-models",
-    "kusto",
+    "fabric-iq",
+    "eventhouse",
     "auth"
   ]
 }

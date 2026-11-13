@@ -114,6 +114,34 @@ once you have confirmed the data loss is acceptable.
 **Enabling `data` without a `dialect`** — `rayfin.yml` requires `dialect: mssql` whenever
 `services.data.enabled` is `true`. Omitting it causes a 400 error at apply time.
 
+**Schema compilation fails with `Unsupported TypeScript <version> at <path>`** — Rayfin 2.0
+compiles your schema with TypeScript `^5.7.2 || ^6.0.2`. Install a supported version in the
+package that owns `rayfin/` and commit the lockfile; see
+[Supported TypeScript versions](/docs/data/modeling#supported-typescript-versions).
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Schema compilation fails with `TS2835`** — a relative import between files under
+`rayfin/` has no extension. Write it as `./Category.js`; see
+[Register the entity in `schema.ts`](/docs/data/modeling#register-the-entity-in-schemats).
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Schema compilation cannot find a `#` alias or your app's package name** — `rayfin/package.json`
+makes `rayfin/` its own package boundary, so root `imports` aliases and self-references do not
+resolve there. Use relative `.js` imports or define the aliases in `rayfin/package.json`; see
+[`rayfin/package.json` and the package boundary](/docs/data/modeling#rayfinpackagejson-and-the-package-boundary).
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+**A property is rejected as not a valid GraphQL name** — rename it to match
+`/^[_A-Za-z][_0-9A-Za-z]*$/` (not starting with `__`), and keep the original column with
+`{ column: '...' }`; see [Property names](/docs/data/modeling#property-names).
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+**Applying the schema fails with HTTP 403 `ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`** —
+the schema grants the `anonymous` role a permission, and the Fabric tenant setting **Enable
+anonymous data access for Fabric Apps (Preview)** is off or does not include the app owner.
+Ask a Fabric tenant administrator to turn it on, or switch the entity to `@authenticated(...)`;
+see [Fabric tenant setting for anonymous access](/docs/data/permissions#fabric-tenant-setting-for-anonymous-access).
+
 ```prompt title="Apply and verify a schema change"
 I just added a new field to an entity in my Rayfin project's rayfin/data/ folder. If I am in the development loop, restart `npm run dev` so `rayfin dev` applies the declared schema on startup. If I am deploying, run `rayfin up`. Then run `rayfin up status` to confirm the deployment is healthy. If querying the changed entity still fails after that, run `rayfin up db apply --force` and check again.
 ```

@@ -5,14 +5,14 @@ appliesTo: "@microsoft/rayfin-connector-fabric-semanticmodel >= 1.36"
 ---
 
 `@microsoft/rayfin-connector-fabric-semanticmodel` provides the type marker and runtime
-helpers for `fabric-semanticmodel` connectors. Use it with
-`ConnectorsRayfinClient` from `@microsoft/rayfin-client`. See
-[Semantic models](/docs/connectors/semantic-models) for guide-level usage.
+helpers for `fabric-semanticmodel` connectors. Register its runtime with `connectorsService`
+from `@microsoft/rayfin-connectors`. See [Semantic models](/docs/connectors/semantic-models)
+for guide-level usage.
 
 ## Installation
 
 ```bash
-npm install @microsoft/rayfin-connector-fabric-semanticmodel@1.36.2
+npm install @microsoft/rayfin-connector-fabric-semanticmodel@2.0.0 @microsoft/rayfin-connectors@2.0.0
 ```
 
 ## Marker and operation catalog
@@ -40,6 +40,12 @@ type AppConnectorsSchema = {
 The `executeQuery` output is the normalized `SemanticModelQueryResult` union. The runtime
 folds the wire envelope inside its `invoke` middleware before the caller receives it.
 
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+The marker declares `ConnectorConfig & { connector: 'fabric-semanticmodel' }` as the
+configuration it accepts, so `connectorsService` rejects a config for another connector type
+under that name. The generated `connectorConfig` satisfies it.
+
 ## Query input
 
 ```typescript
@@ -52,6 +58,12 @@ interface ExecuteQueryInput {
 `query` is the DAX text. `resultSetRowCountLimit` is optional and has no default limit in
 the input shape; when present on a runtime-processed call, it overrides the runtime option
 for that call.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`executeQuery` takes an optional second argument, `InvokeOptions`. Its `timeoutMs` shortens
+the default 5-minute wait for one call; see
+[Request timeouts](/docs/reference/sdk/rayfin-connectors#request-timeouts).
 
 ## Normalized result
 
@@ -98,14 +110,16 @@ success rows as column-aligned arrays and gives failures a category and message.
 
 [Changed in 1.36.1](/docs/reference/changelog#rayfin-1361)
 
-`parseArrowStream` coerces Arrow Int64 values, including Int64 values nested inside Power BI Variant/Union columns, to JavaScript numbers when the value is within the safe integer range.
+`parseArrowStream` coerces Arrow Int64 values, including Int64 values nested inside Power BI
+Variant/Union columns, to JavaScript numbers when the value is within the safe integer range.
 
-Values outside that range become an `overflow` query error instead of leaking a raw `bigint` that would fail JSON serialization.
+Values outside that range become an `overflow` query error instead of leaking a raw `bigint`
+that would fail JSON serialization.
 
 ## Runtime options
 
-`fabricSemanticModel(options?)` returns the `ConnectorRuntime` registered under the same
-connector name passed to `ConnectorsRayfinClient`.
+`fabricSemanticModel(options?)` returns the `ConnectorRuntime` you register in the `runtime`
+map of `connectorsService`, under the same connector name as in the schema.
 
 ```typescript
 function fabricSemanticModel(options?: FabricSemanticModelOptions): ConnectorRuntime;
@@ -121,11 +135,22 @@ interface FabricSemanticModelOptions {
   queryTimeout?: number;
   resultSetRowCountLimit?: number;
 }
+
+interface FabricSemanticModelTarget {
+  workspaceId: string;
+  itemId: string;
+}
 ```
 
-`target`, `baseUrl`, `endpoints`, `getToken`, and `sessionId` are used by the direct CLI
-path. `culture`, `schemaOnly`, `queryTimeout`, and `resultSetRowCountLimit` become DAX
-query options.
+`target`, `baseUrl`, `endpoints`, `getToken`, and `sessionId` are used by the direct path,
+which runs only when the connectors service uses the `cli` host. `culture`, `schemaOnly`,
+`queryTimeout`, and `resultSetRowCountLimit` become DAX query options.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`connectorsService` defaults to the `standalone` host even in Node.js, so a local script that
+needs the direct path passes `host: { type: 'cli' }` together with a configured `target` and
+`getToken`.
 
 ## URLs and endpoints
 
@@ -176,6 +201,14 @@ function toNetworkErrorResponse(
 
 `executeDaxDirect` never throws. Non-2xx responses, network failures, and parse failures all
 become a response with `status: 'Failed'`.
+
+[Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
+`executeDaxDirect` calls the model-scoped `/datasets/{itemId}/executeDaxQueries` endpoint,
+so the caller needs Read and Build permissions on the semantic model, not write access to the
+workspace. `target.workspaceId` is kept as metadata but is not part of the query route. The
+request's correlation id comes only from the Web Crypto API; a runtime without a usable Web
+Crypto API gets a failed response, and no request is sent.
 
 ## Arrow decoding
 

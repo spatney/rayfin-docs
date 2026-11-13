@@ -1,5 +1,13 @@
 {
   "title": "Auth",
   "description": "Sign users in with Microsoft Entra ID.",
-  "pages": ["fabric-sso", "entra-token", "embed-host", "sessions", "delegated-access", "react"]
+  "pages": [
+    "fabric-sso",
+    "entra-token",
+    "embed-host",
+    "sessions",
+    "dynamic-claims",
+    "delegated-access",
+    "react"
+  ]
 }

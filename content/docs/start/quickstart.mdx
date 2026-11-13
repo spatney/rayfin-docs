@@ -3,10 +3,10 @@ title: Quickstart
 description: Scaffold a Rayfin project, sign in to Fabric, run the local development loop, and deploy the app with rayfin up.
 ---
 
-Create a Rayfin app, run it against a managed Fabric backend, and publish the static frontend. You need [Node.js 20+ and a Fabric account](/docs/start/installation).
+Create a Rayfin app, run it against a managed Fabric backend, and publish the static frontend. You need a [supported Node.js version and a Fabric account](/docs/start/installation); the default template needs Node.js 22.13 or later.
 
 ```prompt title="Create and run a new Rayfin app"
-Create a new Rayfin app named my-app with `npm create @microsoft/rayfin@latest my-app`. Install dependencies, run `npx rayfin login`, start the development loop with `npm run dev`, and report the local frontend URL. Then deploy the static build with `npx rayfin up` and confirm the live hosting URL with `npx rayfin up status`.
+Create a new Rayfin app named my-app with `npm create @microsoft/rayfin@latest my-app -- --template blankapp` (on Windows PowerShell, use `npm.cmd` instead of `npm` if the flag does not reach Rayfin). Install dependencies, run `npx rayfin login`, start the development loop with `npm run dev`, and report the local frontend URL. Then deploy the static build with `npx rayfin up` and confirm the live hosting URL with `npx rayfin up status`.
 ```
 
 > [!TIP]
@@ -24,16 +24,30 @@ cd my-app
 npm install
 ```
 
-The project name is positional. The CLI prompts for a template. Bundled templates in Rayfin 1.36 include:
+The project name is positional. The CLI asks **How would you like to start?**: choose **✨ Use default template** for the Universal App, or **📦 Use a template (built-in)** to pick another bundled template. To skip the prompt, pass a template ID after `--`:
+
+```bash
+npm create @microsoft/rayfin@latest my-app -- --template blankapp
+```
+
+On Windows PowerShell, some npm and Node.js versions drop the `--` separator, so the flag never reaches Rayfin. Run the same command with `npm.cmd` instead of `npm`.
+
+List the template IDs your CLI version ships:
+
+```bash
+npx @microsoft/create-rayfin@latest --list-templates
+```
+
+Rayfin 2.0 ships the same four bundled templates as 1.36:
 
 | Template | Use it when |
 | --- | --- |
-| `blankapp` | You want the default starter. In Rayfin 1.36, this scaffolds the Universal App workspace with capability packs. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
-| `dataapp` | You are starting from the Fabric analytics app template. |
-| `todoapp` | You want a data-enabled todo CRUD app with per-user access rules. |
+| `blankapp` | You want the default starter, the Universal App workspace with capability packs. [Changed in 1.36](/docs/reference/changelog#rayfin-136) It follows the system light or dark theme unless the app or the Fabric host sets one. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
+| `dataapp` | You are starting from the Fabric analytics app template. Rayfin fetches it from the [`microsoft/fabric-apps-analytic-templates`](https://github.com/microsoft/fabric-apps-analytic-templates) repository at the `v1` tag and falls back to the bundled copy if that source can't be loaded. |
+| `todoapp` | You want a data-enabled todo CRUD app with per-user access rules. See [Build a todo app](/docs/recipes/todo-app). |
 | `gettingstartedauth` | You want a Fabric-authenticated starter with getting-started UI. |
 
-`universal-app` is hidden from the template list but accepted by name in 1.36; use `blankapp` for the CLI-facing default.
+`universal-app` is hidden from the template list but accepted by name; use `blankapp` for the CLI-facing default. Every scaffold also installs agent context files, including `AGENTS.md`, that coding agents read before they change the project.
 
 ## 2. Sign in
 
@@ -62,20 +76,61 @@ npx rayfin up status
 
 `rayfin up` builds and deploys the production frontend, syncs `rayfin.yml`, applies schema changes, deploys Functions when enabled, and records deployment metadata in `rayfin/.deployments.json` and `rayfin/.env`. `rayfin up status` prints the hosting URL.
 
+On later deploys, `rayfin up` skips the static upload when the built files and the deployment target have not changed since the last successful deploy. [New in 2.0](/docs/reference/changelog#rayfin-20) See [Deploy to Fabric](/docs/start/deploy-to-fabric#redeploy-unchanged-static-content).
+
 ## Make your first data change
 
-In a data-enabled template, entities live under `rayfin/data/` or the configured data service path. Add a field:
+The default template starts with the data service turned off. From the project root, apply the data-modeling capability pack:
 
-```typescript title="rayfin/data/Timestamp.ts"
-import { entity, authenticated, uuid, text, date } from '@microsoft/rayfin-core';
+```bash
+npm run pack:add -- data-modeling
+```
+
+The pack turns on `services.data` with the MSSQL dialect in `rayfin/rayfin.yml`, adds a starter `Item` entity in `packages/data/src/Item.ts` whose `@role` policy limits each row to its owner, registers it in `packages/data/src/index.ts`, adds its record type to `packages/shared/src/index.ts`, and installs dependencies.
+
+Change the entity like any other class. This version adds an optional `category` field:
+
+```typescript title="packages/data/src/Item.ts"
+import {
+  boolean,
+  date,
+  entity,
+  role,
+  text,
+  uuid,
+} from '@microsoft/rayfin-core';
 
 @entity()
-@authenticated('*')
-export class Timestamp {
+@role('authenticated', '*', {
+  policy: (claims, item) => claims.sub.eq(item.owner_id),
+})
+export class Item {
   @uuid() id!: string;
-  @date() timestamp!: Date;
-  @text({ max: 500 }) message!: string;
+  @text({ min: 1, max: 200 }) title!: string;
+  @text({ optional: true, max: 2000 }) notes?: string;
+  @text({ optional: true, max: 50 }) category?: string;
+  @boolean({ default: false }) done!: boolean;
+  @date() createdAt!: Date;
+  @text({ max: 200 }) owner_id!: string;
 }
+```
+
+Add the same field to `ItemRecord` in `packages/shared/src/index.ts`, which types `client.data.Item` in the browser:
+
+```typescript title="packages/shared/src/index.ts"
+export interface ItemRecord {
+  id: string;
+  title: string;
+  notes?: string;
+  category?: string;
+  done: boolean;
+  createdAt: Date;
+  owner_id: string;
+}
+
+export type UniversalAppSchema = {
+  Item: ItemRecord;
+};
 ```
 
 Restart `npm run dev` so `rayfin dev` applies the new schema to your development backend. When you are ready to publish, deploy it:

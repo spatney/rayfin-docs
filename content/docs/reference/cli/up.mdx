@@ -4,8 +4,8 @@ description: Deploy a Rayfin project to Fabric, resolve workspace and capacity, 
 ---
 
 `rayfin up` deploys the project to Microsoft Fabric as a Rayfin item. It applies
-`rayfin.yml` runtime settings, applies Data schema, deploys Functions when enabled, and
-builds and deploys static hosting unless excluded.
+`rayfin.yml` runtime settings, applies Data schema and Storage folder declarations,
+deploys Functions when enabled, and builds and deploys static hosting unless excluded.
 
 ```bash
 npx rayfin up
@@ -13,15 +13,26 @@ npx rayfin up
 
 ## What it does
 
-1. Resolves the target workspace from flags, `RAYFIN_WORKSPACE_ID`, recorded deployments,
+1. Validates local inputs before any remote call. Since 2.0 that includes connector
+   `additionalPayload` blocks, custom audiences declared on Functions, and the dynamic
+   claims contract, which is regenerated from the `udf.authClaims` provider. A failure
+   stops the deploy before anything changes in Fabric.
+   [New in 2.0](/docs/reference/changelog#rayfin-20)
+2. Resolves the target workspace from flags, `RAYFIN_WORKSPACE_ID`, recorded deployments,
    or prompt.
-2. Creates or reuses a Fabric AppBackend item.
-3. Applies runtime settings from `rayfin.yml`.
-4. Applies the Data API Builder configuration when `services.data.enabled: true`.
-5. Applies declared connector configuration.
-6. Builds and deploys Functions when `services.functions.enabled: true`.
+3. Creates or reuses a Fabric AppBackend item.
+4. Applies runtime settings from `rayfin.yml`.
+5. Applies the Data API Builder configuration when `services.data.enabled: true`.
+6. Applies Storage folder declarations when `services.storage.enabled: true`.
+   [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 7. Writes `rayfin/.deployments.json` and public values in `rayfin/.env`.
-8. Builds and deploys static hosting when enabled and not excluded.
+8. Applies declared connector configuration.
+9. Builds static hosting when enabled and not excluded, and uploads it unless nothing
+   changed since the last successful deployment.
+   [New in 2.0](/docs/reference/changelog#rayfin-20)
+10. Builds and deploys Functions when `services.functions.enabled: true`, then updates
+    the stored [dynamic claims](/docs/auth/dynamic-claims) contract if the deployed
+    provider changed it. [New in 2.0](/docs/reference/changelog#rayfin-20)
 
 ## Options
 
@@ -33,7 +44,7 @@ npx rayfin up
 | `--workspace-id <id>` | — | Fabric workspace GUID to deploy into. |
 | `--capacity-id <id>` | — | Fabric capacity ID to assign when the target workspace has no usable capacity. [New in 1.36](/docs/reference/changelog#rayfin-136) |
 | `--workspace-uri <uri>` | — | Fabric portal workspace URL, for example `https://app.fabric.microsoft.com/groups/<id>/list`; derives workspace ID and environment. |
-| `--force` | `false` | Allow destructive data schema changes that may result in data loss. |
+| `--force` | `false` | Allow destructive data schema changes that may result in data loss. When Storage is enabled, it also lets Storage remove undeclared folders that still contain objects. |
 | `-n, --dry-run` | `false` | Validate local inputs and resolve the workspace without deploying or modifying resources. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
 | `--env-file <path>` | `rayfin/.env` | `.env` file containing Fabric app properties and interpolation variables. |
 | `-v, --verbose` | `false` | Enable verbose output. |
@@ -41,10 +52,29 @@ npx rayfin up
 | `-y, --yes` | `false` | Auto-accept confirmation prompts. |
 | `--encryption-fallback-enabled` | `false` | Allow plaintext token storage when the OS keychain is unavailable. |
 | `--exclude-services <names>` | — | Comma-separated services to skip during deployment. Supported: `staticHosting`, `functions`. Runtime settings remain unchanged. `functions` is new in 1.36. [Changed in 1.36](/docs/reference/changelog#rayfin-136) |
+| `--force-static-deploy` | `false` | Upload static content even when it is unchanged since the last successful deployment. [New in 2.0](/docs/reference/changelog#rayfin-20) |
 | `--provider <provider>` | `fabric` | Reserved; only `fabric` is supported. |
 
 > [!WARNING]
-> `--force` permits destructive schema changes. Review what can be dropped before passing it.
+> `--force` permits destructive schema changes and the removal of non-empty Storage
+> folders. Review what can be dropped before passing it.
+
+## Skip unchanged static content
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+A full `rayfin up` still runs the static build, then compares a fingerprint of the built
+files, workspace, item, backend URL, and publishable key with the one recorded for the
+last successful static deployment. When they match, it skips the upload, keeps the
+recorded hosting URL, and prints:
+
+```text
+ℹ️  Static app re-deployment skipped: the built static files, workspace, and backend are unchanged since the last successful deployment.
+   To upload it anyway, run `rayfin up --force-static-deploy`.
+```
+
+With `--json`, the result includes `staticHostingSkip` with `reason` and `hint` fields.
+Pass `--force-static-deploy` to upload anyway. `rayfin up staticapp deploy` always uploads.
 
 ## Plan before deploying
 
@@ -55,7 +85,7 @@ workspace are valid without changing Fabric resources.
 npx rayfin up --workspace "My Workspace" --dry-run
 ```
 
-In 1.36, a dry run validates local inputs and resolves the workspace. It does not deploy,
+Since 1.36, a dry run validates local inputs and resolves the workspace. It does not deploy,
 apply schema, modify runtime settings, upload Functions, upload static content, or write a
 new Fabric item.
 
@@ -73,8 +103,8 @@ not drift.
 
 | Example | What it does |
 | --- | --- |
-| `npx rayfin up --exclude-services staticHosting` | Applies backend settings and Data schema, but does not build or upload static assets. |
-| `npx rayfin up --exclude-services functions` | Applies backend settings, Data schema, and static hosting, but does not package or upload Functions. |
+| `npx rayfin up --exclude-services staticHosting` | Applies backend settings, Data schema, and Storage declarations, but does not build or upload static assets. |
+| `npx rayfin up --exclude-services functions` | Applies backend settings, Data schema, Storage declarations, and static hosting, but does not package or upload Functions. |
 | `npx rayfin up --exclude-services staticHosting,functions` | Applies backend state only. |
 
 Prefer `rayfin dev` for the interactive local loop. Keep `--exclude-services` for scripts
@@ -138,6 +168,40 @@ endpoint.
 | `-v, --verbose` | `false` | Enable verbose output. |
 | `--force` | `false` | Allow destructive schema changes that may result in data loss. |
 | `--json` | `false` | Output result as JSON. |
+| `--drift-file <path>` | `~/.rayfin/drift` | Save detected schema drift CSV at this path. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `--overwrite` | `false` | Replace the `--drift-file` if it already exists. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `--skip-drift-check` | `false` | Skip the schema drift check (escape hatch if it blocks an unchanged database). [New in 2.0](/docs/reference/changelog#rayfin-20) |
+
+## `up storage apply`
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+```bash
+npx rayfin up storage apply [--force]
+```
+
+Generates and applies Storage configuration to the remote Rayfin item workload endpoint,
+without running the rest of the deploy. Use it to retry Storage after a full `rayfin up`
+reported a Storage warning, or to deploy only folder changes. In 1.36 this subcommand was
+experimental and registered only when the `storage` feature flag was on
+(`RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled: true`).
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--force` | `false` | Force the storage controller to accept configuration that may result in data loss. |
+| `--json` | `false` | Output result as JSON. |
+
+The subcommand needs an existing deployment record from `rayfin up` and Data enabled in
+`rayfin.yml`. It applies the `@blob` folders registered in `rayfin/storage/schema.ts`;
+when none are declared, it prints
+`⚠️  No @blob folder declarations found. Storage configuration was not applied.` See
+[Storage](/docs/storage) for folder declarations.
+
+> [!WARNING]
+> Removing a folder declaration makes that folder unavailable as soon as the apply
+> succeeds, and permanently deletes its objects and metadata in the background. When a
+> removed folder still contains objects, the apply stops with
+> `Storage apply blocked (409)` until you pass `--force`.
 
 ## `up staticapp deploy`
 
@@ -145,7 +209,8 @@ endpoint.
 npx rayfin up staticapp deploy
 ```
 
-Builds, packages, and deploys static content to the remote Rayfin item.
+Builds, packages, and deploys static content to the remote Rayfin item. Unlike a full
+`rayfin up`, it uploads even when the content is unchanged.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -162,7 +227,10 @@ npx rayfin up functions deploy
 ```
 
 Builds, packages, and deploys Functions to the remote Rayfin item. See
-[rayfin functions](/docs/reference/cli/functions).
+[rayfin functions](/docs/reference/cli/functions). After the code deploys, it updates the
+stored [dynamic claims](/docs/auth/dynamic-claims) contract when the `udf.authClaims`
+provider changed it, and clears the stored contract when the provider was removed.
+[New in 2.0](/docs/reference/changelog#rayfin-20)
 
 > [!NOTE]
 > Functions are not available in every Fabric region or tenant.
@@ -204,18 +272,6 @@ npx rayfin secret list
 Secret values are stored in the deployed Rayfin item. `rayfin.yml` stores only the
 metadata declaration used for typing and documentation.
 
-## Agent-files drift nudge
-
-At startup, `rayfin up` checks Rayfin-managed agent files. If the CLI ships changed skills
-or MCP configuration, or a managed item is missing or modified, it prints:
-
-```text
-ℹ️  Your project's Rayfin agent files have changes available. Run `rayfin init ai-files install` to refresh.
-```
-
-Refresh with [`rayfin init ai-files install`](/docs/reference/cli/ai-files). The nudge is
-content-based, not version-based.
-
 ## Troubleshooting
 
 | Message | Meaning | Fix |
@@ -223,10 +279,24 @@ content-based, not version-based.
 | `RAYFIN_WORKSPACE_ID and --capacity-id cannot be used together.` | Capacity assignment requires Rayfin to select or create a workspace, but an ambient workspace was already fixed. | Unset `RAYFIN_WORKSPACE_ID`, or remove `--capacity-id`. |
 | `Dialect is required when Data module is enabled` | `services.data.enabled` is true but `services.data.dialect` is missing. | Set `services.data.dialect: mssql`. |
 | `Invalid services.functions.auth: authentication is required when Functions are enabled. Set services.functions.auth.type to "application".` | Functions are enabled without the required 1.36 auth block. | Add `services.functions.auth.type: application`. |
-| `No remote endpoint configured. Run 'rayfin up' first to deploy and register connectors.` | A deploy-only subcommand needs an existing deployment record. | Run `npx rayfin up` once, then retry the subcommand. |
+| `` No remote endpoint configured. Run `rayfin up` first to deploy and register connectors. `` | A deploy-only subcommand needs an existing deployment record. | Run `npx rayfin up` once, then retry the subcommand. |
+| `Storage requires the Data service.` | `services.storage.enabled` is true but Data is not enabled. | Enable `services.data`, or disable `services.storage`. |
+| `` Storage configuration was not applied: <reason>. Run `rayfin up storage apply` to retry. `` | The rest of the deploy continued, but the Storage step failed for a reason other than a blocked folder removal. | Fix the reported reason, then run `npx rayfin up storage apply`. |
+| `Storage apply blocked (409): the following folder(s) are no longer declared but still contain objects and were not removed:` | A folder you removed from the schema still holds objects. | Restore the declaration, or rerun with `--force` to delete the folder and its objects. |
+| `connectors block in rayfin.yml has validation errors:` | A connector entry is invalid. An `additionalPayload` on a Category A connector, or one over 64 KiB or nested deeper than 32 levels, stops the deploy before any remote call. [Changed in 2.0](/docs/reference/changelog#rayfin-20) | Fix the listed entries. `--json` output includes the `invalid-connectors` code and a `hint`. |
+| `'<audience>' is not a valid custom audience. Use an application ID (GUID) or an https:// or api:// resource URI without a scope, query, or wildcard.` | A Functions connection declares an invalid custom audience. The deploy stops before any remote call. [New in 2.0](/docs/reference/changelog#rayfin-20) | Use an application ID or a resource URI. See [Connections](/docs/functions/connections). |
+| `services.auth.dynamicClaims.enabled is true, but services.functions is not enabled.` | Dynamic claims need a deployed `udf.authClaims` provider. [New in 2.0](/docs/reference/changelog#rayfin-20) | Enable `services.functions`, or set `services.auth.dynamicClaims.enabled: false`. See [Dynamic claims](/docs/auth/dynamic-claims). |
 
 ```prompt title="Deploy without publishing Functions"
 Run `npx rayfin up --exclude-services functions --dry-run` in my Rayfin project to verify
 the target workspace and local configuration, then run `npx rayfin up --exclude-services
 functions` to deploy everything except the Functions package.
+```
+
+```prompt title="Deploy only Storage folder changes"
+In my Rayfin 2.0 project I changed the @blob folders registered in the schema array of
+rayfin/storage/schema.ts. Run `npx rayfin up storage apply --json` against the recorded
+deployment. If it fails with "Storage apply blocked (409)", list the folders it would
+remove and ask me before rerunning with --force, because removing a folder permanently
+deletes its objects.
 ```

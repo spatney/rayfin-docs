@@ -1,6 +1,6 @@
 ---
 title: Connections
-description: Give Rayfin functions app-identity tokens for Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, and Azure DevOps.
+description: Give Rayfin functions app-identity tokens for Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, Azure DevOps, and your own Entra-protected APIs.
 appliesTo: "@microsoft/fabric-user-data-functions >= 1.36"
 ---
 
@@ -42,7 +42,7 @@ The annotation is the declaration. Keep the third argument to `udf.func()` as `[
 
 ## Supported audiences
 
-`AudienceType` in 1.36.2 contains only these members. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
+`AudienceType` contains only these members. [Changed in 1.36](/docs/reference/changelog#rayfin-136)
 
 | Audience | Use for |
 | --- | --- |
@@ -52,7 +52,7 @@ The annotation is the declaration. Keep the third argument to `udf.func()` as `[
 | `AudienceType.AzureAI` | Azure AI Foundry endpoints. |
 | `AudienceType.ADO` | Azure DevOps APIs. |
 
-`CosmosDB`, `KeyVault`, `EventGrid`, `Kusto`, and `WorkIQ` are not public `AudienceType` members in 1.36.2. A Power BI semantic model is not reached through function connections; use the `fabric-semanticmodel` connector instead.
+`CosmosDB`, `KeyVault`, `EventGrid`, `Kusto`, and `WorkIQ` are not `AudienceType` members. For any other Entra-protected resource, declare a [custom audience](#call-your-own-entra-protected-api). A Power BI semantic model is not reached through function connections; use the `fabric-semanticmodel` connector instead.
 
 ## Tokens are typed and bounded
 
@@ -71,7 +71,7 @@ async (
 A direct read of a declared-but-unminted token throws:
 
 ```text
-No token available for audience '<Audience>'. Ensure a connection with this audience type is declared.
+No token available for audience '<Audience>'. Ensure a connection with this audience is declared.
 ```
 
 Declaring an audience does not grant resource permissions. Grant the external resource to the Fabric app identity. For current Fabric apps, that identity is the owner of the Fabric app item.
@@ -84,6 +84,8 @@ Declaring an audience does not grant resource permissions. Grant the external re
 | --- | --- |
 | `ctx.getDataClient()` | Signed-in caller. |
 | `ctx.Tokens.Sql`, `ctx.Tokens.Storage`, `ctx.Tokens.Fabric`, `ctx.Tokens.AzureAI`, `ctx.Tokens.ADO` | Fabric app identity. |
+| `ctx.Tokens['<custom audience>']` | Fabric app identity. [New in 2.0](/docs/reference/changelog#rayfin-20) |
+| `ctx.sql` | The app. Entity permissions do not apply; see [Raw SQL in functions](/docs/functions/raw-sql). [Experimental](/docs/reference/changelog#feature-status) |
 
 ## Wrap a token for Azure SDK clients
 
@@ -132,6 +134,8 @@ All Fabric SQL resources share the same requirements:
 | Mirrored Database | SQL analytics endpoint and item GUID from the Fabric portal | Item GUID |
 
 For Lakehouse, Warehouse, and Mirrored Database connections, pass the Fabric item GUID as `database`. Multi-item workspaces cannot route the connection reliably without it.
+
+These connections reach other Fabric and Azure SQL items. To run SQL against your app's own Rayfin database, use [raw SQL](/docs/functions/raw-sql) instead.
 
 ```typescript title="rayfin/functions/src/function_app.ts"
 import sql from 'mssql';
@@ -367,9 +371,57 @@ udf.func(
 );
 ```
 
+## Call your own Entra-protected API
+
+[New in 2.0](/docs/reference/changelog#rayfin-20)
+
+For a resource that has no `AudienceType` member — such as your own API protected by Microsoft Entra ID — declare a custom audience: the resource's application ID (a GUID) or its resource URI starting with `https://` or `api://`, written as a string literal. Read the token back with the same string:
+
+```typescript title="rayfin/functions/src/function_app.ts"
+import {
+  UserDataFunctions,
+  type RayfinContext,
+} from '@microsoft/fabric-user-data-functions';
+
+export type AppSchema = Record<string, never>;
+
+const udf = new UserDataFunctions();
+const CONTOSO_API = 'https://contoso.example.com';
+
+udf.func(
+  'listContosoOrders',
+  async (ctx: RayfinContext<AppSchema, 'api://contoso-api'>): Promise<unknown> => {
+    const response = await fetch(`${CONTOSO_API}/orders`, {
+      headers: { Authorization: ['Bearer', ctx.Tokens['api://contoso-api']].join(' ') },
+    });
+    if (!response.ok) {
+      throw new Error(`Contoso API returned ${response.status}`);
+    }
+    return await response.json();
+  },
+  [],
+);
+```
+
+- The token is issued to the app identity, not on behalf of the caller, so the API must accept tokens from that identity — for example, by assigning it an app role.
+- Declare the resource, not a scope: `api://contoso-api`, not `api://contoso-api/.default`.
+- Mix custom and built-in audiences in one union: `RayfinContext<AppSchema, AudienceType.Sql | 'api://contoso-api'>`.
+
+`npx rayfin up` checks every custom audience before it changes anything remotely. Wildcards, query strings, fragments, credentials, `http://` URIs, `/.default` scopes, and values longer than 512 characters are rejected, and the deploy stops with the location of each one:
+
+```text
+The functions project has errors:
+  <file>:<line>:<column>: Function 'listContosoOrders': 'api://contoso-api/.default' is not a valid custom audience. Use an application ID (GUID) or an https:// or api:// resource URI without a scope, query, or wildcard.
+```
+
+`udf.connection({ audience: 'api://contoso-api' })` builds the same declaration for the connections array. Like other array connections, it binds at runtime but adds no typed `ctx.Tokens` entry, so prefer the annotation. An invalid audience passed to `udf.connection()` does not throw when the module loads; the function that uses it fails every invocation while the other functions keep working.
+
+Code that inspects `Connection` objects must allow for custom audiences: `isGeneric` is also `true` for a custom-audience connection, whose `audienceType` is `undefined`. Read `tokenKey`, which works for both kinds, or check `isCustomAudience` before reading `audienceType`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+
 ## Rules
 
 - Declare generic audiences in the `RayfinContext` annotation and read tokens from `ctx.Tokens.<Audience>`.
+- Declare any other Entra-protected resource as a custom audience — its application ID or `https://` or `api://` resource URI, never a `/.default` scope — and read it with `ctx.Tokens['<audience>']`.
 - Keep the third argument to `udf.func()` as `[]` in new code.
 - Use real endpoints from Fabric or Azure. Do not use `process.env` as the primary source for resource coordinates.
 - Never return `ctx.Tokens.*` values to the frontend.
@@ -406,8 +458,10 @@ Both halves matter: the annotation registers the binding and narrows `ctx.Tokens
 
 During `npx rayfin dev` and `npx rayfin dev functions apply`, external-resource tokens use the account the local Functions host signs in with. Deployed Functions use the application identity. Test deployed permissions even if local debugging works.
 
-```prompt title="Add an app-identity connection to a Rayfin function"
-In my Rayfin project, add a function connection to <Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, or Azure DevOps>.
+When a function declares an audience, the local host signs you in as it starts. If it exits with `A window handle must be configured`, raise the extension bundle floor in the functions `host.json`; see [Local sign-in fails without a terminal window](/docs/functions/local-development#local-sign-in-fails-without-a-terminal-window).
 
-Use Rayfin 1.36 style. Declare the audience in the handler's context type, for example `RayfinContext<AppSchema, AudienceType.Sql>`, and read the token from `ctx.Tokens.Sql`. Keep the third argument to `udf.func()` as `[]`. Do not use `ctx.getToken()` or `udf.connection({ audienceType })` in new code. Use real resource endpoints from Fabric or Azure; do not invent URLs. Install resource SDK packages in rayfin/functions/package.json. Explain which identity must be granted access in deployed Functions and how local development differs.
+```prompt title="Add an app-identity connection to a Rayfin function"
+In my Rayfin 2.0 project, add a function connection to <Fabric SQL, OneLake, Fabric REST, Azure AI Foundry, Azure DevOps, or my own Entra-protected API>.
+
+Declare the audience in the handler's context type, for example `RayfinContext<AppSchema, AudienceType.Sql>`, and read the token from `ctx.Tokens.Sql`. For a resource with no AudienceType member, declare its application ID or its https:// or api:// resource URI as a string literal — `RayfinContext<AppSchema, 'api://my-api'>` — and read `ctx.Tokens['api://my-api']`; never use a `/.default` scope. Keep the third argument to `udf.func()` as `[]`. Do not use `ctx.getToken()` or `udf.connection({ audienceType })` in new code. Use real resource endpoints from Fabric or Azure; do not invent URLs. Install resource SDK packages in rayfin/functions/package.json. Explain which identity must be granted access in deployed Functions and how local development differs.
 ```
