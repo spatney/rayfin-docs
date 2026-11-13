@@ -26,7 +26,8 @@ const MAX_DESCRIPTION = 200;
  */
 const OUT_OF_SCOPE: { pattern: RegExp; reason: string }[] = [
   {
-    pattern: /\brayfin\s+dev\s+(db|status|watch|storage)\b/i,
+    // `rayfin dev storage apply` targets the Fabric backend since 2.0, so it is in scope.
+    pattern: /\brayfin\s+dev\s+(db|status|watch)\b/i,
     reason: 'Docker-provider `rayfin dev` subcommands are out of scope (bare `rayfin dev` is fine)',
   },
   {

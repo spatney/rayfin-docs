@@ -52,17 +52,17 @@ follow. What 1.35 changed relative to 1.34 lives only on the changelog page.
 
 | Tag | Use for |
 | --- | --- |
-| `[New in 1.36](/docs/reference/changelog#rayfin-136)` | A page, command, flag, option, or API that did not exist before that release |
-| `[Changed in 1.36](/docs/reference/changelog#rayfin-136)` | Existing behavior, a default, or a name that changed in that release |
-| `[Deprecated in 1.36](/docs/reference/changelog#rayfin-136)` | Still works, but has a replacement |
-| `[Removed in 1.36](/docs/reference/changelog#rayfin-136)` | No longer works from that release |
+| `[New in 2.0](/docs/reference/changelog#rayfin-20)` | A page, command, flag, option, or API that did not exist before that release |
+| `[Changed in 2.0](/docs/reference/changelog#rayfin-20)` | Existing behavior, a default, or a name that changed in that release |
+| `[Deprecated in 2.0](/docs/reference/changelog#rayfin-20)` | Still works, but has a replacement |
+| `[Removed in 2.0](/docs/reference/changelog#rayfin-20)` | No longer works from that release |
 | `[Preview](/docs/reference/changelog#feature-status)` | Shipped, but its shape may still change |
 | `[Experimental](/docs/reference/changelog#feature-status)` | Behind a feature flag or rollout |
 
 - Tag at the smallest accurate scope: the end of a table cell for one flag or option, its
   own line directly under the heading for a section, the first line of the body for a page.
 - Never put a tag inside a heading — it changes the anchor and leaks into the TOC.
-- Use minor versions (`1.36`). Name a patch (`1.36.2`, `1.35.1`) only when that patch
+- Use minor versions (`2.0`, `1.36`). Name a patch (`1.36.2`, `1.35.1`) only when that patch
   shipped the feature or changed the behavior.
 - Every tag needs a matching entry on `/docs/reference/changelog`. `check:docs` rejects a
   tag whose label and anchor disagree, and any version tag at or below 1.35.0.
@@ -130,14 +130,24 @@ deliberately later:
 - Email/password auth and magic links. **Microsoft Entra ID is the only supported identity
   provider**: Fabric SSO for browser apps, plus direct Entra token sign-in and the external
   embed host for code that already holds a delegated Entra token.
+- Held, experimental connector types: Fabric Data Agent (`fabric-dataagent`) and the
+  Microsoft 365 connectors (`@microsoft/rayfin-connector-m365`,
+  `@microsoft/rayfin-connector-entra`). Eventhouse is the exception: it is documented for
+  projects that already declare one.
+- Commands and flags that ship but stay behind a server or internal switch:
+  `rayfin up db repair` and the schema-drift recovery workflow, `rayfin up
+  --allow-takeover` / `--skip-connector-check`, and `rayfin pack`.
 
 ## Feature status
 
 | Feature | Status | How to present it |
 | --- | --- | --- |
 | Functions | GA since 1.36 (no feature flag) | Not available in every Fabric region or tenant — keep that `> [!NOTE]` on Functions pages, but do not call Functions experimental |
-| Connectors | GA since 1.36 (no feature flag) | `rayfin up connector apply` is `[Preview]`. Kusto (Eventhouse) is held back: existing connectors keep working, new ones cannot be added |
-| Storage | Experimental — `RAYFIN_FEATURE_FLAGS=storage` or `services.storage.enabled` | `> [!WARNING]` callout plus the `[Experimental]` tag, and the same region/tenant caveat |
+| Connectors | GA since 1.36 (no feature flag) | `rayfin up connector apply` is `[Preview]`. Fabric IQ (`fabriciqmcp`) is new in 2.0 and authorable. Eventhouse (renamed from Kusto in 2.0) is experimental and held: existing connectors keep working, new ones cannot be added |
+| Storage | GA since 2.0 (no feature flag), remote-only | Do not call Storage experimental; there is no local Storage service |
+| Dynamic auth claims | GA since 2.0, configured in `rayfin.yml` | Keep a `> [!NOTE]` that the backend must have it enabled for the workspace's region |
+| Raw SQL in functions (`& WithSql`) | Experimental since 2.0 — enabled per tenant by the service | `[Experimental]` tag plus a `> [!WARNING]`; show T-SQL only |
+| Observability (`rayfin telemetry`) | Experimental since 2.0 — needs Fabric service-side enablement | `[Experimental]` tag plus a `> [!WARNING]`, including the data-loss note for disabling |
 | Function connections | Application identity only since 1.36 (`services.functions.auth.type: application` is required) | Deployed Functions reach external resources as the app identity — never describe them as acting as the signed-in user. Rayfin data access from a function stays caller-scoped |
 
 ## Naming
@@ -156,7 +166,7 @@ deliberately later:
 
 Content is grounded in shipped code, not invented. Source material:
 
-- `vendor/rayfin-guide-1.36.2/` — the upstream guide snapshot.
+- `vendor/rayfin-guide-2.0.0/` — the upstream guide snapshot.
 - `vendor/sdk-docs/` — per-package docs shipped in each package's `assets/docs`.
 - `vendor/SKILL.md` and `vendor/cli-assets/agent-files/skills/` — the agent skills
   installed by `rayfin init ai-files`.
@@ -164,10 +174,16 @@ Content is grounded in shipped code, not invented. Source material:
   and `rayfin <command> --help` from the pinned CLI version.
 
 The Rayfin source monorepo is useful for depth, but its `main` branch runs ahead of what
-is published. Read it at the release tag (`git show npm/v1.36.2:<path>`), never from a
+is published. Read it at the release tag (`git show npm/v2.0.0:<path>`), never from a
 working tree. If a behaviour cannot be verified from those sources or from the installed
 packages, do not document it. Leave it out rather than guessing. Behaviour behind an
 internal rollout flag (for example `cli-minor-fixes`) is not shipped behaviour.
+
+Code samples target the pinned release. Since 2.0, construct clients with
+`RayfinClient.create({ auth, services })` — `browserSession()` from
+`@microsoft/rayfin-auth` plus `dataService()`, `functionsService()`, `connectorsService()`,
+or `storageService()` from their owning packages. Show `new RayfinClient(...)`,
+`ConnectorsRayfinClient`, or `RayfinServerClient` only when describing what 2.0 replaced.
 
 ## Commands
 
