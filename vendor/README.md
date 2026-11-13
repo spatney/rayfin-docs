@@ -6,20 +6,25 @@ exist so that a future upstream release can be diffed mechanically rather than b
 
 | Path | Upstream | Version |
 | --- | --- | --- |
-| `rayfin-guide-1.36.2/` | `@microsoft/rayfin-guide` → `assets/docs` | 1.36.2 |
-| `sdk-docs/<package>/` | `@microsoft/<package>` → `assets/docs` | 1.36.2 |
-| `sdk-docs/rayfin-embed-host/` | `@microsoft/rayfin-embed-host` → `README.md` (no `assets/docs`) | 1.36.2 |
-| `catalog.json` | `@microsoft/rayfin-docs` → `assets/catalog.json` | 1.36.2 |
-| `SKILL.md` | `rayfin init ai-files` → `.agents/skills/rayfin/SKILL.md` | 1.36.2 |
-| `cli-assets/` | `@microsoft/rayfin-cli` → `assets/` (agent files, skills, templates) | 1.36.2 |
+| `rayfin-guide-2.0.0/` | `@microsoft/rayfin-guide` → `assets/docs` | 2.0.0 |
+| `sdk-docs/<package>/` | `@microsoft/<package>` → `assets/docs` | 2.0.0 |
+| `sdk-docs/rayfin-embed-host/` | `@microsoft/rayfin-embed-host` → `README.md` (no `assets/docs`) | 2.0.0 |
+| `catalog.json` | `@microsoft/rayfin-docs` → `assets/catalog.json` | 2.0.0 |
+| `SKILL.md` | `rayfin init ai-files` → `.agents/skills/rayfin/SKILL.md` | 2.0.0 |
+| `cli-assets/` | `@microsoft/rayfin-cli` → `assets/` (agent files, skills, templates) | 2.0.0 |
 
 `sdk-docs/` covers `rayfin-core`, `rayfin-data`, `rayfin-client`, `rayfin-auth`,
 `rayfin-auth-provider-fabric`, `rayfin-lib`, `rayfin-functions`, `rayfin-storage`,
-`rayfin-connectors`, `rayfin-connector-fabric-graphql`,
-`rayfin-connector-fabric-semanticmodel`, `rayfin-connector-kusto`,
-`rayfin-app-state-fabric`, and `rayfin-embed-host`.
+`rayfin-telemetry`, `rayfin-connectors`, `rayfin-connector-fabric-graphql`,
+`rayfin-connector-fabric-semanticmodel`, `rayfin-connector-eventhouse` (formerly
+`rayfin-connector-kusto`), `rayfin-connector-fabric-iq-mcp`, `rayfin-app-state-fabric`,
+`rayfin-embed-host`, `rayfin-local-dev`, and `fabric-user-data-functions`.
 
-Captured 2026-10-03.
+`rayfin-lib` and `rayfin-app-state-fabric` were taken from the `npm/v2.0.0` release tag:
+their 2.0.0 builds were not yet on the public registry at capture time, and the tag's
+`2.0.0-beta.1` → `2.0.0` diff is version bumps only.
+
+Captured 2026-11-12.
 
 ## How upstream docs are distributed
 

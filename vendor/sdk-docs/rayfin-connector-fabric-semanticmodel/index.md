@@ -24,7 +24,7 @@ Declare the connector in the app's schema:
 
 ```ts
 // rayfin/connectors/schema.ts
-import type { ConnectorsSchema } from "@microsoft/rayfin-client";
+import type { ConnectorsSchema } from "@microsoft/rayfin-connectors";
 import type { FabricSemanticModel } from "@microsoft/rayfin-connector-fabric-semanticmodel";
 
 export type AppConnectorsSchema = {
@@ -32,35 +32,35 @@ export type AppConnectorsSchema = {
 };
 ```
 
-Pass it as the third type parameter, supply the generated config, and register
-the runtime under the same name:
+Pass the schema to `connectorsService`, supply the generated config, and register the runtime under the same name:
 
 ```ts
-import { ConnectorsRayfinClient } from "@microsoft/rayfin-client";
+import { RayfinClient } from "@microsoft/rayfin-client";
+import { browserSession } from "@microsoft/rayfin-auth";
+import { connectorsService } from "@microsoft/rayfin-connectors";
 import { fabricSemanticModel } from "@microsoft/rayfin-connector-fabric-semanticmodel";
 import type { AppConnectorsSchema } from "../rayfin/connectors/schema";
 import { connectorConfig as salesModelConfig } from "../rayfin/connectors/salesModel/schema";
 
-const client = new ConnectorsRayfinClient<
-  DataSchema,
-  FunctionsSchema,
-  AppConnectorsSchema
->(
-  {
-    baseUrl: import.meta.env.VITE_RAYFIN_BASE_URL,
-    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
-    connectors: { salesModel: salesModelConfig },
+const client = RayfinClient.create({
+  baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
+  publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+  auth: browserSession(),
+  services: {
+    connectors: connectorsService<AppConnectorsSchema>({
+      configs: { salesModel: salesModelConfig },
+      runtime: { salesModel: fabricSemanticModel() },
+    }),
   },
-  { salesModel: fabricSemanticModel() }
-);
+});
 ```
 
-`connectors` is required and exhaustive: every connector declared in
+`configs` is required and exhaustive: every connector declared in
 `AppConnectorsSchema` needs an entry, keyed by its `rayfin.yml` name. The
 generated `connectorConfig` is `{ connector: 'fabric-semanticmodel' }`, so the
 routing ids never reach the bundle.
 
-Registering the runtime, the second argument, is what makes the declared
+Registering the `runtime` map on the adapter is what makes the declared
 operation types accurate. A client built without it bypasses the middleware and
 receives the raw transport payload, so `executeQuery` would not return the shape
 the types promise.
@@ -163,6 +163,10 @@ omitting the field.
 `fabricSemanticModel()` returns a `ConnectorRuntime`. It exists so the same app
 code works in the CLI inner loop, where no app is deployed and so no User Data
 Function exists to call.
+
+Direct CLI queries use the model-scoped `/datasets/{itemId}/executeDaxQueries` endpoint.
+They require Read and Build permissions on the semantic model, not workspace write access.
+The workspace ID remains part of the target configuration but is not included in the query route.
 
 ```ts
 const runtime = fabricSemanticModel({

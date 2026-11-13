@@ -108,6 +108,8 @@ services:
       # `Storage:Enabled` and `FeatureFlags:EnableStorage`; without this the
       # stack starts with storage "on" and still 404s every apply.
       - FeatureFlags__EnableStorage=${FeatureFlags__EnableStorage:-false}
+      # Schema drift detection and repair (db apply / db repair).
+      - FeatureFlags__EnableSchemaRecovery=${FeatureFlags__EnableSchemaRecovery:-true}
       # Asymmetric key provider configuration (for JWT signing)
       # Keys are managed via Auth__AsymmetricKeys__* environment variables
       - Auth__AsymmetricKeys__Provider=${Auth__AsymmetricKeys__Provider:-local-file}

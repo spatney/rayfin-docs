@@ -8,6 +8,16 @@ symbols: ['role', 'anonymous', 'authenticated']
 record DAB role/action mappings. Only the two built-in roles are
 supported: `anonymous` and `authenticated`.
 
+## Fabric prerequisite for anonymous data access
+
+The anonymous decorators always record their permission metadata, but the host decides whether to accept an anonymous schema.
+On Microsoft Fabric, a tenant administrator must turn on **Enable anonymous data access for Fabric Apps (Preview)** for the app owner.
+Otherwise, applying the schema fails with HTTP 403 (`ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`).
+The setting covers the data API only; it does not make a static-hosted frontend public.
+
+If your tenant does not allow anonymous data access, use `@authenticated(...)` instead and sign users in from your frontend.
+The Rayfin guide's `data/permissions.md` describes the full behavior.
+
 ## `@anonymous(action)` / `@authenticated(action, options?)`
 
 Grant a built-in role one or more DAB actions: `'read'`, `'create'`,

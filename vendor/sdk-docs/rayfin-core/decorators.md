@@ -48,6 +48,18 @@ export class DateRecord {
 Use type-specific decorators on class fields. Each decorator records the
 field's DAB type and any metadata options.
 
+### Field names
+
+A property name becomes a GraphQL field name, so it must match the GraphQL name grammar `/^[_A-Za-z][_0-9A-Za-z]*$/` and must not start with `__`.
+The CLI rejects other property names, such as `$price` or `'my-col'`, before the schema is applied.
+This applies to relationship properties and to connector entities as well.
+
+When the underlying column has such a name, use a valid property name and map it to the column with the `column` option:
+
+```typescript
+@decimal({ column: '$price' }) price!: number;
+```
+
 ### `@text(options?)`
 
 Variable-length text. Accepts `optional`, `default`, `description`, etc.

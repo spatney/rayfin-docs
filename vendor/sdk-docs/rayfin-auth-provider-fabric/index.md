@@ -22,9 +22,9 @@ The user must also have Execute permission on that item; app-only tokens are not
 The app must have external Entra exchange enabled.
 
 ```typescript
-import { Auth } from '@microsoft/rayfin-auth';
-import { ApiClient } from '@microsoft/rayfin-lib';
-import { signInWithEntraToken } from '@microsoft/rayfin-auth-provider-fabric';
+import { Auth } from "@microsoft/rayfin-auth";
+import { ApiClient } from "@microsoft/rayfin-lib";
+import { signInWithEntraToken } from "@microsoft/rayfin-auth-provider-fabric";
 
 const apiClient = new ApiClient({
   baseUrl: rayfinEndpoint,
@@ -35,7 +35,7 @@ auth.attachToClient(apiClient);
 
 try {
   const session = await signInWithEntraToken(auth, { entraToken });
-  console.log('Authenticated', session.isAuthenticated);
+  console.log("Authenticated", session.isAuthenticated);
   // Use SDK clients attached to apiClient here.
 } finally {
   auth.destroy();
@@ -52,7 +52,7 @@ No `FabricAuthOptions`, popup, iframe, PKCE, or return origin is needed.
 ```typescript
 function signInWithEntraToken(
   auth: Auth,
-  options: EntraTokenSignInOptions
+  options: EntraTokenSignInOptions,
 ): Promise<OpaqueSession>;
 
 interface EntraTokenSignInOptions {
@@ -60,12 +60,12 @@ interface EntraTokenSignInOptions {
 }
 ```
 
-For a `RayfinClient`, pass `client.auth`; it is already attached to the client's HTTP transport.
+For a client composed with `browserSession`, pass `client.auth`; it is already attached to the client's HTTP transport.
 The returned `OpaqueSession` exposes session metadata, not tokens.
 Subsequent authenticated requests and refresh use the Rayfin session, not the Entra token.
 The supplied `Auth` instance controls persistence; `storage: false` keeps the session in memory.
 Use a separate instance per user on a server and call `auth.destroy()` when it is no longer needed.
-`RayfinServerClient` does not expose `auth`; this helper expects a standalone `Auth` or `RayfinClient.auth`, not an access-token callback.
+A supplied-token client does not expose `auth`; this helper expects a standalone `Auth` or a browser-session client's `auth`, not an access-token callback.
 
 Each explicit call attempts an exchange rather than silently returning a previous session.
 Concurrent direct calls on the same `Auth` instance run in invocation order and coordinate with its refresh operations.
@@ -92,9 +92,9 @@ The example below reads its configuration from the Vite-projected environment va
 Run `rayfin env --framework <vite|nextjs|plain>` manually only if you need to regenerate `.env.local` outside those flows or target a framework that can't be auto-detected.
 
 ```typescript
-import { ApiClient } from '@microsoft/rayfin-lib';
-import { Auth } from '@microsoft/rayfin-auth';
-import { ensureSignedInWithFabric } from '@microsoft/rayfin-auth-provider-fabric';
+import { ApiClient } from "@microsoft/rayfin-lib";
+import { Auth } from "@microsoft/rayfin-auth";
+import { ensureSignedInWithFabric } from "@microsoft/rayfin-auth-provider-fabric";
 
 const apiClient = new ApiClient({
   baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
@@ -110,11 +110,25 @@ const fabricOptions = {
   returnOrigin: window.location.origin,
 };
 
-document.querySelector('#sign-in')?.addEventListener('click', async () => {
-  const session = await ensureSignedInWithFabric(auth, fabricOptions);
-  console.log('Authenticated', session.isAuthenticated);
+const signInError = document.querySelector("#sign-in-error");
+
+document.querySelector("#sign-in")?.addEventListener("click", async () => {
+  if (signInError) signInError.textContent = "";
+  try {
+    const session = await ensureSignedInWithFabric(auth, fabricOptions);
+    console.log("Authenticated", session.isAuthenticated);
+  } catch (error) {
+    // Show the user-safe message in the sign-in UI; never swallow it.
+    if (signInError) {
+      signInError.textContent =
+        error instanceof Error ? error.message : "Sign-in failed.";
+    }
+  }
 });
 ```
+
+Always catch sign-in errors and display `error.message` to the user.
+See [Error handling](#error-handling) for the codes you may receive.
 
 ## Options
 
@@ -143,12 +157,12 @@ Use `ensureSignedInWithFabric()` when you want silent-session and refresh-token 
 Use `initiateFabricLogin()` when you only want the broker step and do not need the session and refresh pre-checks.
 
 ```typescript
-import { initiateFabricLogin } from '@microsoft/rayfin-auth-provider-fabric';
+import { initiateFabricLogin } from "@microsoft/rayfin-auth-provider-fabric";
 
 await initiateFabricLogin(auth, {
-  workspaceId: '00000000-0000-0000-0000-000000000000',
-  projectId: '11111111-1111-1111-1111-111111111111',
-  fabricPortalUrl: 'https://app.fabric.microsoft.com',
+  workspaceId: "00000000-0000-0000-0000-000000000000",
+  projectId: "11111111-1111-1111-1111-111111111111",
+  fabricPortalUrl: "https://app.fabric.microsoft.com",
   returnOrigin: window.location.origin,
 });
 ```
@@ -166,12 +180,12 @@ For those older flows, call `bridgeFabricCallback()` as early as possible in the
 If the URL contains Fabric handoff parameters, the function forwards them to the opener window and closes the popup.
 
 ```typescript
-import { bridgeFabricCallback } from '@microsoft/rayfin-auth-provider-fabric';
+import { bridgeFabricCallback } from "@microsoft/rayfin-auth-provider-fabric";
 
 const bridged = bridgeFabricCallback();
 
 if (!bridged) {
-  console.log('No Fabric handoff detected');
+  console.log("No Fabric handoff detected");
 }
 ```
 
@@ -183,27 +197,105 @@ The bridge returns `true` when it handled a Fabric handoff and `false` when the 
 - Existing query parameters on `fabricPortalUrl` are preserved.
 - `callbackUrl` defaults to `${returnOrigin}/auth/callback` when omitted.
 - The broker handoff waits up to five minutes before timing out.
+- If the user closes the sign-in popup before it completes, the call rejects with `FABRIC_AUTH_POPUP_CLOSED` about one second later instead of waiting for the timeout.
 - If `window.opener` is unavailable in legacy flows, the bridge falls back to `BroadcastChannel`.
 
 ## Error handling
 
 The package throws `AuthError` values from `@microsoft/rayfin-lib` for validation and broker failures.
 
-Common cases include missing required options, blocked popups, explicit broker errors, and handoff timeout.
+Common cases include missing required options, blocked popups, explicit broker errors, a closed sign-in window, and handoff timeout.
+
+`error.message` is a user-safe, localized description intended to be displayed.
+Apps **must** catch errors from every sign-in call that can reject (`ensureSignedInWithFabric()`, whether on page load or on button click) and show `error.message` in the sign-in UI.
+`initEmbeddedAuth()` is best-effort: when embedded sign-in fails it logs a warning and resolves to `null` instead of rejecting, so show the sign-in button and let the click report the error.
+Do not swallow sign-in errors with an empty `catch` or by only resetting the user to signed out; otherwise users see no reason why they cannot sign in.
+Use `error.code` only for branching logic or telemetry.
+
+### Broker and popup error codes
+
+| Code                                                                                               | Meaning                                                                                |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `ACCESS_DENIED`                                                                                    | The signed-in user does not have access to this app.                                   |
+| `TOKEN_ACQUISITION_FAILED`                                                                         | The broker could not acquire a Fabric token for the user.                              |
+| `AUTHORIZE_FAILED`                                                                                 | The broker's authorize step failed (server, network, or unexpected error).             |
+| `AUTH_FAILED`                                                                                      | Authentication failed in the broker.                                                   |
+| `INVALID_CALLBACK_URL`                                                                             | The app's return origin or callback URL is not allowed.                                |
+| `RATE_LIMITED`                                                                                     | Too many sign-in requests from the embedded app. Wait and retry.                       |
+| `OWNER_LOGIN_REQUIRED`                                                                             | Only the app owner can sign in while the app's Functions use delegated authentication. |
+| `APP_DEPLOYMENT_REQUIRED`                                                                          | The app's Functions must be deployed or redeployed before users can sign in.           |
+| `APP_ADMIN_BLOCKED`                                                                                | A tenant or capacity admin has blocked the app.                                        |
+| `FABRIC_AUTH_FAILED`                                                                               | The broker reported a failure without a specific code.                                 |
+| `FABRIC_AUTH_POPUP_CLOSED`                                                                         | The user closed the sign-in window before sign-in completed.                           |
+| `FABRIC_AUTH_TIMEOUT`                                                                              | The broker did not complete the handoff within five minutes.                           |
+| `TAB_BLOCKED`                                                                                      | The browser blocked the sign-in popup.                                                 |
+| `PKCE_CHALLENGE_FAILED`                                                                            | The SDK could not prepare the PKCE challenge.                                          |
+| `CHALLENGE_DELIVERY_FAILED`                                                                        | The SDK could not deliver the PKCE challenge to the broker.                            |
+| `MISSING_WORKSPACE_ID`, `MISSING_PROJECT_ID`, `MISSING_RETURN_ORIGIN`, `MISSING_FABRIC_PORTAL_URL` | A required `FabricAuthOptions` value is missing.                                       |
+
+Broker codes such as `ACCESS_DENIED` are passed through from the Fabric broker, so new codes may appear over time.
+Treat unknown codes as a generic failure and still display `error.message`.
+
+### Embedded error codes
+
+In embedded mode, the host responds to the handoff request and its error code and message are passed through unchanged.
+SDK-originated embedded codes include `NO_PARENT_WINDOW` (no iframe host), `BRIDGE_TIMEOUT` (the host did not respond), `STATE_MISMATCH`, and `SESSION_NOT_ESTABLISHED`.
+
+### Direct token sign-in error codes
 
 Direct token sign-in reports `INVALID_REQUEST` for invalid local inputs, `EXCHANGE_NOT_ENABLED` for a disabled exchange, `AUTH_FAILED` for token rejection, `INSUFFICIENT_PERMISSIONS` for missing Execute access, and `NOT_AVAILABLE` for an unavailable endpoint.
 Transport or other HTTP failures use `TOKEN_EXCHANGE_FAILED`; malformed successful responses use `INVALID_TOKEN_RESPONSE`.
 Errors do not include the supplied token or raw server response.
 
-```typescript
-import { AuthError } from '@microsoft/rayfin-lib';
+### Displaying sign-in errors
 
-try {
-  await ensureSignedInWithFabric(auth, fabricOptions);
-} catch (error) {
-  if (error instanceof AuthError) {
-    console.error(error.code, error.message);
+The React example below runs best-effort embedded sign-in on load and the interactive sign-in on button click, and renders the error message when sign-in fails.
+
+```tsx
+import { useEffect, useState } from "react";
+import { AuthError } from "@microsoft/rayfin-lib";
+import {
+  ensureSignedInWithFabric,
+  initEmbeddedAuth,
+} from "@microsoft/rayfin-auth-provider-fabric";
+
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Sign-in failed.";
+}
+
+export function SignIn() {
+  const [signedIn, setSignedIn] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // On load: best-effort embedded sign-in (no popup). Resolves to null on
+  // failure; the click handler below reports the error. Always re-read the
+  // session: standalone pages keep a restored session, while an embedded host
+  // may discard it before the handoff.
+  useEffect(() => {
+    initEmbeddedAuth(auth, fabricOptions).then(() =>
+      setSignedIn(auth.getSession().isAuthenticated),
+    );
+  }, []);
+
+  // On click: embedded handoff or popup sign-in (must run in the click handler).
+  async function handleSignIn() {
+    setError(null);
+    try {
+      const session = await ensureSignedInWithFabric(auth, fabricOptions);
+      setSignedIn(session.isAuthenticated);
+    } catch (err) {
+      if (err instanceof AuthError) console.warn(err.code);
+      setError(toMessage(err));
+    }
   }
+
+  if (signedIn) return <p>Signed in</p>;
+  return (
+    <div>
+      <button onClick={handleSignIn}>Sign in with Fabric</button>
+      {error && <p role="alert">{error}</p>}
+    </div>
+  );
 }
 ```
 

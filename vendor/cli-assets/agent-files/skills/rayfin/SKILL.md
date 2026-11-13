@@ -1,12 +1,18 @@
 ---
 name: rayfin
-description: "Use when doing ANY task involving Rayfin — scaffolding, data models, decorators, auth, deployment, CLI commands, or client setup. Triggers: rayfin, rayfin init, rayfin up, rayfin login, RayfinClient, @entity, @role, @anonymous, @authenticated, @text, @uuid, @int, @decimal, @boolean, @date, @email, @set, @one, @many, DAB, Data API Builder, rayfin.yml, publishableKey, signUp, signIn, signOut, sendMagicLink, handleMagicLinkCallback, ensureSignedInWithFabric, Fabric SSO, Entra ID, rayfin up db apply, rayfin up staticapp deploy, schema.ts, OpaqueSession, onSessionChange, GraphQL select, GraphQL create, GraphQL update, GraphQL delete, findById, executePaginated, RLS policy, row-level security, claims.sub, claims.email, TC39 decorators, config generation, dialect, mssql, postgresql, deep link, deep linking, shareable URL, app state, createFabricAppStateClient, getLaunchStateSync, replaceState, onStateChange, fabricAppState"
+description: "Use when doing ANY task involving Rayfin — scaffolding, data models, decorators, auth, storage, deployment, CLI commands, or client setup. Triggers: rayfin, rayfin init, rayfin up, rayfin login, RayfinClient, @entity, @blob, StorageObject, @role, @anonymous, @authenticated, @text, @uuid, @int, @decimal, @boolean, @date, @email, @set, @one, @many, DAB, Data API Builder, rayfin.yml, publishableKey, signUp, signIn, signOut, sendMagicLink, handleMagicLinkCallback, ensureSignedInWithFabric, Fabric SSO, Entra ID, rayfin up db apply, rayfin up storage apply, rayfin up staticapp deploy, schema.ts, OpaqueSession, onSessionChange, GraphQL select, GraphQL create, GraphQL update, GraphQL delete, findById, executePaginated, RLS policy, row-level security, claims.sub, claims.email, TC39 decorators, config generation, dialect, mssql, postgresql, deep link, deep linking, shareable URL, app state, createFabricAppStateClient, getLaunchStateSync, replaceState, onStateChange, fabricAppState"
 metadata:
   author: microsoft
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # Rayfin
+
+For Rayfin 2.x client wiring, use the named `RayfinClient.create` export.
+Select `browserSession` from `@microsoft/rayfin-auth` for an interactive session, or `suppliedToken` from `@microsoft/rayfin-client` for server or worker authentication without a session API.
+Register `dataService`, `functionsService`, `connectorsService`, and `storageService` only as needed, importing each from its owning package.
+Infer application aliases with `ReturnType<typeof createClient>` from a synchronous local factory.
+Do not use client subclasses, default imports, fake schema objects, or protected transport access.
 
 ## Rayfin Docs — read them from `node_modules` first
 
@@ -29,6 +35,7 @@ a documentation lookup tool.
 | Client queries, mutations, paging, field nullability | `@microsoft/rayfin-data/assets/docs/` |
 | Guides, data modelling, permissions, auth, CLI workflows | `@microsoft/rayfin-guide/assets/docs/` |
 | Client composition and configuration | `@microsoft/rayfin-client/assets/docs/` |
+| Blob folders, uploads, downloads, listing, and deletion | `@microsoft/rayfin-storage/assets/docs/` |
 | Vite local routing and Rayfin CLI-backed local authentication | `@microsoft/rayfin-local-dev/assets/docs/` |
 | Server-side functions (UDFs) — authoring, invoking, connections, CLI | `@microsoft/rayfin-guide/assets/docs/functions/` |
 | Deep-link app state — shareable URLs for apps embedded in the Fabric portal | `@microsoft/rayfin-app-state-fabric/assets/docs/` |
@@ -67,10 +74,13 @@ node_modules/@microsoft/rayfin-guide/assets/docs/known-limitations.md
 
 - Rayfin uses TC39 Stage 3 decorators — never enable `experimentalDecorators` or `emitDecoratorMetadata`. This is an invariant, not a version detail; tsconfig specifics are in the guide's project-structure doc.
 - Prefer `npm create @microsoft/rayfin@latest` for new projects — it generates correct tsconfig and schema boilerplate.
+- Rayfin Storage is remote-only. The default Fabric-backed `rayfin dev` applies enabled Storage automatically; use `rayfin dev storage apply` to retry it. Use `rayfin up` or `rayfin up storage apply` for deployment, and never create a local emulator workflow or use Storage with `--provider docker`.
 
 ### Security
 
 - **Every entity must carry an explicit permission decorator.** Omitting one silently grants full CRUD to any signed-in user, which is almost never what production data wants. The decorators, the row-level policy DSL, and field visibility options are documented in `rayfin-core/assets/docs/permissions.md` and the guide's `data/permissions.md` — read them rather than recalling them.
+- **Anonymous data access needs a Fabric tenant setting.** `@anonymous(...)` and `@role('anonymous', ...)` deploy only when a tenant admin has turned on **Enable anonymous data access for Fabric Apps (Preview)** for the app owner; otherwise applying the schema fails with HTTP 403 (`ANONYMOUS_DATA_ACCESS_BLOCKED_BY_TENANT_ADMIN`).
+  Default to `@authenticated(...)`, and use anonymous permissions only when the user wants public data and confirms the setting is on; the guide's `data/permissions.md` has the details.
 - Publishable keys (`pk-*`) are safe for client-side code — never expose service secrets or connection strings.
 - Keep `allowedRedirectUris` in `rayfin.yml` tightly scoped to your app's origin.
 - Email/password auth is local development only — deployed Fabric apps support Fabric SSO (Entra ID) exclusively.
@@ -78,6 +88,7 @@ node_modules/@microsoft/rayfin-guide/assets/docs/known-limitations.md
 - Vite local development may establish a Rayfin session through `@microsoft/rayfin-local-dev`, which reuses `rayfin login`, the configured tenant, and the CLI token cache. Do not add Azure CLI auth or another MSAL cache.
 - Keep local auto-login behind a DEV-only dynamic import, and keep `services.auth.fabric.externalEntraExchange: true` enabled when that flow is used.
 - Local auto-login does not exercise the deployed public signed-out screen. Validate public signed-out, protected/restored, embedded, and local failure/recovery paths separately.
+- **Always surface sign-in errors.** Catch errors from every sign-in call that can reject — `ensureSignedInWithFabric`, whether on load or on click — store them in UI state, and display `error.message` (user-safe and localized) on the sign-in screen. Never swallow them with an empty `catch` or `.catch(() => setUser(null))`; users otherwise see no reason why sign-in failed (for example, `ACCESS_DENIED` or a closed sign-in window). `initEmbeddedAuth` is best-effort and resolves to `null` instead of rejecting, so when it returns `null` show the sign-in button and let the click report the error. Clear the stored error when sign-in succeeds.
 
 ### Project Layout
 

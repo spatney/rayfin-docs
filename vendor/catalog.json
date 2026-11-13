@@ -20,7 +20,16 @@
       "name": "@microsoft/rayfin-data",
       "kind": "sdk",
       "summary": "DAB-compliant data client for GraphQL access patterns against the generated DAB endpoint.",
-      "topics": ["graphql", "data", "client", "query", "mutation", "dab"],
+      "topics": [
+        "graphql",
+        "data",
+        "client",
+        "query",
+        "mutation",
+        "dab",
+        "database",
+        "sql"
+      ],
       "modules": ["rayfin-data"]
     },
     {
@@ -41,7 +50,7 @@
     {
       "name": "@microsoft/rayfin-client",
       "kind": "sdk",
-      "summary": "High-level Rayfin client entrypoint composing auth and data APIs behind a single configured client.",
+      "summary": "High-level Rayfin client entrypoint for auth and data, with stable service composition for separately installed services such as Storage.",
       "topics": ["client", "service", "composition", "high-level"],
       "modules": ["rayfin-client"]
     },
@@ -89,9 +98,8 @@
     {
       "name": "@microsoft/rayfin-storage",
       "kind": "sdk",
-      "stability": "experimental",
-      "summary": "Experimental — type-safe blob storage client for Rayfin storage backends. Requires the `@blob()` decorator from `@microsoft/rayfin-core/experimental`.",
-      "topics": ["storage", "blob", "azure-blob", "file", "upload"],
+      "summary": "Type-safe blob storage client for remote Rayfin Storage on Microsoft Fabric. Uses stable `@blob()` declarations from `@microsoft/rayfin-core`.",
+      "topics": ["storage", "blob", "onelake", "fabric", "file", "upload"],
       "modules": ["rayfin-storage"]
     },
     {
@@ -118,7 +126,7 @@
     {
       "name": "@microsoft/rayfin-connectors",
       "kind": "sdk",
-      "summary": "Typed runtime for invoking Rayfin function-bridge connectors. Mounted as `client.connectors` by `ConnectorsRayfinClient`.",
+      "summary": "Typed runtime for invoking Rayfin function-bridge connectors. Register `connectorsService` in `RayfinClient.create` to expose `client.connectors`.",
       "topics": [
         "connector",
         "connectors",
@@ -143,12 +151,75 @@
       "modules": ["rayfin-connector-fabric-semanticmodel"]
     },
     {
-      "name": "@microsoft/rayfin-connector-kusto",
+      "name": "@microsoft/rayfin-connector-fabric-iq-mcp",
+      "kind": "sdk",
+      "summary": "Fabric IQ MCP client adapter for AskPowerBI over the managed Rayfin Type B connector path.",
+      "topics": [
+        "connector",
+        "fabric",
+        "mcp",
+        "fabriciq",
+        "fabriciqmcp",
+        "askpowerbi",
+        "chat-with-my-data",
+        "mcp-tasks-v2",
+        "tasks"
+      ],
+      "modules": ["rayfin-connector-fabric-iq-mcp"]
+    },
+    {
+      "name": "@microsoft/rayfin-connector-eventhouse",
       "kind": "sdk",
       "stability": "experimental",
-      "summary": "Experimental — typed connector marker and query-result normalization for Fabric KQL Database connectors.",
-      "topics": ["connector", "kusto", "kql", "fabric", "eventhouse", "query"],
-      "modules": []
+      "summary": "Experimental — typed connector marker, runtime, and query-result normalization for Fabric Eventhouse (KQL Database) connectors.",
+      "topics": ["connector", "eventhouse", "kql", "kusto", "fabric", "query"],
+      "modules": ["rayfin-connector-eventhouse"]
+    },
+    {
+      "name": "@microsoft/rayfin-connector-entra",
+      "kind": "sdk",
+      "stability": "experimental",
+      "summary": "Experimental — typed connector marker and operation types for the Microsoft Entra ID connector (held; not available in this release).",
+      "topics": [
+        "connector",
+        "microsoft-365",
+        "azuread",
+        "entra",
+        "users",
+        "groups"
+      ],
+      "modules": ["rayfin-connector-entra"]
+    },
+    {
+      "name": "@microsoft/rayfin-connector-m365",
+      "kind": "sdk",
+      "stability": "experimental",
+      "summary": "Experimental — typed connector markers and operation types for the Microsoft 365 connectors: Users, SharePoint, Outlook, Excel, Teams, OneDrive, Groups, Forms and Planner (held; not available in this release).",
+      "topics": [
+        "connector",
+        "microsoft-365",
+        "office365users",
+        "sharepointonline",
+        "office365",
+        "outlook",
+        "excelonlinebusiness",
+        "excel",
+        "teams",
+        "onedriveforbusiness",
+        "onedrive",
+        "office365groups",
+        "groups",
+        "microsoftforms",
+        "forms",
+        "planner",
+        "users",
+        "mail",
+        "calendar",
+        "files",
+        "lists",
+        "tasks"
+      ],
+      "modules": ["rayfin-connector-m365"]
     },
     {
       "name": "@microsoft/rayfin-connector-fabric-graphql",
@@ -197,6 +268,20 @@
         "getting-started"
       ],
       "modules": ["rayfin-guide"]
+    },
+    {
+      "name": "@microsoft/rayfin-telemetry",
+      "kind": "sdk",
+      "summary": "Browser telemetry initialization and versioned Rayfin Observability guidance: enablement, Application Insights runtime configuration, OpenTelemetry integration, and troubleshooting.",
+      "topics": [
+        "observability",
+        "telemetry",
+        "opentelemetry",
+        "application-insights",
+        "connection-string",
+        "browser"
+      ],
+      "modules": ["rayfin-telemetry"]
     },
     {
       "name": "@microsoft/rayfin-host-docs",

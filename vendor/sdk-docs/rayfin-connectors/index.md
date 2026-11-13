@@ -1,5 +1,8 @@
 ---
-symbols: []
+symbols:
+  - connectorsService
+  - ConnectorsServiceOptions
+  - createConnectorsApi
 ---
 
 # @microsoft/rayfin-connectors — generating and wiring a client
@@ -10,7 +13,8 @@ gave the connector in `rayfin/rayfin.yml`. Import the client from the
 main `@microsoft/rayfin-client` entry:
 
 ```ts
-import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { connectorsService } from '@microsoft/rayfin-connectors';
 ```
 
 ## Two connector shapes
@@ -19,15 +23,15 @@ Every connector's `rayfin/connectors/<name>/schema.ts` exports the same two
 things — a `<Name>Schema` type alias and a `connectorConfig` value. What differs
 is how that file is produced and whether the client needs a runtime:
 
-| Shape | Packages | Surface | `schema.ts` | Runtime |
-| --- | --- | --- | --- | --- |
-| **Category A — entity connector** | `@microsoft/rayfin-connector-fabric-graphql` | `client.connectors.<name>.<Entity>` CRUD + `@role` | You assemble it after generating entities | **No.** Data plane. |
-| **Function-bridge connector** | `@microsoft/rayfin-connector-fabric-semanticmodel`, `@microsoft/rayfin-connector-kusto` | `client.connectors.<name>.<operation>` (e.g. `executeQuery`) | `connector add` generates it whole | **Yes.** Register as the client's 2nd arg. |
+| Shape                             | Packages                                                                                     | Surface                                                      | `schema.ts`                               | Runtime                                           |
+| --------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------- |
+| **Category A — entity connector** | `@microsoft/rayfin-connector-fabric-graphql`                                                 | `client.connectors.<name>.<Entity>` CRUD + `@role`           | You assemble it after generating entities | **No.** Data plane.                               |
+| **Function-bridge connector**     | `@microsoft/rayfin-connector-fabric-semanticmodel`, `@microsoft/rayfin-connector-eventhouse` | `client.connectors.<name>.<operation>` (e.g. `executeQuery`) | `connector add` generates it whole        | **Yes.** Register in the adapter's `runtime` map. |
 
 The connector marker types (`GraphQLBackedConnector<…>`,
 `FabricSemanticModel<'executeQuery'>`) live in those connector packages. This
 package provides the runtime and the shared `ConnectorConfig` /
-`ConnectorsSchema` / `isConnectorError` surface they compose into.
+`ConnectorConfigs` / `ConnectorsSchema` / `isConnectorError` surface they compose into.
 
 ## Step 1 — add the connector
 
@@ -36,10 +40,11 @@ package provides the runtime and the shared `ConnectorConfig` /
 version** — connector packages ship in lockstep with the CLI, so an unpinned
 install resolves to an older release.
 
-- **Function-bridge (semantic model / kusto):** `connector add` generates the
-  complete `schema.ts` — nothing else to author. `kusto` authoring is held in
-  this release, so only `fabric-semanticmodel` can be added today; a project
-  that already declares a Kusto connector keeps working unchanged.
+- **Function-bridge (semantic model / eventhouse):** `connector add` generates
+  the complete `schema.ts` — nothing else to author. `eventhouse` authoring is
+  held in this release, so of those two types only `fabric-semanticmodel` can be added today; a
+  project that already declares an `eventhouse` connector keeps working
+  unchanged.
 - **Category A (GraphQL):** `connector add` writes `metadata.json` and a
   placeholder `schema.ts`, then stops. Generating the per-table entity files and
   assembling the aggregate `schema.ts` is the immediate next step — see the
@@ -111,6 +116,85 @@ The `@microsoft/rayfin-connector-fabric-graphql` package docs are the source of
 truth for the full aggregate-schema contract (the entity generation rules, the
 operations ceiling) — this is just the wiring shape Step 3 consumes.
 
+### Category A read result types
+
+Explicit field selections return the same shape that the connector requests at
+runtime, including dotted relationship paths:
+
+```ts
+const products = await client.connectors.inventory.Product.findMany([
+  'productId',
+  'name',
+  'supplier.displayName',
+]);
+
+// Array<{
+//   productId: string;
+//   name: string;
+//   supplier: { displayName: string };
+// }>
+```
+
+The projection is preserved through `where`, `orderBy`, `first`, and `after`,
+and through the `execute`, `executePaginated`, and `findFirst` terminals.
+Repeated `select` calls replace the active projection without changing a
+previously retained builder.
+Conditional tuple entries and dynamically constructed field arrays expose their
+possible fields as optional. `Date` and Node `Buffer` remain scalar selection
+leaves. Returned date fields are `Date | string` and boolean fields are
+`boolean | 'true' | 'false'` because wire strings are not coerced without
+field metadata. Convert these explicitly before using date methods or boolean
+truthiness. These types do not add binary encoding or decoding.
+
+Plain `Uint8Array` values are not supported connector scalars and cannot be
+selected or written. An entity with a required, non-nullable, non-generated
+byte-array column cannot be created through this typed API.
+
+| API                                                         | Result                                                    |
+| ----------------------------------------------------------- | --------------------------------------------------------- |
+| `select(fields)`                                            | Exact scalar and arbitrarily deep relationship projection |
+| `findMany(fields, filter?)`                                 | `ProjectedRow[]`                                          |
+| `findFirst(fields, filter?)`                                | `ProjectedRow \| null`                                    |
+| `findByKey(key, scalarFields)`                              | Scalar projection with the same certainty rules           |
+| `findMany(filter?)`, `findFirst(filter?)`, `findByKey(key)` | Optional scalar fields from runtime registration          |
+| `findMany([])`, `findFirst([])`, `findByKey(key, [])`       | Conservative fallback; no guaranteed relationships        |
+
+**Corrective type migration:** Default reads retain their runtime selections,
+but no longer promise complete entities.
+Registered classes exclude relationships from default requests, and explicit
+column lists can omit scalars too.
+Use explicit selections for fields your caller requires, or guard optional
+scalar values from a default read.
+Undefined or optional selection arguments include this conservative fallback.
+An empty by-key selection retains its existing key-column request.
+
+Connector relationship paths remain arbitrarily deep and dotted, for example
+`wheel.name` and `settings.parts.id`.
+When passing a connector builder through the data `GraphQLQueryBuilder` interface,
+data collection paths such as `wheel[].name` are accepted and normalized to the
+same metadata-backed request.
+A collection marker on a registered to-one relationship is rejected.
+Relationship decoding also follows this metadata: a to-one object's scalar
+array field named `items` is preserved, not mistaken for a connection envelope.
+
+To-one `isNull` filters use the relationship's registered `sourceFields`.
+For composite foreign keys, `isNull: true` means any component is null,
+and `isNull: false` requires every component to be non-null.
+Missing source-field metadata fails explicitly instead of guessing an FK name.
+
+Result typing reflects the fields sent in GraphQL requests.
+Code that treats a partial response as a complete entity fails at build time
+instead of reading unrequested properties as `undefined`.
+Always use the builder returned by `select()`; it is an independently selected
+clone, and ignoring it leaves the original builder's selection unchanged.
+Custom subclasses must preserve constructor arguments and mutable state through
+the selection clone hooks.
+Custom members are hidden from row-query facades unless their keys are explicitly
+declared in `readonly projectionSafeMembers`.
+Only opt in members that never expose a builder or reset its result type,
+including through promises or overloads.
+Custom fluent APIs require an explicit projection-aware facade.
+
 ## Step 3 — declare the app's connectors schema
 
 Compose one property per connector, keyed by its `rayfin.yml` name, importing
@@ -122,54 +206,57 @@ import type { InventorySchema } from './inventory/schema';
 import type { SalesModelSchema } from './salesModel/schema';
 
 export type AppConnectorsSchema = {
-  inventory: InventorySchema;    // Category A entity connector
-  salesModel: SalesModelSchema;  // function-bridge connector
+  inventory: InventorySchema; // Category A entity connector
+  salesModel: SalesModelSchema; // function-bridge connector
 };
 ```
 
 ## Step 4 — instantiate the client
 
-`ConnectorsRayfinClient` takes three type parameters —
-`<DataSchema, FunctionsSchema, ConnectorsSchema>`: your app's data schema
-(`AppSchema` from `rayfin/data/schema`), its functions schema
-(`AppFunctionsSchema` from `rayfin/functions/schema`), and the connectors schema
-from Step 3. An app with no data or no functions can set that slot to
-`Record<string, never>`. The `connectors` option is a map, keyed by the same
+`RayfinClient.create` infers the client from its registered service factories.
+Pass the connectors schema from Step 3 to `connectorsService`; data and functions do not need to be registered for a connectors-only app.
+The adapter's `configs` option is a map, keyed by the same
 `rayfin.yml` name, of each `schema.ts`'s `connectorConfig` value —
 **exhaustive**: every connector in `AppConnectorsSchema` needs an entry.
+Each entry must also match its marker's configuration type: an `Eventhouse` marker cannot receive a semantic-model config.
+GraphQL markers retain the generated config's operation permissions and dialect, so import the corresponding `connectorConfig` rather than rebuilding or widening it to `ConnectorConfig`.
+Use `satisfies ConnectorConfigs<AppConnectorsSchema>` when declaring a separate config map.
+The low-level `createConnectorsApi<AppConnectorsSchema>` factory enforces the same checks.
+Custom markers can declare their own required config fields with `ConnectorMarker<TClient, TConfig>`; omitting `TConfig` keeps the shared `ConnectorConfig` contract.
+For Eventhouse, `EventhouseClientConfig` requires only `connector: 'eventhouse'`; generated `EventhouseConnectorConfig` values also carry informational cluster and database metadata and remain accepted.
 
 ```ts
-import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { connectorsService } from '@microsoft/rayfin-connectors';
 import { fabricSemanticModel } from '@microsoft/rayfin-connector-fabric-semanticmodel';
-import type { AppSchema } from '../rayfin/data/schema';
-import type { AppFunctionsSchema } from '../rayfin/functions/schema';
 import type { AppConnectorsSchema } from '../rayfin/connectors/schema';
 import { connectorConfig as inventoryConfig } from '../rayfin/connectors/inventory/schema';
 import { connectorConfig as salesModelConfig } from '../rayfin/connectors/salesModel/schema';
 
 export function getRayfinClient() {
-  return new ConnectorsRayfinClient<
-    AppSchema,
-    AppFunctionsSchema,
-    AppConnectorsSchema
-  >(
-    {
-      baseUrl: import.meta.env.VITE_RAYFIN_BASE_URL,
-      publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
-      connectors: {
-        inventory: inventoryConfig,
-        salesModel: salesModelConfig,
-      },
+  return RayfinClient.create({
+    baseUrl: import.meta.env.VITE_RAYFIN_BASE_URL,
+    publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
+    auth: browserSession(),
+    services: {
+      connectors: connectorsService<AppConnectorsSchema>({
+        configs: {
+          inventory: inventoryConfig,
+          salesModel: salesModelConfig,
+        },
+        runtime: { salesModel: fabricSemanticModel() },
+      }),
     },
-    // Second argument: runtimes for function-bridge connectors only.
-    { salesModel: fabricSemanticModel() },
-  );
+  });
 }
+
+export type AppClient = ReturnType<typeof getRayfinClient>;
 ```
 
-## Step 5 — the runtime argument (function-bridge only)
+## Step 5 — the runtime option (function-bridge only)
 
-The second constructor argument registers a `ConnectorRuntime` per function-bridge
+The adapter's `runtime` map registers a `ConnectorRuntime` per function-bridge
 connector. It is what makes the declared operation types accurate: a client built
 without it bypasses the connector middleware and receives the raw transport
 payload, so `executeQuery` would not return the normalised shape the types
@@ -180,11 +267,22 @@ Each function-bridge connector package exports its runtime factory
 (`fabricSemanticModel()` here). See that package's docs for its runtime options
 (target resolution, token audience, row limits).
 
+The adapter defaults to `host: { type: 'standalone' }` in both browsers and Node.
+Pass an explicit CLI host or a host-verified embedded environment when needed.
+This does not change the low-level `createConnectorsApi` factory or its `detectHost()` behavior.
+Keep using the low-level factory directly when you already own an `ApiClient`.
+
 ## Step 6 — verify and deploy
 
 Type-check (`tsc --noEmit` or the app build) to catch a key mismatch across the
 three places a connector name appears: `rayfin.yml`, the `AppConnectorsSchema`
-property, and the `connectors` option. Then deploy with `rayfin up`.
+property, and the adapter's `configs` option. Then deploy with `rayfin up`.
+
+At runtime, connector names are case-insensitive: when no configured key
+matches `client.connectors.<name>` exactly, the one key that differs only by
+case is used, and every spelling returns the same client. Several keys that
+differ only by case throw `ConnectorsError` with code `AMBIGUOUS_CONNECTOR`;
+a name with no match in any casing still throws `UNKNOWN_CONNECTOR`.
 
 Reachability differs from type-safety: a call that succeeds under
 `rayfin connector invoke` during authoring has not yet exercised the deployed

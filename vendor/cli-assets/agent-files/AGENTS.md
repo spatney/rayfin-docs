@@ -9,3 +9,6 @@ If MCP is unavailable, run `rayfin docs ...` from the project root so the CLI re
 If `rayfin` is not on `PATH`, use `npx -y @microsoft/rayfin-cli docs ...` from the project root.
 
 Use `discover_packages` or `rayfin docs discover <topic>` when installed docs do not cover the task.
+
+Generated sign-in code must catch errors from every sign-in call, both on page load and on button click, and display `error.message` to the user.
+Never swallow sign-in errors with an empty `catch` or by only calling `setUser(null)`.

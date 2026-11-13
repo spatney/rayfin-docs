@@ -58,9 +58,10 @@ const cols = await client.connectors.inventory.Order.findMany(
 const one = await client.connectors.inventory.Order.findFirst({ orderId: { eq: 'o-1' } });
 
 // By-key: full key object; select is optional.
-// Omit select -> full row; pass a scalar-only select -> just those columns.
+// Omitted selection: default scalar columns, exposed as optional properties.
 const order = await client.connectors.inventory.Order.findByKey({ orderId: 'o-1' });
 
+// Nonempty literal selection: these fields retain their declared types.
 const orderCols = await client.connectors.inventory.Order.findByKey(
   { orderId: 'o-1' },
   ['orderId', 'customerEmail', 'total'],
@@ -73,12 +74,14 @@ const lineItem = await client.connectors.sales.OrderItem.findByKey({
 });
 ```
 
-`.execute()` and `findMany` return a plain array of rows; `findFirst` and `findByKey` return `Row | null`. For a cursor envelope, end the chain with `.executePaginated()` instead — see [Paging](#paging).
+`.execute()` and `findMany` return arrays of projected rows; `findFirst` and `findByKey` return the corresponding projection or `null`. For a cursor envelope, end the chain with `.executePaginated()` instead — see [Paging](#paging).
 
 `findByKey` takes the full primary key (required) and an **optional** scalar-only
-`select`. With no `select` it returns the full `Row | null`; with one it returns
-`Pick<Row, selected> | null`. It is scalar-only — read relationships through the
-query chain. Omitting a composite-key part is a compile error.
+`select`. Omitted, `undefined`, or empty selections expose scalar properties as
+optional and omit relationships; they do not guarantee a full row. Nonempty fixed
+literal tuples preserve the selected fields' declared types. Widened or conditional
+selections make fields not guaranteed to be selected optional. Read relationships
+through the query chain. Omitting a composite-key part is a compile error.
 
 Keyless entities (`primaryKey: []`, common on Lakehouse and Warehouse) drop `findByKey`, `update`, and `delete` at compile time — reads go through the chain, `findMany`, and `findFirst`, and `create` is still available if `operations:` allows it.
 

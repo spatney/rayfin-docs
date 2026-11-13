@@ -4,6 +4,7 @@ symbols:
   - FunctionClient.invoke
   - FunctionsError
   - createFunctionsApi
+  - functionsService
   - InvokeOptions
   - FunctionInvocationResponse
   - FunctionsSchema
@@ -27,15 +28,41 @@ npm install @microsoft/rayfin-functions
 
 ## API summary
 
-| Export | Purpose |
-| --- | --- |
-| `FunctionClient<TInput, TOutput>` | Client for one named function; constructed with `(apiClient, functionName)`. |
-| `FunctionsError` | Invocation error extending `SdkError`, with a message and error code. |
-| `createFunctionsApi<TSchema>(apiClient)` | Creates typed, lazily cached clients for the function names in a schema. |
-| `InvokeOptions` | Per-call `headers` and `timeoutMs` options. |
-| `FunctionInvocationResponse<TOutput>` | Transport envelope containing status, output, errors, and invocation ID; **not** the return type of `invoke()`. |
-| `FunctionsSchema` | Maps each function name to its `input` and `output` types. |
-| `TypedFunctionClients<TSchema>` | Maps a schema to its typed `FunctionClient` properties. |
+| Export                                   | Purpose                                                                                                         |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `functionsService<TSchema>()`            | Registers typed functions on a composed client using its shared authenticated transport.                        |
+| `FunctionClient<TInput, TOutput>`        | Client for one named function; constructed with `(apiClient, functionName)`.                                    |
+| `FunctionsError`                         | Invocation error extending `SdkError`, with a message and error code.                                           |
+| `createFunctionsApi<TSchema>(apiClient)` | Creates typed, lazily cached clients for the function names in a schema.                                        |
+| `InvokeOptions`                          | Per-call `headers` and `timeoutMs` options.                                                                     |
+| `FunctionInvocationResponse<TOutput>`    | Transport envelope containing status, output, errors, and invocation ID; **not** the return type of `invoke()`. |
+| `FunctionsSchema`                        | Maps each function name to its `input` and `output` types.                                                      |
+| `TypedFunctionClients<TSchema>`          | Maps a schema to its typed `FunctionClient` properties.                                                         |
+
+## Compose a client
+
+```typescript
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { functionsService } from '@microsoft/rayfin-functions';
+
+type AppFunctionsSchema = {
+  greet: { input: { name: string }; output: string };
+};
+
+const client = RayfinClient.create({
+  baseUrl: '',
+  publishableKey: 'pk-your-key',
+  auth: browserSession(),
+  services: { functions: functionsService<AppFunctionsSchema>() },
+});
+
+const greeting = await client.functions.greet.invoke({ name: 'Ada' });
+```
+
+The adapter delegates to the existing `createFunctionsApi` factory, which remains public.
+By default requests use `/functions/<name>/invoke`.
+Set `functionsBaseUrl` on the client to use `<functionsBaseUrl>/api/<name>` for local debugging.
 
 ## Invocation contract
 

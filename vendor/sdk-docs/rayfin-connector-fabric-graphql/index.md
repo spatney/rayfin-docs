@@ -12,7 +12,7 @@ One connector type per source database:
 - `fabric-warehouse` — Fabric Warehouse; writes return a status object, not the row.
 - `fabric-sqlanalytics` — Lakehouse SQL endpoint, **read-only**.
 
-For `kusto` and `fabric-semanticmodel`, use the Category B connectors instead — nothing here applies to them.
+For `eventhouse` and `fabric-semanticmodel`, use the Category B connectors instead — nothing here applies to them.
 
 ## Pages
 
@@ -94,24 +94,61 @@ export type InventorySchema = GraphQLBackedConnector<
 
 ## Wire the client
 
-Deploying a connector does not make it callable. Expose it through a `ConnectorsRayfinClient` so it appears as `client.connectors.<name>`. Import that client from the main `@microsoft/rayfin-client` entry. The connector key must be identical in three places: `name` in `rayfin.yml`, the `AppConnectorsSchema` property, and the `connectors` option.
+Deploying a connector does not make it callable.
+Register `connectorsService` so it appears as `client.connectors.<name>`.
+The connector key must be identical in three places: `name` in `rayfin.yml`, the `AppConnectorsSchema` property, and the adapter's `configs` map.
 
 ```ts
-import { ConnectorsRayfinClient } from '@microsoft/rayfin-client';
-import { InventorySchema, connectorConfig as inventoryConfig } from '../../rayfin/connectors/inventory/schema';
+import { RayfinClient } from '@microsoft/rayfin-client';
+import { browserSession } from '@microsoft/rayfin-auth';
+import { connectorsService } from '@microsoft/rayfin-connectors';
+import {
+  InventorySchema,
+  connectorConfig as inventoryConfig,
+} from '../../rayfin/connectors/inventory/schema';
 
 type AppConnectorsSchema = { inventory: InventorySchema };
 
 export function getRayfinClient() {
-  // Type params: <DataSchema, FunctionsSchema, ConnectorsSchema>. Set unused
-  // slots to Record<string, never>.
-  return new ConnectorsRayfinClient<Record<string, never>, Record<string, never>, AppConnectorsSchema>({
+  return RayfinClient.create({
     baseUrl: import.meta.env.VITE_RAYFIN_API_URL,
     publishableKey: import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY,
-    authStorage: true,
-    connectors: { inventory: inventoryConfig },
+    auth: browserSession({ storage: true }),
+    services: {
+      connectors: connectorsService<AppConnectorsSchema>({
+        configs: { inventory: inventoryConfig },
+      }),
+    },
   });
 }
 ```
 
 Type-check (`tsc --noEmit` or the app build) to catch a key mismatch, then deploy with `rayfin up`.
+
+This adapter defaults to standalone execution in browsers and Node.js.
+Select `host: { type: 'cli' }` only for an actual CLI caller, or an explicitly verified embedded environment with `host: { type: 'embedded' }`.
+These connector entities retain their own GraphQL route, key metadata, CRUD gates, and mutation results; they are not app-owned `client.data` entities.
+
+### Let the bundler compile entity decorators
+
+Importing `connectorConfig` puts the decorated entity classes in the browser bundle, so the frontend bundler must compile TC39 decorators.
+Type-checking does not prove this: the frontend `tsconfig.json` uses `noEmit`, and Vite compiles the browser code separately.
+
+Apps created from the current templates already enable this.
+Apps created earlier with `@vitejs/plugin-react-swc` must add the setting to `vite.config.ts` (and `vitest.config.ts`, if specs import entities):
+
+```ts
+import react from '@vitejs/plugin-react-swc';
+
+react({
+  useAtYourOwnRisk_mutateSwcOptions({ jsc }) {
+    if (!jsc?.parser) return;
+    jsc.parser.decorators = true;
+    jsc.transform = { ...jsc.transform, decoratorVersion: '2022-03' };
+  },
+});
+```
+
+Without it, the dev server fails with `Expression expected` at `@entity()`.
+On Vite 8, `vite build` still succeeds but leaves raw `@decorator` syntax in the emitted JavaScript, and `rayfin up` refuses the bundle with `The built bundle is not parseable JavaScript`.
+Do not work around this with a hand-written TypeScript pre-transform or `experimentalDecorators`; Rayfin entities use TC39 Stage 3 decorators, not legacy ones.
