@@ -139,9 +139,9 @@ Fabric deployment, without starting the frontend. For the full workflow, see
 | `-y, --yes` | `false` | Run without interactive prompts. |
 
 The subcommand requires `services.functions.enabled: true`, an active deployment from
-`rayfin up`, Node.js 20 or later, and Azure Functions Core Tools. When Core Tools are
-missing, an interactive run asks for consent before installing prerequisites; a
-non-interactive run prints the commands to run and exits.
+`rayfin up`, Node.js 22.19 or later on the 22 line or Node.js 24, and Azure Functions Core
+Tools. When Core Tools are missing, an interactive run asks for consent before installing
+prerequisites; a non-interactive run prints the commands to run and exits.
 
 ```prompt title="Start the Rayfin development session"
 From my Rayfin project root, run `npx rayfin dev --workspace <workspace-name>` to start the

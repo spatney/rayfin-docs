@@ -9,18 +9,21 @@ Install the tools Rayfin needs on your development machine, then use the project
 
 | Tool | Version | Why Rayfin needs it |
 | --- | --- | --- |
-| Node.js | 20, 22, or 24. The default Universal App template needs 22.13 or later. [Changed in 2.0](/docs/reference/changelog#rayfin-20) | Runs npm, Vite, the Rayfin CLI, and TypeScript tooling. |
+| Node.js | 22.19 or later on the 22 line, or 24. [Changed in 2.2](/docs/reference/changelog#rayfin-22) | Runs npm, Vite, the Rayfin CLI, the Rayfin MCP server, and TypeScript tooling. |
 | npm | Bundled with Node.js | Installs templates and project dependencies. |
 | TypeScript | 5.7.2 or later 5.x, or 6.0.2 or later 6.x, installed in the project. [Changed in 2.0](/docs/reference/changelog#rayfin-20) | Compiles your entity classes into the data schema. Templates install a supported version. |
 | Fabric account | Workspace access | `rayfin login`, `rayfin dev`, and `rayfin up` target Microsoft Fabric. |
 
 ## Choose a Node.js version
 
-`@microsoft/rayfin-cli` and `@microsoft/create-rayfin` declare the Node.js 20, 22, and 24 release lines in their `engines` field. Other release lines, such as Node.js 26, are not in that range, and npm prints an `EBADENGINE` warning when it installs Rayfin on them.
+Use Node.js 24, or Node.js 22.19 or later on the 22 line. Rayfin no longer supports Node.js 20, or Node.js 22.0 through 22.18.
+[Changed in 2.2](/docs/reference/changelog#rayfin-22)
 
-The default Universal App template (`blankapp`) also declares `"node": ">=22.13.0"` in its root `package.json`. [Changed in 2.0](/docs/reference/changelog#rayfin-20)
+`@microsoft/rayfin-cli` and `@microsoft/create-rayfin` declare `>=22.19.0 <23.0.0 || >=24.0.0 <25.0.0` in their `engines` field. Versions outside that range, such as Node.js 20, Node.js 22.18, or Node.js 26, make npm print an `EBADENGINE` warning when it installs Rayfin. The 2.2 Rayfin MCP server (`@microsoft/rayfin-mcp`) fails to start on Node.js older than 22.19. Rayfin 2.0 packages still list the Node.js 20 line, but 22.19 or later works with them too.
 
-Install Node.js 24. It satisfies both requirements.
+The default Universal App template (`blankapp`) declares `"node": ">=22.13.0"` in its root `package.json`, which 22.19 or later satisfies.
+
+Install Node.js 24. It satisfies every requirement.
 
 ## Windows
 
@@ -64,7 +67,7 @@ npm --version
 ```
 
 ```prompt title="Prepare this machine for Rayfin"
-Check this machine for Node.js 20, 22, or 24; Rayfin's CLI declares only those release lines, and the default Universal App template needs 22.13 or later. If Node.js is missing or on another release line, install Node.js 24 for the current operating system: on Windows, run `winget show --id OpenJS.NodeJS.LTS --versions` and install the newest 24.x version with `winget install -e --id OpenJS.NodeJS.LTS --version <that version>`; on macOS, run `brew install node@24` and add it to PATH. Then run `node --version`, `npm --version`, and `npx rayfin --version` inside my Rayfin project. If `npx rayfin login` fails because there is no OS keychain, retry with `--encryption-fallback-enabled` and explain that the fallback is for this development environment only.
+Check this machine for Node.js 22.19 or later on the 22 line, or Node.js 24; Rayfin's CLI and MCP server support only `>=22.19.0 <23.0.0 || >=24.0.0 <25.0.0`. If Node.js is missing or outside that range (including Node.js 20 and Node.js 22.0 through 22.18), install Node.js 24 for the current operating system: on Windows, run `winget show --id OpenJS.NodeJS.LTS --versions` and install the newest 24.x version with `winget install -e --id OpenJS.NodeJS.LTS --version <that version>`; on macOS, run `brew install node@24` and add it to PATH. Then run `node --version`, `npm --version`, and `npx rayfin --version` inside my Rayfin project. If `npx rayfin login` fails because there is no OS keychain, retry with `--encryption-fallback-enabled` and explain that the fallback is for this development environment only.
 ```
 
 ## Install the Rayfin CLI in a project

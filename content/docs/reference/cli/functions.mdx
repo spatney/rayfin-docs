@@ -124,7 +124,7 @@ A functions project whose only function is a `udf.authClaims` provider can gener
 | `Functions service is not enabled. Set 'services.functions.enabled: true' in rayfin.yml and re-run.` | Run `npx rayfin functions init` or enable the service in `rayfin.yml`. |
 | `Invalid services.functions.auth: authentication is required when Functions are enabled. Set services.functions.auth.type to "application".` | Add `services.functions.auth.type: application` and run full `npx rayfin up`. |
 | `No active deployment found. Run 'rayfin up' to deploy your Rayfin item first.` | Deploy once before running the standalone local Functions host. |
-| `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.` | Use Node.js 20 or later. |
+| `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.` | Use Node.js 24, or Node.js 22.19 or later on the 22 line. |
 | ``Azure Functions Core Tools still not detected on PATH. Open a new shell so PATH updates take effect, then re-run `rayfin dev functions apply`.`` | Open a new shell and rerun after installing Core Tools. |
 | `The installed @microsoft/fabric-user-data-functions@<version> ... but this CLI writes '3.0'.` | Run the printed `npm install @microsoft/fabric-user-data-functions@<cli-version>` in the functions package. [Changed in 2.0](/docs/reference/changelog#rayfin-20) |
 | `<path>/host.json allows Functions extension bundles older than 4.49.0, ...` | Warning. Set `extensionBundle.version` to `[4.49.0, 5.0.0)` in the functions `host.json`. [New in 2.0](/docs/reference/changelog#rayfin-20) |

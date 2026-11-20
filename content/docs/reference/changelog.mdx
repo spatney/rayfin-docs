@@ -128,6 +128,18 @@ https://rayfin.ai/docs/reference/sdk/rayfin-client.md first.
    npx rayfin up --dry-run and report the result before deploying.
 ```
 
+## Rayfin 2.2
+
+Not yet released. These docs are still written against Rayfin 2.0.0; entries here describe
+changes already merged for the next release.
+
+- **Node.js 22.19 or later, or Node.js 24.** `@microsoft/rayfin-cli` and
+  `@microsoft/create-rayfin` declare `>=22.19.0 <23.0.0 || >=24.0.0 <25.0.0` in `engines`.
+  Node.js 20 and Node.js 22.0 through 22.18 are no longer supported; the Rayfin MCP server
+  fails to start on them. Run `node --version` and upgrade to Node.js 24 before you update
+  the packages.
+  [Choose a Node.js version](/docs/start/installation#choose-a-nodejs-version)
+
 ## Rayfin 2.0
 
 Released 2026-11-12. The headline changes:
