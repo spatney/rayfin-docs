@@ -24,7 +24,7 @@ Both commands use `services.functions.path` from `rayfin.yml`, run the configure
 
 - `services.functions.enabled: true` in `rayfin/rayfin.yml`.
 - An active Fabric deployment from at least one `npx rayfin up`.
-- Node.js 20 or later.
+- Node.js 22.19 or later on the 22 line, or Node.js 24. See [Choose a Node.js version](/docs/start/installation#choose-a-nodejs-version). [Changed in 2.1](/docs/reference/changelog#rayfin-21)
 - Azure Functions Core Tools on `PATH`.
 - `@microsoft/fabric-user-data-functions` at the same version as the CLI — `2.0.0` for Rayfin 2.0. See [Match the worker package to the CLI](/docs/functions#match-the-worker-package-to-the-cli). [Changed in 2.0](/docs/reference/changelog#rayfin-20)
 - A local functions `host.json` whose Preview `extensionBundle.version` range starts at 4.49.0 or later: `[4.49.0, 5.0.0)`. [Changed in 1.36.2](/docs/reference/changelog#rayfin-1362)
@@ -155,7 +155,7 @@ Run a full `npx rayfin up`. Local Functions need the deployed endpoint and publi
 
 ### `Node.js >= 20 is required. Please upgrade your Node runtime and re-run.`
 
-Install or select Node.js 20 or later before starting the local host.
+Install or select Node.js 24, or Node.js 22.19 or later on the 22 line, before starting the local host. See [Choose a Node.js version](/docs/start/installation#choose-a-nodejs-version).
 
 ### `Missing Functions prerequisites. Run the following commands, then retry:`
 
